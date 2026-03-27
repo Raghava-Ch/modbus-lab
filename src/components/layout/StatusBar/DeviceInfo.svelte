@@ -4,12 +4,26 @@
   import { connectionState } from "../../../state/connection.svelte";
 
   let { compact = false } = $props<{ compact?: boolean }>();
+
+  const protocolLabel = $derived(
+    connectionState.protocol === "tcp"
+      ? "Modbus TCP"
+      : connectionState.protocol === "serial-rtu"
+        ? "Serial RTU"
+        : "Serial ASCII",
+  );
+
+  const connectionInfo = $derived(
+    connectionState.protocol === "tcp"
+      ? `${connectionState.tcp.host}:${connectionState.tcp.port}`
+      : connectionState.serial.port,
+  );
 </script>
 
 {#if !compact}
   <div class="device-info">
-    <span>{connectionState.protocol}</span>
-    <span>{connectionState.address}:{connectionState.port}</span>
+    <span>{protocolLabel}</span>
+    <span>{connectionInfo}</span>
     <span>Slave {connectionState.slaveId}</span>
   </div>
 {/if}
