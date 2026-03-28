@@ -1,8 +1,10 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
   import { Link2, LogOut } from "lucide-svelte";
   import {
+    applyBackendConnectionStatus,
     connectionState,
     setConnectionStatus,
     setProtocol,
@@ -10,6 +12,8 @@
     updateTcpSettings,
     updateSerialSettings,
     type ModbusProtocol,
+    type RetryBackoffStrategy,
+    type RetryJitterStrategy,
     type SerialParity,
   } from "../../state/connection.svelte";
   import { addLog } from "../../state/logs.svelte";
@@ -18,22 +22,204 @@
   import SectionHeader from "../shared/SectionHeader.svelte";
 
   let connecting = $state(false);
+  const backendSource = $derived.by(() => {
+    const normalized = connectionState.backendStatus.toLowerCase();
+    if (normalized.includes("connectedtcp")) {
+      return "TCP";
+    }
+    if (normalized.includes("connectedserialrtu")) {
+      return "SERIAL RTU";
+    }
+    if (normalized.includes("connectedserialascii")) {
+      return "SERIAL ASCII";
+    }
+
+    const details = connectionState.backendDetails.toUpperCase();
+    if (details.startsWith("TCP ")) {
+      return "TCP";
+    }
+    if (details.includes("RTU")) {
+      return "SERIAL RTU";
+    }
+    if (details.includes("ASCII")) {
+      return "SERIAL ASCII";
+    }
+
+    return "";
+  });
+
+  const compactBackendDetails = $derived.by(() => {
+    const raw = connectionState.backendDetails.trim();
+    if (!raw) return "";
+
+    const status = connectionState.backendStatus.toLowerCase();
+
+    if (status === "reconnecting") {
+      const attempt = raw.match(/reconnect attempt\s+(\d+)/i)?.[1];
+      const code = raw.match(/code=([A-Z_]+)/)?.[1];
+      const lastError = raw.match(/lastError=([^|]+)/i)?.[1] ?? "";
+
+      let reason = "";
+      if (/timed out/i.test(lastError)) {
+        reason = "timeout";
+      } else if (/refused/i.test(lastError)) {
+        reason = "refused";
+      } else if (/reset/i.test(lastError)) {
+        reason = "reset";
+      } else if (/not connected/i.test(lastError)) {
+        reason = "not connected";
+      } else if (code === "BACKEND_FAILURE") {
+        reason = "network error";
+      } else if (code) {
+        reason = code.toLowerCase().replaceAll("_", " ");
+      }
+
+      const prefix = attempt ? `Retry ${attempt}` : "Reconnecting";
+      return reason ? `${prefix} - ${reason}` : prefix;
+    }
+
+    const tcpMatch = raw.match(/^TCP\s+([^\s]+)/i);
+    if (tcpMatch) {
+      return tcpMatch[1];
+    }
+
+    return raw;
+  });
+
+  interface AnalyticsContext {
+    traceId?: string;
+    sessionId?: string;
+    tags?: string[];
+  }
+
+  interface TcpConnectRequest {
+    host: string;
+    port: number;
+    slaveId: number;
+    connectionTimeoutMs?: number;
+    responseTimeoutMs?: number;
+    retryAttempts?: number;
+    retryBackoffStrategy?: RetryBackoffStrategy;
+    retryJitterStrategy?: RetryJitterStrategy;
+    analytics?: AnalyticsContext;
+  }
+
+  interface SerialConnectRequest {
+    port: string;
+    baudRate: number;
+    dataBits: number;
+    stopBits: number;
+    parity: string;
+    slaveId: number;
+    timeoutMs?: number;
+    analytics?: AnalyticsContext;
+  }
+
+  interface CommandAck {
+    ok: boolean;
+    message: string;
+    status: {
+      status: string;
+      details?: string;
+    };
+  }
+
+  interface ApiErrorPayload {
+    code?: string;
+    message?: string;
+    details?: string;
+  }
+
+  function parseApiError(err: unknown): ApiErrorPayload {
+    if (typeof err === "string") {
+      try {
+        return JSON.parse(err) as ApiErrorPayload;
+      } catch {
+        return { message: err };
+      }
+    }
+
+    if (typeof err === "object" && err !== null) {
+      const maybe = err as Record<string, unknown>;
+      return {
+        code: typeof maybe.code === "string" ? maybe.code : undefined,
+        message: typeof maybe.message === "string" ? maybe.message : undefined,
+        details: typeof maybe.details === "string" ? maybe.details : undefined,
+      };
+    }
+
+    return {};
+  }
 
   async function handleConnect(): Promise<void> {
     connecting = true;
     setConnectionStatus("connecting");
-    addLog("info", `Attempting ${connectionState.protocol.toUpperCase()} connection...`);
 
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    try {
+      let response: CommandAck;
 
-    setConnectionStatus("connected");
-    addLog("info", "Connection established successfully.");
-    connecting = false;
+      if (connectionState.protocol === "tcp") {
+        const request: TcpConnectRequest = {
+          host: connectionState.tcp.host.trim(),
+          port: connectionState.tcp.port,
+          slaveId: connectionState.slaveId,
+          connectionTimeoutMs: connectionState.tcp.connectionTimeoutMs,
+          responseTimeoutMs: connectionState.tcp.responseTimeoutMs,
+          retryAttempts: connectionState.tcp.retryAttempts,
+          retryBackoffStrategy: connectionState.tcp.retryBackoffStrategy,
+          retryJitterStrategy: connectionState.tcp.retryJitterStrategy,
+        };
+
+        response = await invoke<CommandAck>("connect_modbus_tcp", { request });
+      } else {
+        const request: SerialConnectRequest = {
+          port: connectionState.serial.port.trim(),
+          baudRate: connectionState.serial.baudRate,
+          dataBits: connectionState.serial.dataBits,
+          stopBits: connectionState.serial.stopBits,
+          parity: connectionState.serial.parity,
+          slaveId: connectionState.slaveId,
+          timeoutMs: 2000,
+        };
+
+        response = await invoke<CommandAck>(
+          connectionState.protocol === "serial-rtu"
+            ? "connect_modbus_serial_rtu"
+            : "connect_modbus_serial_ascii",
+          { request },
+        );
+      }
+
+      applyBackendConnectionStatus(response.status.status, response.status.details);
+    } catch (err) {
+      const parsed = parseApiError(err);
+      applyBackendConnectionStatus("disconnected", parsed.details ?? parsed.message);
+
+      // Serial commands are scaffolded in this phase; keep UX explicit and non-alarming.
+      if (parsed.code === "NOT_IMPLEMENTED_YET") {
+        addLog("warn", parsed.message ?? "Serial connection is scaffolded for next phase.");
+      } else if (parsed.message) {
+        const extra = parsed.details ? ` (${parsed.details})` : "";
+        addLog("error", `${parsed.message}${extra}`);
+      } else {
+        addLog("error", "Connection command failed.");
+      }
+    } finally {
+      connecting = false;
+    }
   }
 
-  function handleDisconnect(): void {
-    setConnectionStatus("disconnected");
-    addLog("info", "Connection closed.");
+  async function handleDisconnect(): Promise<void> {
+    try {
+      const response = await invoke<CommandAck>("disconnect_modbus", {
+        request: {},
+      });
+      applyBackendConnectionStatus(response.status.status, response.status.details);
+    } catch (err) {
+      const parsed = parseApiError(err);
+      addLog("error", parsed.message ?? "Disconnect command failed.");
+      setConnectionStatus("disconnected");
+    }
   }
 
   function handleProtocolChange(proto: ModbusProtocol): void {
@@ -45,9 +231,19 @@
 <div class="connection-page">
   <SectionHeader title="Connection Settings" subtitle="Configure Modbus device connection">
     {#snippet actions()}
-      <div class="connection-status" class:connected={connectionState.status === "connected"}>
-        <span class="status-dot"></span>
-        <span class="status-text">{connectionState.status}</span>
+      <div class="header-status-cluster">
+        <div class="connection-status" class:connected={connectionState.status === "connected"}>
+          <span class="status-dot"></span>
+          <span class="status-text">{connectionState.status}</span>
+        </div>
+        {#if backendSource}
+          <span class="status-chip">{backendSource}</span>
+        {/if}
+        {#if compactBackendDetails}
+          <span class="status-chip details" title={connectionState.backendDetails}>
+            {compactBackendDetails}
+          </span>
+        {/if}
       </div>
     {/snippet}
   </SectionHeader>
@@ -101,7 +297,7 @@
                 <input
                   id="tcp-host"
                   type="text"
-                  placeholder="192.168.1.20"
+                  placeholder="192.168.55.200"
                   value={connectionState.tcp.host}
                   onchange={(e) => updateTcpSettings({ host: e.currentTarget.value })}
                 />
@@ -118,6 +314,76 @@
                   onchange={(e) => updateTcpSettings({ port: Number(e.currentTarget.value) })}
                 />
               </div>
+            </div>
+
+            <div class="section-subtitle">Advanced TCP</div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="tcp-connection-timeout">Connection Timeout (ms)</label>
+                <input
+                  id="tcp-connection-timeout"
+                  type="number"
+                  min="100"
+                  max="600000"
+                  step="100"
+                  value={connectionState.tcp.connectionTimeoutMs}
+                  onchange={(e) => updateTcpSettings({ connectionTimeoutMs: Number(e.currentTarget.value) })}
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="tcp-response-timeout">Response Timeout (ms)</label>
+                <input
+                  id="tcp-response-timeout"
+                  type="number"
+                  min="100"
+                  max="600000"
+                  step="100"
+                  value={connectionState.tcp.responseTimeoutMs}
+                  onchange={(e) => updateTcpSettings({ responseTimeoutMs: Number(e.currentTarget.value) })}
+                />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="tcp-retry-attempts">Retry Attempts</label>
+                <input
+                  id="tcp-retry-attempts"
+                  type="number"
+                  min="0"
+                  max="10"
+                  value={connectionState.tcp.retryAttempts}
+                  onchange={(e) => updateTcpSettings({ retryAttempts: Number(e.currentTarget.value) })}
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="tcp-backoff-strategy">Retry Backoff</label>
+                <select
+                  id="tcp-backoff-strategy"
+                  value={connectionState.tcp.retryBackoffStrategy}
+                  onchange={(e) => updateTcpSettings({ retryBackoffStrategy: e.currentTarget.value as RetryBackoffStrategy })}
+                >
+                  <option value="fixed">Fixed</option>
+                  <option value="linear">Linear</option>
+                  <option value="exponential">Exponential</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="tcp-jitter-strategy">Retry Jitter</label>
+              <select
+                id="tcp-jitter-strategy"
+                value={connectionState.tcp.retryJitterStrategy}
+                onchange={(e) => updateTcpSettings({ retryJitterStrategy: e.currentTarget.value as RetryJitterStrategy })}
+              >
+                <option value="none">None</option>
+                <option value="full">Full</option>
+                <option value="equal">Equal</option>
+              </select>
             </div>
           </div>
         {/snippet}
@@ -311,6 +577,36 @@
     text-transform: capitalize;
   }
 
+  .header-status-cluster {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--c-border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--c-text-2);
+    background: color-mix(in srgb, var(--c-surface-2) 80%, var(--c-bg));
+  }
+
+  .status-chip.details {
+    max-width: 38ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
   .forms-grid {
     display: grid;
     gap: 8px;
@@ -327,6 +623,15 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--c-text-1);
+  }
+
+  .section-subtitle {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--c-text-2);
+    margin-top: 4px;
   }
 
   .protocol-buttons {

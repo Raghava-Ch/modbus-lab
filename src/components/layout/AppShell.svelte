@@ -1,9 +1,13 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { X } from "lucide-svelte";
+  import { applyBackendConnectionStatus } from "../../state/connection.svelte";
   import { initLayoutState, layoutState, closeMobileLog, toggleLogCollapsed } from "../../state/layout.svelte";
   import {
+    addLog,
     clearLogs,
     getFilteredLogs,
     logState,
@@ -30,12 +34,93 @@
 
   const filtered = $derived(getFilteredLogs(logState.filter));
 
+  interface BackendEventPayload {
+    level?: "info" | "warn" | "error";
+    topic?: string;
+    message?: string;
+    status?: {
+      status?: string;
+      details?: string;
+    };
+  }
+
+  let listenersReady = false;
+
+  function toLogLevel(level: string | undefined): "info" | "warn" | "error" | "traffic" {
+    if (level === "warn" || level === "error" || level === "traffic") {
+      return level;
+    }
+    return "info";
+  }
+
+  function formatBackendEventMessage(payload: BackendEventPayload): string {
+    const topic = payload.topic ? `[${payload.topic.toUpperCase()}] ` : "";
+    const message = payload.message ?? "Backend event";
+
+    if (payload.status?.status) {
+      const statusText = payload.status.details
+        ? `${payload.status.status} (${payload.status.details})`
+        : payload.status.status;
+      return `${topic}${message} | status=${statusText}`;
+    }
+
+    return `${topic}${message}`;
+  }
+
   function handleSave(scope: LogExportScope): void {
     saveLogsToFile(scope === "all" ? logState.entries : filtered, scope, logState.filter);
   }
 
   $effect(() => {
     initLayoutState();
+
+    if (listenersReady) {
+      return;
+    }
+
+    listenersReady = true;
+    let unlisten: (() => void) | undefined;
+    let statusPollTimer: ReturnType<typeof setInterval> | undefined;
+
+    const setup = async (): Promise<void> => {
+      unlisten = await listen<BackendEventPayload>("modbus://event", (event) => {
+        const payload = event.payload;
+        addLog(toLogLevel(payload.level), formatBackendEventMessage(payload));
+
+        if (payload.status?.status) {
+          applyBackendConnectionStatus(payload.status.status, payload.status.details);
+        }
+      });
+
+      try {
+        const status = await invoke<{ status: string; details?: string }>("get_modbus_connection_status");
+        applyBackendConnectionStatus(status.status, status.details);
+      } catch {
+        addLog("warn", "Unable to fetch backend connection status.");
+      }
+
+      statusPollTimer = setInterval(() => {
+        void invoke<{ status: string; details?: string }>("get_modbus_connection_status")
+          .then((status) => {
+            applyBackendConnectionStatus(status.status, status.details);
+          })
+          .catch(() => {
+            // Keep polling silent to avoid log spam during transient reconnects.
+          });
+      }, 1000);
+    };
+
+    void setup();
+
+    return () => {
+      listenersReady = false;
+      if (unlisten) {
+        unlisten();
+      }
+      if (statusPollTimer) {
+        clearInterval(statusPollTimer);
+      }
+    };
   });
 </script>
 

@@ -24,6 +24,7 @@
     toggleCoilValue,
     setCoilValue,
     readCoil,
+    readAllCoils,
     writeCoil,
     writePendingCoils,
     setCoilLabel,
@@ -43,6 +44,7 @@
     type MassWritePattern,
     type WriteMode,
   } from "../../state/coils.svelte";
+  import { connectionState } from "../../state/connection.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
 
@@ -54,6 +56,15 @@
       setPollActive(false);
     };
   });
+
+  // Stop polling automatically when connection drops
+  $effect(() => {
+    if (connectionState.status !== "connected" && coilState.pollActive) {
+      setPollActive(false);
+    }
+  });
+
+  const connected = $derived(connectionState.status === "connected");
 
   // ── Local panel open/close state ────────────────────────────────────────────
   let readPanelOpen = $state(false);
@@ -70,6 +81,9 @@
   const offCount = $derived(coilState.entries.filter((e) => !e.slaveValue).length);
   const pendingWriteCount = $derived(
     coilState.entries.filter((e) => e.desiredValue !== e.slaveValue).length,
+  );
+  const failedWriteCount = $derived(
+    coilState.entries.filter((e) => e.desiredValue !== e.slaveValue && e.writeError !== null).length,
   );
 
   // ── Inline label editing ────────────────────────────────────────────────────
@@ -126,7 +140,7 @@
     }
   }
 
-  function executeSingleWrite(): void {
+  async function executeSingleWrite(): Promise<void> {
     const parsed = Number(singleWriteAddressInput.trim());
     if (!Number.isFinite(parsed)) return;
     const addr = Math.floor(parsed);
@@ -134,7 +148,7 @@
 
     addExclusiveCoil(addr);
     setCoilValue(addr, singleWriteDesired);
-    writeCoil(addr);
+    await writeCoil(addr);
   }
 
   const patterns: { id: MassWritePattern; label: string; sub: string }[] = [
@@ -168,6 +182,13 @@
 </script>
 
 <div class="coils-page">
+  {#if !connected}
+    <div class="disconnected-banner" role="alert">
+      <span class="banner-icon">⚠</span>
+      <span class="banner-text">Not connected — go to <strong>Connection</strong> and connect to a device before using coil operations.</span>
+    </div>
+  {/if}
+
   <!-- ── Header ─────────────────────────────────────────────────────────────── -->
   <SectionHeader
     title="Coils"
@@ -191,6 +212,7 @@
           class:active={coilState.pollActive}
           title={coilState.pollActive ? "Stop polling" : "Start polling"}
           type="button"
+          disabled={!connected}
           onclick={() => setPollActive(!coilState.pollActive)}
         >
           {#if coilState.pollActive}
@@ -201,7 +223,8 @@
             <span>Poll</span>
           {/if}
         </button>
-        <button class="ctrl-btn icon-only" title="Read once" type="button">
+        <button class="ctrl-btn icon-only" title="Read once" type="button" disabled={!connected}
+          onclick={() => { void readAllCoils(); }}>
           <RefreshCw size={14} />
         </button>
       </div>
@@ -260,10 +283,14 @@
         <button
           class="pending-chip pending-chip-action"
           type="button"
-          onclick={() => writePendingCoils()}
-          title="Write all pending coils"
+          disabled={!connected}
+          onclick={() => { void writePendingCoils(); }}
+          title={connected ? "Write all pending coils" : "Connect to device first"}
         >
           Pending write: {pendingWriteCount}
+          {#if failedWriteCount > 0}
+            <span class="pending-chip-failed">Failed: {failedWriteCount}</span>
+          {/if}
         </button>
       {/if}
 
@@ -412,7 +439,7 @@
                 </button>
               </div>
 
-              <button class="btn btn-sm btn-write" type="button" onclick={executeSingleWrite}>
+              <button class="btn btn-sm btn-write" type="button" disabled={!connected} onclick={() => { void executeSingleWrite(); }}>
                 <Zap size={12} />
                 Write
               </button>
@@ -499,7 +526,7 @@
           <!-- One-shot action -->
           {#if coilState.massMode === "once"}
             <div class="action-row">
-              <button class="btn btn-write" type="button" onclick={executeMassWrite}>
+              <button class="btn btn-write" type="button" disabled={!connected} onclick={() => { void executeMassWrite(); }}>
                 <Wand size={14} />
                 Write {Math.abs(coilState.massTo - coilState.massFrom) + 1} Coils
               </button>
@@ -527,7 +554,7 @@
                   Stop Auto
                 </button>
               {:else}
-                <button class="btn btn-write" type="button" onclick={startAutoToggle}>
+                <button class="btn btn-write" type="button" disabled={!connected} onclick={startAutoToggle}>
                   <Play size={14} />
                   Start Auto
                 </button>
@@ -563,7 +590,7 @@
               class="ct-row"
               class:row-on={entry.slaveValue}
               class:row-pending={entry.pending}
-              class:row-dirty={entry.desiredValue !== entry.slaveValue}
+              class:row-dirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
             >
               <!-- Label cell — inline editable -->
               <span class="label-cell">
@@ -606,8 +633,12 @@
               </span>
 
               <span class="pending-cell">
-                {#if entry.desiredValue !== entry.slaveValue}
-                  <span class="dirty-indicator" title="Needs write">Pending</span>
+                {#if entry.writeError || entry.desiredValue !== entry.slaveValue}
+                  {#if entry.writeError}
+                    <span class="dirty-indicator failed-indicator" title={entry.writeError}>Failed</span>
+                  {:else}
+                    <span class="dirty-indicator" title="Needs write">Pending</span>
+                  {/if}
                 {/if}
               </span>
 
@@ -639,8 +670,9 @@
                 <button
                   class="read-mini"
                   type="button"
-                  onclick={() => readCoil(entry.address)}
-                  title="Read from slave"
+                  disabled={!connected}
+                  onclick={() => { void readCoil(entry.address); }}
+                  title={connected ? "Read from device" : "Connect to device first"}
                 >
                   <RefreshCw size={11} />
                   Read
@@ -648,8 +680,9 @@
                 <button
                   class="write-mini"
                   type="button"
-                  onclick={() => writeCoil(entry.address)}
-                  title={entry.desiredValue ? "Write ON" : "Write OFF"}
+                  disabled={!connected}
+                  onclick={() => { void writeCoil(entry.address); }}
+                  title={connected ? (entry.desiredValue ? "Write ON" : "Write OFF") : "Connect to device first"}
                 >
                   <Zap size={11} />
                   Write
@@ -678,11 +711,8 @@
               class="coil-card"
               class:card-on={entry.slaveValue}
               class:card-pending={entry.pending}
-              class:card-dirty={entry.desiredValue !== entry.slaveValue}
+              class:card-dirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
             >
-              {#if entry.desiredValue !== entry.slaveValue}
-                <span class="dirty-indicator card-dirty-badge" title="Needs write">Pending</span>
-              {/if}
               {#if entry.label}
                 <div class="card-label-wrap">
                   {#if editingAddress === entry.address}
@@ -742,7 +772,15 @@
                   {/if}
                 </div>
               {/if}
-              <div class="card-addr">{addrFmt(entry.address)}</div>
+
+              <div class="card-meta">
+                <div class="card-addr">{addrFmt(entry.address)}</div>
+                {#if entry.writeError}
+                  <span class="dirty-indicator failed-indicator card-inline-status" title={entry.writeError}>Failed</span>
+                {:else if entry.desiredValue !== entry.slaveValue}
+                  <span class="dirty-indicator card-inline-status" title="Needs write">Pending</span>
+                {/if}
+              </div>
 
               <div class="card-status">
                 {#if entry.pending}
@@ -770,8 +808,9 @@
                 <button
                   class="read-mini"
                   type="button"
-                  onclick={() => readCoil(entry.address)}
-                  title="Read from slave"
+                  disabled={!connected}
+                  onclick={() => { void readCoil(entry.address); }}
+                  title={connected ? "Read from device" : "Connect to device first"}
                 >
                   <RefreshCw size={11} />
                   Read
@@ -779,8 +818,9 @@
                 <button
                   class="write-mini"
                   type="button"
-                  onclick={() => writeCoil(entry.address)}
-                  title={entry.desiredValue ? "Write ON" : "Write OFF"}
+                  disabled={!connected}
+                  onclick={() => { void writeCoil(entry.address); }}
+                  title={connected ? (entry.desiredValue ? "Write ON" : "Write OFF") : "Connect to device first"}
                 >
                   <Zap size={11} />
                   Write
@@ -977,6 +1017,18 @@
     border-color: color-mix(in srgb, var(--c-warn) 55%, var(--c-border));
     background: color-mix(in srgb, var(--c-warn) 16%, var(--c-surface-2));
     color: var(--c-text-1);
+  }
+
+  .pending-chip-failed {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--c-danger) 16%, var(--c-surface-3));
+    color: var(--c-danger);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
   }
 
   /* ── Sub-panels (range + write) ──────────────────────────────────────────── */
@@ -1413,6 +1465,12 @@
     flex-shrink: 0;
   }
 
+  .failed-indicator {
+    border-color: color-mix(in srgb, var(--c-danger) 40%, var(--c-border));
+    background: color-mix(in srgb, var(--c-danger) 12%, var(--c-surface-2));
+    color: var(--c-danger);
+  }
+
   .toggle-mini {
     position: relative;
     width: 32px;
@@ -1659,11 +1717,20 @@
     padding: 0 6px;
   }
 
-  .card-dirty-badge {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 1;
+  .card-meta {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .card-inline-status {
+    height: 18px;
+    padding: 0 6px;
+    font-size: 0.6rem;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
   }
 
   @media (max-width: 760px) {
@@ -1713,5 +1780,35 @@
     color: var(--c-text-2);
     font-size: 0.82rem;
     font-style: italic;
+  }
+
+  /* ── Disconnected banner ─────────────────────────────────────────────────── */
+  .disconnected-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--c-warn, #f0a500) 35%, var(--c-border));
+    background: color-mix(in srgb, var(--c-warn, #f0a500) 8%, var(--c-surface-2));
+    font-size: 0.8rem;
+    color: var(--c-text-1);
+  }
+
+  .banner-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .banner-text strong {
+    color: var(--c-accent);
+  }
+
+  :global(button:disabled),
+  :global(select:disabled) {
+    opacity: 0.38;
+    cursor: not-allowed;
+    pointer-events: none;
   }
 </style>

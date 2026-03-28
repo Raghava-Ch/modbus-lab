@@ -1,5 +1,8 @@
 // Coils state — FC 01 (Read) · FC 05 (Write Single) · FC 15 (Write Multiple)
 
+import { invoke } from "@tauri-apps/api/core";
+import { addLog } from "./logs.svelte";
+
 export type CoilView = "table" | "switch";
 export type CoilFilter = "all" | "on" | "off";
 export type CoilOrigin = "range" | "custom";
@@ -17,9 +20,43 @@ export interface CoilEntry {
   slaveValue: boolean;
   desiredValue: boolean;
   pending: boolean;
+  writeError: string | null;
   label: string;
   origin: CoilOrigin;
 }
+
+interface BackendReadCoilsResponse {
+  coils: Array<{ address: number; value: boolean }>;
+  startAddress: number;
+  quantity: number;
+}
+
+interface BackendWriteCoilResponse {
+  address: number;
+  value: boolean;
+}
+
+interface BackendWriteMassCoilsResponse {
+  writtenCount: number;
+  totalCount: number;
+  failures: Array<{ address: number; code: string; message: string }>;
+}
+
+function parseInvokeError(err: unknown): string {
+  if (typeof err === "string") {
+    try {
+      const parsed = JSON.parse(err) as { message?: string };
+      return parsed.message ?? err;
+    } catch {
+      return err;
+    }
+  }
+  if (typeof err === "object" && err !== null && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return "Unknown error";
+}
+
 
 const COIL_VIEW_KEY = "modbux.coilView";
 
@@ -29,6 +66,7 @@ function generateCoils(startAddress: number, count: number): CoilEntry[] {
     slaveValue: false,
     desiredValue: false,
     pending: false,
+    writeError: null,
     label: "",
     origin: "range",
   }));
@@ -82,60 +120,80 @@ export function toggleCoilValue(address: number): void {
   const entry = coilState.entries.find((e) => e.address === address);
   if (!entry) return;
   entry.desiredValue = !entry.desiredValue;
+  entry.writeError = null;
 }
 
 export function setCoilValue(address: number, value: boolean): void {
   const entry = coilState.entries.find((e) => e.address === address);
   if (!entry) return;
   entry.desiredValue = value;
+  entry.writeError = null;
 }
 
-function commitWrite(addresses: number[]): void {
-  for (const address of addresses) {
-    const entry = coilState.entries.find((e) => e.address === address);
-    if (entry) {
-      entry.slaveValue = entry.desiredValue;
-      entry.pending = false;
+export async function writeCoil(address: number): Promise<void> {
+  const entry = coilState.entries.find((e) => e.address === address);
+  if (!entry) return;
+  const valueToWrite = entry.desiredValue;
+  entry.pending = true;
+  entry.writeError = null;
+  try {
+    const response = await invoke<BackendWriteCoilResponse>("write_coil", {
+      request: { address, value: valueToWrite },
+    });
+    const e = coilState.entries.find((e2) => e2.address === address);
+    if (e) {
+      e.slaveValue = response.value;
+      e.pending = false;
+      e.writeError = null;
     }
+    addLog("traffic", `Coil ${address} → ${response.value ? "ON" : "OFF"} ✓`);
+  } catch (err) {
+    const e = coilState.entries.find((e2) => e2.address === address);
+    const message = parseInvokeError(err);
+    if (e) {
+      e.pending = false;
+      e.writeError = message;
+    }
+    addLog("error", `Write coil ${address} failed: ${message}`);
   }
 }
 
-export function writeCoil(address: number): void {
+export async function writePendingCoils(): Promise<number> {
+  const pending = coilState.entries.filter((e) => e.desiredValue !== e.slaveValue);
+  if (pending.length === 0) return 0;
+  const valueMap = new Map<number, boolean>(pending.map((entry) => [entry.address, entry.desiredValue]));
+  const response = await writeAddressMap(valueMap);
+  return response?.writtenCount ?? 0;
+}
+
+export async function readCoil(address: number): Promise<void> {
   const entry = coilState.entries.find((e) => e.address === address);
   if (!entry) return;
   entry.pending = true;
-  setTimeout(() => {
-    commitWrite([address]);
-  }, 400);
-}
-
-export function writePendingCoils(): number {
-  const pendingAddresses = coilState.entries
-    .filter((entry) => entry.desiredValue !== entry.slaveValue)
-    .map((entry) => entry.address);
-
-  if (pendingAddresses.length === 0) return 0;
-
-  for (const address of pendingAddresses) {
-    const entry = coilState.entries.find((e) => e.address === address);
-    if (entry) entry.pending = true;
-  }
-
-  setTimeout(() => {
-    commitWrite(pendingAddresses);
-  }, 400);
-
-  return pendingAddresses.length;
-}
-
-export function readCoil(address: number): void {
-  const entry = coilState.entries.find((e) => e.address === address);
-  if (!entry) return;
-  entry.pending = true;
-  setTimeout(() => {
+  try {
+    const response = await invoke<BackendReadCoilsResponse>("read_coils", {
+      request: { startAddress: address, quantity: 1 },
+    });
+    const coilVal = response.coils.find((c) => c.address === address);
+    const e = coilState.entries.find((e2) => e2.address === address);
+    if (e && coilVal !== undefined) {
+      e.slaveValue = coilVal.value;
+      if (!e.pending || e.desiredValue === e.slaveValue) {
+        e.desiredValue = coilVal.value;
+      }
+      if (e.desiredValue === e.slaveValue) {
+        e.writeError = null;
+      }
+      e.pending = false;
+    } else if (e) {
+      e.pending = false;
+    }
+    addLog("traffic", `Coil ${address} read → ${coilVal?.value ? "ON" : "OFF"}`);
+  } catch (err) {
     const e = coilState.entries.find((e2) => e2.address === address);
     if (e) e.pending = false;
-  }, 300);
+    addLog("error", `Read coil ${address} failed: ${parseInvokeError(err)}`);
+  }
 }
 
 export function setCoilLabel(address: number, label: string): void {
@@ -161,37 +219,94 @@ function getTargetAddresses(): number[] {
   return getRangeAddresses(coilState.massFrom, coilState.massTo);
 }
 
-function applyPattern(pattern: MassWritePattern, addresses: number[]): void {
+function computePatternValues(pattern: MassWritePattern, addresses: number[]): Map<number, boolean> {
+  const result = new Map<number, boolean>();
   let i = 0;
   for (const address of addresses) {
-    const entry = coilState.entries.find((e) => e.address === address);
-    if (!entry) continue;
+    let value: boolean;
     switch (pattern) {
-      case "all-on":
-        entry.desiredValue = true;
-        break;
-      case "all-off":
-        entry.desiredValue = false;
-        break;
-      case "alternating":
-        entry.desiredValue = i % 2 === 0;
-        break;
-      case "alternating-inv":
-        entry.desiredValue = i % 2 !== 0;
-        break;
-      case "every-third":
-        entry.desiredValue = i % 3 === 0;
-        break;
-      case "random":
-        entry.desiredValue = Math.random() >= 0.5;
-        break;
+      case "all-on":          value = true; break;
+      case "all-off":         value = false; break;
+      case "alternating":     value = i % 2 === 0; break;
+      case "alternating-inv": value = i % 2 !== 0; break;
+      case "every-third":     value = i % 3 === 0; break;
+      case "random":          value = Math.random() >= 0.5; break;
+      default:                value = false;
     }
-    entry.pending = true;
+    result.set(address, value);
     i++;
   }
-  setTimeout(() => {
-    commitWrite(addresses);
-  }, 400);
+  return result;
+}
+
+async function writeAddressMap(
+  valueMap: Map<number, boolean>
+): Promise<BackendWriteMassCoilsResponse | null> {
+  if (valueMap.size === 0) return null;
+
+  // Set pending state immediately
+  for (const [address, value] of valueMap) {
+    const entry = coilState.entries.find((e) => e.address === address);
+    if (entry) {
+      entry.desiredValue = value;
+      entry.pending = true;
+      entry.writeError = null;
+    }
+  }
+
+  // Convert to array for batch request
+  const coils = Array.from(valueMap, ([address, value]) => ({ address, value }));
+
+  try {
+    const response = await invoke<BackendWriteMassCoilsResponse>("write_coils_batch", {
+      request: { coils },
+    });
+
+    const failureMap = new Map(response.failures.map((failure) => [failure.address, failure]));
+
+    // Update state based on per-address results
+    for (const [address, value] of valueMap) {
+      const e = coilState.entries.find((e2) => e2.address === address);
+      if (e) {
+        e.pending = false;
+        const failure = failureMap.get(address);
+        if (failure) {
+          e.writeError = `${failure.code}: ${failure.message}`;
+        } else {
+          e.slaveValue = value;
+          e.writeError = null;
+        }
+      }
+    }
+
+    if (response.failures.length === 0) {
+      addLog(
+        "traffic",
+        `Batch write: ${response.writtenCount}/${response.totalCount} coil${response.totalCount === 1 ? "" : "s"} ✓`
+      );
+    } else {
+      const failedAddresses = response.failures.map((failure) => failure.address).join(", ");
+      const failureCodes = [...new Set(response.failures.map((failure) => failure.code))].join(", ");
+      addLog(
+        "warn",
+        `Batch partial failure: ${response.writtenCount}/${response.totalCount} succeeded; failed coil${response.failures.length === 1 ? "" : "s"} ${failedAddresses}; exception code${failureCodes.includes(",") ? "s" : ""}: ${failureCodes}`
+      );
+    }
+
+    return response;
+  } catch (err) {
+    // Clear pending on all entries on batch failure
+    const message = parseInvokeError(err);
+    for (const address of valueMap.keys()) {
+      const e = coilState.entries.find((e2) => e2.address === address);
+      if (e) {
+        e.pending = false;
+        e.writeError = message;
+      }
+    }
+    addLog("error", `Batch write failed: ${message}`);
+    return null;
+  }
 }
 
 function invertAddresses(addresses: number[]): void {
@@ -199,32 +314,37 @@ function invertAddresses(addresses: number[]): void {
     const entry = coilState.entries.find((e) => e.address === address);
     if (entry) {
       entry.desiredValue = !entry.desiredValue;
+      entry.writeError = null;
     }
   }
 }
 
 // ── Mass write ────────────────────────────────────────────────────────────────
 
-export function executeMassWrite(): void {
+export async function executeMassWrite(): Promise<void> {
   const targets = getTargetAddresses();
-  applyPattern(coilState.massPattern, targets);
+  if (targets.length === 0) return;
+  const valueMap = computePatternValues(coilState.massPattern, targets);
+  await writeAddressMap(valueMap);
 }
 
 export function startAutoToggle(): void {
   if (autoToggleTimer) clearInterval(autoToggleTimer);
   coilState.massAutoActive = true;
-  const targets = getTargetAddresses();
-  applyPattern(coilState.massPattern, targets);
+
+  // First pass: apply the selected pattern immediately
+  const initialTargets = getTargetAddresses();
+  const initialMap = computePatternValues(coilState.massPattern, initialTargets);
+  void writeAddressMap(initialMap);
+
   autoToggleTimer = setInterval(() => {
-    const nextTargets = getTargetAddresses();
-    invertAddresses(nextTargets);
-    for (const address of nextTargets) {
-      const entry = coilState.entries.find((e) => e.address === address);
-      if (entry) entry.pending = true;
-    }
-    setTimeout(() => {
-      commitWrite(nextTargets);
-    }, 250);
+    const targets = getTargetAddresses();
+    invertAddresses(targets);
+    const invertMap = new Map(targets.map((addr) => {
+      const entry = coilState.entries.find((e) => e.address === addr);
+      return [addr, entry?.desiredValue ?? false] as [number, boolean];
+    }));
+    void writeAddressMap(invertMap);
   }, coilState.massAutoInterval);
 }
 
@@ -264,6 +384,7 @@ export function addExclusiveCoil(address: number): boolean {
       slaveValue: false,
       desiredValue: false,
       pending: false,
+      writeError: null,
       label: "",
       origin: "custom",
     },
@@ -314,6 +435,42 @@ export function removeAllCustomCoils(): void {
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
+export async function readAllCoils(): Promise<void> {
+  if (coilState.entries.length === 0) return;
+
+  const addresses = coilState.entries.map((e) => e.address);
+  const startAddress = Math.min(...addresses);
+  const endAddress = Math.max(...addresses);
+  const quantity = endAddress - startAddress + 1;
+
+  if (quantity > 2000) {
+    addLog("warn", `Coil range too large (${quantity} > 2000). Narrow the address range.`);
+    return;
+  }
+
+  try {
+    const response = await invoke<BackendReadCoilsResponse>("read_coils", {
+      request: { startAddress, quantity },
+    });
+
+    for (const coilVal of response.coils) {
+      const entry = coilState.entries.find((e) => e.address === coilVal.address);
+      if (entry && !entry.pending) {
+        entry.slaveValue = coilVal.value;
+        if (entry.desiredValue === entry.slaveValue || !entry.pending) {
+          entry.desiredValue = coilVal.value;
+        }
+        if (entry.desiredValue === entry.slaveValue) {
+          entry.writeError = null;
+        }
+      }
+    }
+    addLog("traffic", `FC01 read ${quantity} coil${quantity === 1 ? "" : "s"} from ${startAddress}`);
+  } catch (err) {
+    addLog("error", `Read coils failed: ${parseInvokeError(err)}`);
+  }
+}
+
 export function setPollActive(active: boolean): void {
   coilState.pollActive = active;
   if (pollTimer) {
@@ -321,8 +478,8 @@ export function setPollActive(active: boolean): void {
     pollTimer = null;
   }
   if (active) {
-    // In real app: trigger Modbus FC01 read each interval
-    pollTimer = setInterval(() => {}, coilState.pollInterval);
+    void readAllCoils();
+    pollTimer = setInterval(() => { void readAllCoils(); }, coilState.pollInterval);
   }
 }
 
@@ -350,6 +507,7 @@ export function applyAddressRange(startAddress: number, count: number): void {
       ...entry,
       slaveValue: existing.slaveValue,
       desiredValue: existing.desiredValue,
+      writeError: existing.writeError,
       label: existing.label,
       pending: existing.pending,
       origin: "range" as const,
