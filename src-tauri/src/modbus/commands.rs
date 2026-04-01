@@ -1,0 +1,566 @@
+use tauri::{AppHandle, State};
+
+use super::events::emit_log;
+use super::service::AppState;
+use super::types::{
+    ApiError, ApiResult, BackendEventLevel, CommandAck, ConnectionStatusPayload, DisconnectRequest,
+    ReadCoilsRequest, ReadCoilsResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
+    ReadHoldingRegistersRequest, ReadHoldingRegistersResponse, ReadInputRegistersRequest,
+    ReadInputRegistersResponse, SerialConnectRequest, TcpConnectRequest, WriteCoilRequest,
+    WriteCoilResponse, WriteHoldingRegisterRequest, WriteHoldingRegisterResponse,
+    WriteMassCoilsRequest, WriteMassCoilsResponse, WriteMassHoldingRegistersRequest,
+    WriteMassHoldingRegistersResponse,
+};
+
+#[tauri::command]
+pub async fn connect_modbus_tcp(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: TcpConnectRequest,
+) -> ApiResult<CommandAck> {
+    emit_log(
+        &app,
+        BackendEventLevel::Info,
+        "connection",
+        format!(
+            "connect.tcp start host={} port={}",
+            request.host, request.port
+        ),
+        None,
+        request.analytics.clone(),
+    )
+    .await;
+
+    let status = match state.connect_tcp(&request).await {
+        Ok(status) => status,
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "connection",
+                format!("connect.tcp err msg={}", err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            return Err(err);
+        }
+    };
+
+    emit_log(
+        &app,
+        BackendEventLevel::Info,
+        "connection",
+        "connect.tcp ok",
+        Some(status.clone()),
+        request.analytics.clone(),
+    )
+    .await;
+
+    Ok(CommandAck {
+        ok: true,
+        message: "TCP connection established".to_string(),
+        status,
+        analytics: request.analytics,
+    })
+}
+
+#[tauri::command]
+pub async fn disconnect_modbus(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Option<DisconnectRequest>,
+) -> ApiResult<CommandAck> {
+    let analytics = request.and_then(|r| r.analytics);
+
+    let current = state.status().await;
+    if matches!(current.status, super::types::ConnectionStatus::Disconnected) {
+        emit_log(
+            &app,
+            BackendEventLevel::Warn,
+            "connection",
+            "disconnect req=no_session",
+            Some(current.clone()),
+            analytics.clone(),
+        )
+        .await;
+    } else {
+        emit_log(
+            &app,
+            BackendEventLevel::Info,
+            "connection",
+            "disconnect start",
+            Some(current.clone()),
+            analytics.clone(),
+        )
+        .await;
+    }
+
+    let outcome = state.disconnect().await;
+
+    if outcome.had_active_connection {
+        emit_log(
+            &app,
+            BackendEventLevel::Info,
+            "connection",
+            "disconnect ok",
+            Some(outcome.status.clone()),
+            analytics.clone(),
+        )
+        .await;
+    }
+
+    Ok(CommandAck {
+        ok: true,
+        message: if outcome.had_active_connection {
+            "Disconnected".to_string()
+        } else {
+            "No active connection".to_string()
+        },
+        status: outcome.status,
+        analytics,
+    })
+}
+
+#[tauri::command]
+pub async fn connect_modbus_serial_rtu(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: SerialConnectRequest,
+) -> ApiResult<CommandAck> {
+    emit_log(
+        &app,
+        BackendEventLevel::Warn,
+        "connection",
+        "connect.rtu scaffold",
+        None,
+        request.analytics.clone(),
+    )
+    .await;
+
+    match state.scaffold_serial_rtu(&request).await {
+        Ok(status) => Ok(CommandAck {
+            ok: true,
+            message: "Serial RTU connected".to_string(),
+            status,
+            analytics: request.analytics,
+        }),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Warn,
+                "connection",
+                format!("connect.rtu err msg={}", err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn connect_modbus_serial_ascii(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: SerialConnectRequest,
+) -> ApiResult<CommandAck> {
+    emit_log(
+        &app,
+        BackendEventLevel::Warn,
+        "connection",
+        "connect.ascii scaffold",
+        None,
+        request.analytics.clone(),
+    )
+    .await;
+
+    match state.scaffold_serial_ascii(&request).await {
+        Ok(status) => Ok(CommandAck {
+            ok: true,
+            message: "Serial ASCII connected".to_string(),
+            status,
+            analytics: request.analytics,
+        }),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Warn,
+                "connection",
+                format!("connect.ascii err msg={}", err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_modbus_connection_status(
+    state: State<'_, AppState>,
+) -> Result<ConnectionStatusPayload, ApiError> {
+    Ok(state.status().await)
+}
+
+#[tauri::command]
+pub async fn read_coils(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadCoilsRequest,
+) -> ApiResult<ReadCoilsResponse> {
+    match state.read_coils(&request).await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "coils",
+                format!(
+                    "fc01.read err start={} qty={} end={} msg={}",
+                    request.start_address,
+                    request.quantity,
+                    request
+                        .start_address
+                        .saturating_add(request.quantity.saturating_sub(1)),
+                    err.message
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn read_discrete_inputs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadDiscreteInputsRequest,
+) -> ApiResult<ReadDiscreteInputsResponse> {
+    match state.read_discrete_inputs(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Info,
+                "discrete-inputs",
+                format!(
+                    "fc02.read ok start={} qty={} end={}",
+                    response.start_address,
+                    response.quantity,
+                    response
+                        .start_address
+                        .saturating_add(response.quantity.saturating_sub(1))
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            let details_msg = if let Some(details) = &err.details {
+                format!("{} ({})", err.message, details)
+            } else {
+                err.message.clone()
+            };
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "discrete-inputs",
+                format!(
+                    "fc02.read err start={} qty={} end={} msg={}",
+                    request.start_address,
+                    request.quantity,
+                    request
+                        .start_address
+                        .saturating_add(request.quantity.saturating_sub(1)),
+                    details_msg
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn read_holding_registers(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadHoldingRegistersRequest,
+) -> ApiResult<ReadHoldingRegistersResponse> {
+    match state.read_holding_registers(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Info,
+                "holding-registers",
+                format!(
+                    "fc03.read ok start={} qty={} end={}",
+                    response.start_address,
+                    response.quantity,
+                    response
+                        .start_address
+                        .saturating_add(response.quantity.saturating_sub(1))
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            let details_msg = if let Some(details) = &err.details {
+                format!("{} ({})", err.message, details)
+            } else {
+                err.message.clone()
+            };
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "holding-registers",
+                format!(
+                    "fc03.read err start={} qty={} end={} msg={}",
+                    request.start_address,
+                    request.quantity,
+                    request
+                        .start_address
+                        .saturating_add(request.quantity.saturating_sub(1)),
+                    details_msg
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn read_input_registers(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadInputRegistersRequest,
+) -> ApiResult<ReadInputRegistersResponse> {
+    match state.read_input_registers(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Info,
+                "input-registers",
+                format!(
+                    "fc04.read ok start={} qty={} end={}",
+                    response.start_address,
+                    response.quantity,
+                    response
+                        .start_address
+                        .saturating_add(response.quantity.saturating_sub(1))
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            let details_msg = if let Some(details) = &err.details {
+                format!("{} ({})", err.message, details)
+            } else {
+                err.message.clone()
+            };
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "input-registers",
+                format!(
+                    "fc04.read err start={} qty={} end={} msg={}",
+                    request.start_address,
+                    request.quantity,
+                    request
+                        .start_address
+                        .saturating_add(request.quantity.saturating_sub(1)),
+                    details_msg
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn write_coil(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: WriteCoilRequest,
+) -> ApiResult<WriteCoilResponse> {
+    match state.write_coil(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Info,
+                "coils",
+                format!(
+                    "fc05.write ok addr={} val={}",
+                    response.address,
+                    if response.value { 1 } else { 0 }
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "coils",
+                format!(
+                    "fc05.write err addr={} msg={}",
+                    request.address, err.message
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn write_coils_batch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: WriteMassCoilsRequest,
+) -> ApiResult<WriteMassCoilsResponse> {
+    match state.write_coils_optimized(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Info,
+                "coils",
+                format!(
+                    "fc15.write ok req={} ok={} fail={}",
+                    request.coils.len(),
+                    response.written_count,
+                    response.total_count.saturating_sub(response.written_count)
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "coils",
+                format!(
+                    "fc15.write err req={} msg={}",
+                    request.coils.len(),
+                    err.message
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn write_holding_register(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: WriteHoldingRegisterRequest,
+) -> ApiResult<WriteHoldingRegisterResponse> {
+    match state.write_holding_register(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Info,
+                "holding-registers",
+                format!(
+                    "fc06.write ok addr={} val={}",
+                    response.address, response.value
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "holding-registers",
+                format!(
+                    "fc06.write err addr={} msg={}",
+                    request.address, err.message
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn write_holding_registers_batch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: WriteMassHoldingRegistersRequest,
+) -> ApiResult<WriteMassHoldingRegistersResponse> {
+    match state.write_holding_registers_optimized(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Info,
+                "holding-registers",
+                format!(
+                    "fc16.write ok req={} ok={} fail={}",
+                    request.registers.len(),
+                    response.written_count,
+                    response.total_count.saturating_sub(response.written_count)
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "holding-registers",
+                format!(
+                    "fc16.write err req={} msg={}",
+                    request.registers.len(),
+                    err.message
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}

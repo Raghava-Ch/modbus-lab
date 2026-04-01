@@ -1,7 +1,7 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import { ChevronDown, ChevronUp, Download, Trash2 } from "lucide-svelte";
+  import { ChevronDown, ChevronUp, Download, Eraser } from "lucide-svelte";
   import type { LogExportScope, LogFilter } from "../../../state/logs.svelte";
   import IconButton from "../../shared/IconButton.svelte";
   import LogFilterTabs from "./LogFilterTabs.svelte";
@@ -22,13 +22,26 @@
     visibleCount: number;
     onFilter: (filter: LogFilter) => void;
     onClear: () => void;
-    onSave: (scope: LogExportScope) => void;
+    onSave: (scope: LogExportScope) => Promise<void> | void;
     onToggle: () => void;
   }>();
 
   let saveScope = $state<LogExportScope>("filtered");
+  let isSaving = $state(false);
 
-  const saveDisabled = $derived(saveScope === "all" ? totalCount === 0 : visibleCount === 0);
+  const saveDisabled = $derived(isSaving || (saveScope === "all" ? totalCount === 0 : visibleCount === 0));
+  const filteredScopeLabel = $derived(
+    filter === "all" ? `Filtered (${visibleCount})` : `Filtered ${filter.toUpperCase()} (${visibleCount})`,
+  );
+
+  async function handleSaveClick(): Promise<void> {
+    isSaving = true;
+    try {
+      await onSave(saveScope);
+    } finally {
+      isSaving = false;
+    }
+  }
 </script>
 
 <header class="log-toolbar">
@@ -37,23 +50,25 @@
   <LogFilterTabs active={filter} onSelect={onFilter} />
 
   <div class="actions">
-    <div class="export-controls">
-      <span class="export-label">Export</span>
+    <div class="export-group">
+      <div class="export-controls">
+        <span class="export-label">Export</span>
 
-      <div class="scope-toggle" role="group" aria-label="Select log export scope">
-        <button
-          class:active={saveScope === "filtered"}
-          type="button"
-          onclick={() => (saveScope = "filtered")}
-        >
-          Selected ({visibleCount})
-        </button>
-        <button class:active={saveScope === "all"} type="button" onclick={() => (saveScope = "all")}>
-          All ({totalCount})
-        </button>
+        <div class="scope-toggle" role="group" aria-label="Select log export scope">
+          <button
+            class:active={saveScope === "filtered"}
+            type="button"
+            onclick={() => (saveScope = "filtered")}
+          >
+            {filteredScopeLabel}
+          </button>
+          <button class:active={saveScope === "all"} type="button" onclick={() => (saveScope = "all")}>
+            All ({totalCount})
+          </button>
+        </div>
       </div>
 
-      <button class="save-btn" type="button" onclick={() => onSave(saveScope)} disabled={saveDisabled}>
+      <button class="save-btn" type="button" onclick={handleSaveClick} disabled={saveDisabled}>
         <Download size={14} />
         <span>Save</span>
       </button>
@@ -61,7 +76,7 @@
 
     <IconButton label="Clear logs" title="Clear logs" onclick={onClear}>
       {#snippet children()}
-        <Trash2 size={16} />
+        <Eraser size={16} />
       {/snippet}
     </IconButton>
 
@@ -97,35 +112,49 @@
     gap: 8px;
   }
 
+  .export-group {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    background: var(--c-surface-2);
+    overflow: hidden;
+  }
+
   .export-controls {
     display: flex;
     align-items: center;
     gap: 8px;
+    padding: 6px 10px;
+    border-right: 1px solid var(--c-border);
   }
 
   .export-label {
     color: var(--c-text-1);
     font-size: 0.74rem;
     letter-spacing: 0.02em;
+    white-space: nowrap;
   }
 
   .scope-toggle {
     display: inline-flex;
     align-items: center;
-    border: 1px solid var(--c-border);
-    border-radius: 8px;
+    border: 0;
     overflow: hidden;
   }
 
   .scope-toggle button {
     border: 0;
     border-right: 1px solid var(--c-border);
-    padding: 6px 10px;
-    background: var(--c-surface-2);
+    padding: 4px 8px;
+    background: transparent;
     color: var(--c-text-2);
     font: inherit;
     font-size: 0.75rem;
     white-space: nowrap;
+    cursor: pointer;
+    transition: all 140ms ease;
   }
 
   .scope-toggle button:last-child {
@@ -146,18 +175,25 @@
   .save-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    min-height: 32px;
-    padding: 0 12px;
-    border: 1px solid color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-2));
+    gap: 4px;
+    height: 32px;
+    padding: 0 10px;
+    border: 0;
+    background: transparent;
     color: var(--c-text-1);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
+    font: inherit;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 140ms ease;
   }
 
   .save-btn :global(svg) {
     color: var(--c-accent);
+  }
+
+  .save-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--c-surface-3) 78%, var(--c-surface-2));
   }
 
   .save-btn:disabled {
@@ -172,6 +208,7 @@
     }
 
     .actions,
+    .export-group,
     .export-controls,
     .scope-toggle {
       flex-wrap: wrap;

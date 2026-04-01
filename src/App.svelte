@@ -12,7 +12,7 @@
     }
 
     seeded = true;
-    addLog("info", "ModBux shell initialized in demo mode.");
+    addLog("info", "ModBux shell initialized.");
   });
 </script>
 

@@ -15,8 +15,8 @@
 
   const filtered = $derived(getFilteredLogs(logState.filter));
 
-  function handleSave(scope: LogExportScope): void {
-    saveLogsToFile(scope === "all" ? logState.entries : filtered, scope, logState.filter);
+  async function handleSave(scope: LogExportScope): Promise<void> {
+    await saveLogsToFile(scope === "all" ? logState.entries : filtered, scope, logState.filter);
   }
 
   function startResize(event: PointerEvent): void {

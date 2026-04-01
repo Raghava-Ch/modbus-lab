@@ -2,9 +2,13 @@ export type LogLevel = "info" | "warn" | "error" | "traffic";
 export type LogFilter = "all" | LogLevel;
 export type LogExportScope = "all" | "filtered";
 
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { enforceLogRetention, formatLogTimestamp } from "./settings.svelte";
+
 export interface LogEntry {
   id: number;
-  timestamp: string;
+  timestamp: number;
   level: LogLevel;
   message: string;
 }
@@ -23,15 +27,16 @@ export function getFilteredLogs(filter: LogFilter): LogEntry[] {
 }
 
 export function addLog(level: LogLevel, message: string): void {
-  logState.entries = [
+  const nextEntries = [
     ...logState.entries,
     {
       id: nextId++,
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp: Date.now(),
       level,
       message,
     },
   ];
+  logState.entries = enforceLogRetention(nextEntries);
 }
 
 export function clearLogs(): void {
@@ -42,10 +47,21 @@ export function setLogFilter(filter: LogFilter): void {
   logState.filter = filter;
 }
 
-function formatLogEntries(entries: LogEntry[]): string {
-  return entries
-    .map((entry) => `[${entry.timestamp}] ${entry.level.toUpperCase()} ${entry.message}`)
+function formatLogEntries(entries: LogEntry[], scope: LogExportScope, filter: LogFilter): string {
+  const header = [
+    "# ModBux Log Export",
+    `# exportedAt=${new Date().toISOString()}`,
+    `# scope=${scope}`,
+    `# filter=${filter}`,
+    `# count=${entries.length}`,
+    "",
+  ].join("\n");
+
+  const lines = entries
+    .map((entry) => `[${formatLogTimestamp(entry.timestamp)}] ${entry.level.toUpperCase()} ${entry.message}`)
     .join("\n");
+
+  return `${header}${lines}`;
 }
 
 function buildLogFileName(scope: LogExportScope, filter: LogFilter): string {
@@ -54,24 +70,31 @@ function buildLogFileName(scope: LogExportScope, filter: LogFilter): string {
   return `modbux-${suffix}-${stamp}.log`;
 }
 
-export function saveLogsToFile(entries: LogEntry[], scope: LogExportScope, filter: LogFilter): void {
-  if (typeof document === "undefined" || entries.length === 0) {
+export async function saveLogsToFile(entries: LogEntry[], scope: LogExportScope, filter: LogFilter): Promise<void> {
+  if (entries.length === 0) {
     return;
   }
 
-  const blob = new Blob([formatLogEntries(entries)], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
+  const content = formatLogEntries(entries, scope, filter);
+  const defaultName = buildLogFileName(scope, filter);
 
-  anchor.href = url;
-  anchor.download = buildLogFileName(scope, filter);
-  anchor.style.display = "none";
+  try {
+    const filePath = await save({
+      defaultPath: defaultName,
+      filters: [
+        { name: "Log Files", extensions: ["log"] },
+        { name: "Text Files", extensions: ["txt"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
 
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 0);
+    if (filePath) {
+      await writeTextFile(filePath, content);
+      console.log("Log file saved successfully to:", filePath);
+    } else {
+      console.log("Log file save cancelled by user");
+    }
+  } catch (error) {
+    console.error("Failed to save log file:", error);
+  }
 }
