@@ -2,12 +2,13 @@
 
 <script lang="ts">
   import type { LogEntry } from "../../../state/logs.svelte";
+  import { formatLogTimestamp } from "../../../state/settings.svelte";
 
   let { entry } = $props<{ entry: LogEntry }>();
 </script>
 
 <div class="log-row">
-  <span class="time">{entry.timestamp}</span>
+  <span class="time">{formatLogTimestamp(entry.timestamp)}</span>
   <span class={`level ${entry.level}`}>{entry.level.toUpperCase()}</span>
   <span class="message" title={entry.message}>{entry.message}</span>
 </div>

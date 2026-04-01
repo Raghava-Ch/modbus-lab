@@ -5,7 +5,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 pub const DEFAULT_TCP_CONNECTION_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RESPONSE_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RETRY_ATTEMPTS: u8 = 2;
-pub const DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 5_000;
+pub const DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -164,7 +164,10 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    pub fn invalid_request(message: impl Into<String>, analytics: Option<AnalyticsContext>) -> Self {
+    pub fn invalid_request(
+        message: impl Into<String>,
+        analytics: Option<AnalyticsContext>,
+    ) -> Self {
         Self {
             code: ErrorCode::InvalidRequest,
             message: message.into(),
@@ -182,7 +185,10 @@ impl ApiError {
         }
     }
 
-    pub fn not_implemented(feature: impl Into<String>, analytics: Option<AnalyticsContext>) -> Self {
+    pub fn not_implemented(
+        feature: impl Into<String>,
+        analytics: Option<AnalyticsContext>,
+    ) -> Self {
         let feature = feature.into();
         Self {
             code: ErrorCode::NotImplementedYet,
@@ -259,9 +265,86 @@ pub struct ReadCoilsResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReadDiscreteInputsRequest {
+    pub start_address: u16,
+    pub quantity: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscreteInputEntry {
+    pub address: u16,
+    pub value: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadDiscreteInputsResponse {
+    pub inputs: Vec<DiscreteInputEntry>,
+    pub start_address: u16,
+    pub quantity: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadHoldingRegistersRequest {
+    pub start_address: u16,
+    pub quantity: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadInputRegistersRequest {
+    pub start_address: u16,
+    pub quantity: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterEntry {
+    pub address: u16,
+    pub value: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadHoldingRegistersResponse {
+    pub registers: Vec<RegisterEntry>,
+    pub start_address: u16,
+    pub quantity: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadInputRegistersResponse {
+    pub registers: Vec<RegisterEntry>,
+    pub start_address: u16,
+    pub quantity: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WriteCoilResponse {
     pub address: u16,
     pub value: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteHoldingRegisterRequest {
+    pub address: u16,
+    pub value: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteHoldingRegisterResponse {
+    pub address: u16,
+    pub value: u16,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -285,6 +368,29 @@ pub struct WriteMassCoilsResponse {
     pub written_count: usize,
     pub total_count: usize,
     pub failures: Vec<CoilWriteFailure>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteMassHoldingRegistersRequest {
+    pub registers: Vec<RegisterEntry>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterWriteFailure {
+    pub address: u16,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteMassHoldingRegistersResponse {
+    pub written_count: usize,
+    pub total_count: usize,
+    pub failures: Vec<RegisterWriteFailure>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

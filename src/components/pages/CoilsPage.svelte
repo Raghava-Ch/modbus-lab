@@ -9,12 +9,10 @@
     Wand,
     ChevronDown,
     ChevronUp,
+    LoaderCircle,
     Zap,
     Timer,
     Repeat,
-    Pencil,
-    Check,
-    X,
   } from "lucide-svelte";
   import {
     coilState,
@@ -23,6 +21,7 @@
     setCoilFilter,
     toggleCoilValue,
     setCoilValue,
+    syncAllSlaveToDesired,
     readCoil,
     readAllCoils,
     writeCoil,
@@ -38,15 +37,23 @@
     addExclusiveCoil,
     generateRandomExclusiveCoilAddress,
     removeCoil,
-    removeAllCustomCoils,
+    removeAllCoils,
     getFilteredCoils,
     buildMassPreview,
     type MassWritePattern,
     type WriteMode,
   } from "../../state/coils.svelte";
   import { connectionState } from "../../state/connection.svelte";
+  import {
+    formatAddressWithSettings,
+    getGlobalPollingMaxAddressCount,
+    isPollingAllowedForCount,
+  } from "../../state/settings.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
+  import ToggleSwitch from "../shared/ToggleSwitch.svelte";
+  import TableRow from "../shared/TableRow.svelte";
+  import SwitchCard from "../shared/SwitchCard.svelte";
 
   // ── Init & cleanup ──────────────────────────────────────────────────────────
   $effect(() => {
@@ -73,9 +80,142 @@
   // ── Address range inputs (local; committed on Apply) ────────────────────────
   let rangeStart = $state(coilState.startAddress);
   let rangeCount = $state(coilState.coilCount);
+  let rangeApplyPending = $state(false);
+  const RANGE_APPLY_MIN_SPINNER_MS = 250;
 
   // ── Filtered coil list ──────────────────────────────────────────────────────
   const filtered = $derived(getFilteredCoils());
+  const VIRTUAL_TABLE_THRESHOLD = 300;
+  const VIRTUAL_SWITCH_THRESHOLD = 200;
+  const TABLE_ROW_HEIGHT = 34;
+  const SWITCH_CARD_ROW_HEIGHT = 210;
+  const SWITCH_CARD_MIN_WIDTH = 180;
+  const VIRTUAL_OVERSCAN_ROWS = 8;
+
+  let tableScrollTop = $state(0);
+  let tableViewportHeight = $state(460);
+  let switchScrollTop = $state(0);
+  let switchViewportHeight = $state(520);
+  let switchViewportWidth = $state(720);
+  let tableBodyEl: HTMLDivElement | null = $state(null);
+  let switchScrollEl: HTMLDivElement | null = $state(null);
+  let dynamicScrollMaxHeight = $state(680);
+
+  function refreshDynamicScrollMaxHeight(): void {
+    if (typeof window === "undefined") return;
+
+    const targetEl = coilState.view === "table" ? tableBodyEl : switchScrollEl;
+    if (!targetEl) return;
+
+    const mainContent = document.querySelector(".main-content") as HTMLElement | null;
+    const bodyRect = targetEl.getBoundingClientRect();
+    const containerBottom = mainContent?.getBoundingClientRect().bottom ?? window.innerHeight;
+    const reservedBottomGap = 28;
+    const next = Math.max(180, Math.floor(containerBottom - bodyRect.top - reservedBottomGap));
+    dynamicScrollMaxHeight = next;
+  }
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+
+    const mainContent = document.querySelector(".main-content") as HTMLElement | null;
+    const resizeObserver = new ResizeObserver(() => {
+      refreshDynamicScrollMaxHeight();
+    });
+
+    if (mainContent) {
+      resizeObserver.observe(mainContent);
+    }
+    if (tableBodyEl) {
+      resizeObserver.observe(tableBodyEl);
+    }
+    if (switchScrollEl) {
+      resizeObserver.observe(switchScrollEl);
+    }
+
+    refreshDynamicScrollMaxHeight();
+    window.addEventListener("resize", refreshDynamicScrollMaxHeight);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", refreshDynamicScrollMaxHeight);
+    };
+  });
+
+  $effect(() => {
+    readPanelOpen;
+    writePanelOpen;
+    coilState.view;
+    filtered.length;
+
+    if (typeof window === "undefined") return;
+
+    const raf1 = window.requestAnimationFrame(() => {
+      const raf2 = window.requestAnimationFrame(() => {
+        refreshDynamicScrollMaxHeight();
+      });
+      return () => window.cancelAnimationFrame(raf2);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(raf1);
+    };
+  });
+
+  const tableVirtualEnabled = $derived(filtered.length >= VIRTUAL_TABLE_THRESHOLD);
+  const tableStartRow = $derived(
+    tableVirtualEnabled
+      ? Math.max(0, Math.floor(tableScrollTop / TABLE_ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS)
+      : 0,
+  );
+  const tableVisibleRowCount = $derived(
+    Math.max(1, Math.ceil(tableViewportHeight / TABLE_ROW_HEIGHT)),
+  );
+  const tableEndRow = $derived(
+    tableVirtualEnabled
+      ? Math.min(filtered.length, tableStartRow + tableVisibleRowCount + VIRTUAL_OVERSCAN_ROWS * 2)
+      : filtered.length,
+  );
+  const visibleTableEntries = $derived(
+    tableVirtualEnabled ? filtered.slice(tableStartRow, tableEndRow) : filtered,
+  );
+  const tableTopSpacerHeight = $derived(tableVirtualEnabled ? tableStartRow * TABLE_ROW_HEIGHT : 0);
+  const tableBottomSpacerHeight = $derived(
+    tableVirtualEnabled ? Math.max(0, (filtered.length - tableEndRow) * TABLE_ROW_HEIGHT) : 0,
+  );
+
+  const switchVirtualEnabled = $derived(filtered.length >= VIRTUAL_SWITCH_THRESHOLD);
+  const switchCols = $derived(
+    Math.max(1, Math.floor(Math.max(1, switchViewportWidth) / SWITCH_CARD_MIN_WIDTH)),
+  );
+  const switchTotalRows = $derived(Math.max(1, Math.ceil(filtered.length / switchCols)));
+  const switchStartRow = $derived(
+    switchVirtualEnabled
+      ? Math.max(0, Math.floor(switchScrollTop / SWITCH_CARD_ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS)
+      : 0,
+  );
+  const switchVisibleRowCount = $derived(
+    Math.max(1, Math.ceil(switchViewportHeight / SWITCH_CARD_ROW_HEIGHT)),
+  );
+  const switchEndRow = $derived(
+    switchVirtualEnabled
+      ? Math.min(switchTotalRows, switchStartRow + switchVisibleRowCount + VIRTUAL_OVERSCAN_ROWS * 2)
+      : switchTotalRows,
+  );
+  const switchStartIndex = $derived(switchStartRow * switchCols);
+  const switchEndIndex = $derived(
+    switchVirtualEnabled ? Math.min(filtered.length, switchEndRow * switchCols) : filtered.length,
+  );
+  const visibleSwitchEntries = $derived(
+    switchVirtualEnabled ? filtered.slice(switchStartIndex, switchEndIndex) : filtered,
+  );
+  const switchTopSpacerHeight = $derived(
+    switchVirtualEnabled ? switchStartRow * SWITCH_CARD_ROW_HEIGHT : 0,
+  );
+  const switchBottomSpacerHeight = $derived(
+    switchVirtualEnabled ? Math.max(0, (switchTotalRows - switchEndRow) * SWITCH_CARD_ROW_HEIGHT) : 0,
+  );
+
   const massPreview = $derived(buildMassPreview());
   const onCount = $derived(coilState.entries.filter((e) => e.slaveValue).length);
   const offCount = $derived(coilState.entries.filter((e) => !e.slaveValue).length);
@@ -85,6 +225,8 @@
   const failedWriteCount = $derived(
     coilState.entries.filter((e) => e.desiredValue !== e.slaveValue && e.writeError !== null).length,
   );
+  const pollMaxCount = $derived(getGlobalPollingMaxAddressCount());
+  const pollDisabledByCount = $derived(!isPollingAllowedForCount(coilState.entries.length));
 
   // ── Inline label editing ────────────────────────────────────────────────────
   let editingAddress: number | null = $state(null);
@@ -115,13 +257,19 @@
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
-  function handleApplyRange(): void {
-    const s = Math.max(0, rangeStart);
-    const c = Math.max(1, Math.min(256, rangeCount));
-    applyAddressRange(s, c);
-    rangeStart = coilState.startAddress;
-    rangeCount = coilState.coilCount;
-    addAddressInput = "";
+  async function handleApplyRange(): Promise<void> {
+    if (rangeApplyPending) return;
+    rangeApplyPending = true;
+    try {
+      // Let users see local processing state before applying changes.
+      await new Promise<void>((resolve) => setTimeout(resolve, RANGE_APPLY_MIN_SPINNER_MS));
+      applyAddressRange(rangeStart, rangeCount);
+      rangeStart = coilState.startAddress;
+      rangeCount = coilState.coilCount;
+      addAddressInput = "";
+    } finally {
+      rangeApplyPending = false;
+    }
   }
 
   function tryAddAddress(): void {
@@ -177,7 +325,7 @@
   ];
 
   function addrFmt(n: number): string {
-    return n.toString().padStart(4, "0");
+    return formatAddressWithSettings(n);
   }
 </script>
 
@@ -210,9 +358,9 @@
         <button
           class="ctrl-btn"
           class:active={coilState.pollActive}
-          title={coilState.pollActive ? "Stop polling" : "Start polling"}
+          title={pollDisabledByCount ? "Polling disabled for large lists" : coilState.pollActive ? "Stop polling" : "Start polling"}
           type="button"
-          disabled={!connected}
+          disabled={!connected || pollDisabledByCount}
           onclick={() => setPollActive(!coilState.pollActive)}
         >
           {#if coilState.pollActive}
@@ -227,6 +375,11 @@
           onclick={() => { void readAllCoils(); }}>
           <RefreshCw size={14} />
         </button>
+        {#if pollDisabledByCount}
+          <span class="pending-chip" title="Global polling max reached">
+            Poll disabled: list &gt; {pollMaxCount}
+          </span>
+        {/if}
       </div>
 
       <div class="divider-v"></div>
@@ -279,6 +432,15 @@
     </div>
 
     <div class="toolbar-actions">
+      <button
+        class="ctrl-btn"
+        type="button"
+        onclick={() => { syncAllSlaveToDesired(); }}
+        title="Copy all actual device states into desired states"
+      >
+        <span>Actual → Desired</span>
+      </button>
+
       {#if pendingWriteCount > 0}
         <button
           class="pending-chip pending-chip-action"
@@ -367,7 +529,7 @@
                 id="range-start"
                 type="number"
                 min="0"
-                max="9999"
+                max="65535"
                 value={rangeStart}
                 oninput={(e) => { rangeStart = Number(e.currentTarget.value); }}
               />
@@ -378,13 +540,24 @@
                 id="range-count"
                 type="number"
                 min="1"
-                max="256"
+                max="65535"
                 value={rangeCount}
                 oninput={(e) => { rangeCount = Number(e.currentTarget.value); }}
               />
             </div>
-            <button class="btn btn-sm btn-apply" type="button" onclick={handleApplyRange}>
-              Apply
+            <button
+              class="btn btn-sm btn-apply"
+              class:btn-processing={rangeApplyPending}
+              type="button"
+              onclick={handleApplyRange}
+              disabled={rangeApplyPending}
+            >
+              {#if rangeApplyPending}
+                <span class="spin"><LoaderCircle size={14} /></span>
+                Applying...
+              {:else}
+                Apply
+              {/if}
             </button>
           </div>
           </div>
@@ -392,8 +565,8 @@
           <div class="mini-section mini-section-danger">
             <div class="mini-title">Cleanup</div>
             <div class="sub-row">
-              <button class="btn btn-sm btn-clear" type="button" onclick={removeAllCustomCoils}>
-                Clear Added Coils
+              <button class="btn btn-sm btn-clear" type="button" onclick={removeAllCoils}>
+                Remove All Coils
               </button>
             </div>
           </div>
@@ -428,15 +601,14 @@
 
               <div class="form-group">
                 <div class="mini-field-label">Value</div>
-                <button
-                  class="toggle-mini single-write-toggle"
-                  class:on={singleWriteDesired}
-                  type="button"
-                  onclick={() => { singleWriteDesired = !singleWriteDesired; }}
-                  title={singleWriteDesired ? "Desired ON" : "Desired OFF"}
-                >
-                  <span class="toggle-thumb"></span>
-                </button>
+                <div class="single-write-toggle">
+                  <ToggleSwitch
+                    checked={singleWriteDesired}
+                    size="sm"
+                    title={singleWriteDesired ? "Desired ON" : "Desired OFF"}
+                    onToggle={() => { singleWriteDesired = !singleWriteDesired; }}
+                  />
+                </div>
               </div>
 
               <button class="btn btn-sm btn-write" type="button" disabled={!connected} onclick={() => { void executeSingleWrite(); }}>
@@ -578,264 +750,97 @@
         <div class="coil-table">
           <div class="ct-header">
             <span>Label</span>
-            <span>Pending</span>
+            <span>Status</span>
             <span>Addr</span>
             <span>Read Value</span>
             <span>Switch</span>
             <span>Operation</span>
             <span>Delete</span>
           </div>
-          {#each filtered as entry (entry.address)}
-            <div
-              class="ct-row"
-              class:row-on={entry.slaveValue}
-              class:row-pending={entry.pending}
-              class:row-dirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
-            >
-              <!-- Label cell — inline editable -->
-              <span class="label-cell">
-                {#if editingAddress === entry.address}
-                  <input
-                    class="label-input"
-                    type="text"
-                    value={editLabelVal}
-                    oninput={(e) => { editLabelVal = e.currentTarget.value; }}
-                    onblur={commitEdit}
-                    onkeydown={onLabelKeydown}
-                  />
-                  <button class="icon-micro" type="button" onclick={commitEdit} title="Save">
-                    <Check size={11} />
-                  </button>
-                  <button class="icon-micro" type="button" onclick={cancelEdit} title="Cancel">
-                    <X size={11} />
-                  </button>
-                {:else}
-                  <span
-                    class="label-text"
-                    class:label-empty={!entry.label}
-                    role="button"
-                    tabindex="0"
-                    onclick={() => beginEdit(entry.address, entry.label)}
-                    onkeydown={(e) => { if (e.key === "Enter") beginEdit(entry.address, entry.label); }}
-                    title="Click to edit label"
-                  >
-                    {entry.label || "—"}
-                  </span>
-                  <button
-                    class="icon-micro edit-trigger"
-                    type="button"
-                    onclick={() => beginEdit(entry.address, entry.label)}
-                    title="Edit label"
-                  >
-                    <Pencil size={10} />
-                  </button>
-                {/if}
-              </span>
+          <div
+            class="ct-body"
+            onscroll={(e) => { tableScrollTop = e.currentTarget.scrollTop; }}
+            bind:clientHeight={tableViewportHeight}
+            bind:this={tableBodyEl}
+            style:max-height={`${dynamicScrollMaxHeight}px`}
+          >
+            {#if tableTopSpacerHeight > 0}
+              <div class="ct-spacer" style={`height: ${tableTopSpacerHeight}px;`}></div>
+            {/if}
 
-              <span class="pending-cell">
-                {#if entry.writeError || entry.desiredValue !== entry.slaveValue}
-                  {#if entry.writeError}
-                    <span class="dirty-indicator failed-indicator" title={entry.writeError}>Failed</span>
-                  {:else}
-                    <span class="dirty-indicator" title="Needs write">Pending</span>
-                  {/if}
-                {/if}
-              </span>
+            {#each visibleTableEntries as entry (entry.address)}
+              <TableRow
+                {entry}
+                {connected}
+                {editingAddress}
+                {editLabelVal}
+                {addrFmt}
+                {beginEdit}
+                {commitEdit}
+                {cancelEdit}
+                {onLabelKeydown}
+                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                onToggle={(address: number) => toggleCoilValue(address)}
+                onRead={(address: number) => { void readCoil(address); }}
+                onWrite={(address: number) => { void writeCoil(address); }}
+                onDelete={(address: number) => removeCoil(address)}
+              />
+            {/each}
 
-              <span class="addr-cell">{addrFmt(entry.address)}</span>
-
-              <span class="value-cell">
-                {#if entry.pending}
-                  <span class="badge pending-badge">…</span>
-                {:else}
-                  <span class="badge" class:badge-live-on={entry.slaveValue} class:badge-live-off={!entry.slaveValue}>
-                    {entry.slaveValue ? "ON" : "OFF"}
-                  </span>
-                {/if}
-              </span>
-
-              <span class="switch-cell">
-                <button
-                  class="toggle-mini"
-                  class:on={entry.desiredValue}
-                  type="button"
-                  onclick={() => toggleCoilValue(entry.address)}
-                  title={entry.desiredValue ? "Desired ON" : "Desired OFF"}
-                >
-                  <span class="toggle-thumb"></span>
-                </button>
-              </span>
-
-              <span class="operation-cell">
-                <button
-                  class="read-mini"
-                  type="button"
-                  disabled={!connected}
-                  onclick={() => { void readCoil(entry.address); }}
-                  title={connected ? "Read from device" : "Connect to device first"}
-                >
-                  <RefreshCw size={11} />
-                  Read
-                </button>
-                <button
-                  class="write-mini"
-                  type="button"
-                  disabled={!connected}
-                  onclick={() => { void writeCoil(entry.address); }}
-                  title={connected ? (entry.desiredValue ? "Write ON" : "Write OFF") : "Connect to device first"}
-                >
-                  <Zap size={11} />
-                  Write
-                </button>
-              </span>
-
-              <span class="delete-cell">
-                <button
-                  class="delete-mini"
-                  type="button"
-                  onclick={() => removeCoil(entry.address)}
-                  title="Delete coil"
-                >
-                  <X size={11} />
-                </button>
-              </span>
-            </div>
-          {/each}
+            {#if tableBottomSpacerHeight > 0}
+              <div class="ct-spacer" style={`height: ${tableBottomSpacerHeight}px;`}></div>
+            {/if}
+          </div>
         </div>
 
       {:else}
         <!-- SWITCH view -->
-        <div class="switch-grid">
-          {#each filtered as entry (entry.address)}
-            <div
-              class="coil-card"
-              class:card-on={entry.slaveValue}
-              class:card-pending={entry.pending}
-              class:card-dirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
-            >
-              {#if entry.label}
-                <div class="card-label-wrap">
-                  {#if editingAddress === entry.address}
-                    <input
-                      class="card-label-input"
-                      type="text"
-                      value={editLabelVal}
-                      oninput={(e) => { editLabelVal = e.currentTarget.value; }}
-                      onblur={commitEdit}
-                      onkeydown={onLabelKeydown}
-                    />
-                    <button class="icon-micro" type="button" onclick={commitEdit} title="Save">
-                      <Check size={11} />
-                    </button>
-                    <button class="icon-micro" type="button" onclick={cancelEdit} title="Cancel">
-                      <X size={11} />
-                    </button>
-                  {:else}
-                    <div class="card-label">{entry.label}</div>
-                    <button
-                      class="icon-micro card-label-edit"
-                      type="button"
-                      onclick={() => beginEdit(entry.address, entry.label)}
-                      title="Edit label"
-                    >
-                      <Pencil size={10} />
-                    </button>
-                  {/if}
-                </div>
-              {:else}
-                <div class="card-label-wrap">
-                  {#if editingAddress === entry.address}
-                    <input
-                      class="card-label-input"
-                      type="text"
-                      value={editLabelVal}
-                      oninput={(e) => { editLabelVal = e.currentTarget.value; }}
-                      onblur={commitEdit}
-                      onkeydown={onLabelKeydown}
-                    />
-                    <button class="icon-micro" type="button" onclick={commitEdit} title="Save">
-                      <Check size={11} />
-                    </button>
-                    <button class="icon-micro" type="button" onclick={cancelEdit} title="Cancel">
-                      <X size={11} />
-                    </button>
-                  {:else}
-                    <div class="card-label card-label-empty">—</div>
-                    <button
-                      class="icon-micro card-label-edit"
-                      type="button"
-                      onclick={() => beginEdit(entry.address, entry.label)}
-                      title="Edit label"
-                    >
-                      <Pencil size={10} />
-                    </button>
-                  {/if}
-                </div>
-              {/if}
+        <div
+          class="switch-virtual-scroll"
+          onscroll={(e) => { switchScrollTop = e.currentTarget.scrollTop; }}
+          bind:clientHeight={switchViewportHeight}
+          bind:clientWidth={switchViewportWidth}
+          bind:this={switchScrollEl}
+          style:max-height={`${dynamicScrollMaxHeight}px`}
+        >
+          {#if switchTopSpacerHeight > 0}
+            <div class="switch-spacer" style={`height: ${switchTopSpacerHeight}px;`}></div>
+          {/if}
 
-              <div class="card-meta">
-                <div class="card-addr">{addrFmt(entry.address)}</div>
-                {#if entry.writeError}
-                  <span class="dirty-indicator failed-indicator card-inline-status" title={entry.writeError}>Failed</span>
-                {:else if entry.desiredValue !== entry.slaveValue}
-                  <span class="dirty-indicator card-inline-status" title="Needs write">Pending</span>
-                {/if}
-              </div>
+          <div class="switch-grid">
+            {#each visibleSwitchEntries as entry (entry.address)}
+              <SwitchCard
+                address={entry.address}
+                label={entry.label}
+                pending={entry.pending}
+                readValue={entry.slaveValue}
+                toggleValue={entry.desiredValue}
+                {connected}
+                cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
+                {editingAddress}
+                {editLabelVal}
+                {addrFmt}
+                onBeginEdit={beginEdit}
+                onCommitEdit={commitEdit}
+                onCancelEdit={cancelEdit}
+                {onLabelKeydown}
+                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                onToggle={(address: number) => toggleCoilValue(address)}
+                onRead={(address: number) => { void readCoil(address); }}
+                onWrite={(address: number) => { void writeCoil(address); }}
+                onDelete={(address: number) => removeCoil(address)}
+                statusBadgeText={entry.writeError ? "Not avail" : (entry.desiredValue !== entry.slaveValue ? "Unsynced" : null)}
+                statusBadgeTitle={entry.writeError ?? "Local value differs from device"}
+                statusBadgeVariant={entry.writeError ? "failed" : "pending"}
+                writeButtonTitle={connected ? (entry.desiredValue ? "Write ON" : "Write OFF") : "Connect to device first"}
+                deleteButtonTitle="Delete coil"
+              />
+            {/each}
+          </div>
 
-              <div class="card-status">
-                {#if entry.pending}
-                  <span class="badge pending-badge">…</span>
-                {:else}
-                  <span class="badge" class:badge-live-on={entry.slaveValue} class:badge-live-off={!entry.slaveValue}>
-                    {entry.slaveValue ? "ON" : "OFF"}
-                  </span>
-                {/if}
-              </div>
-
-              <div class="card-toggle-wrap">
-                <button
-                  class="toggle-track"
-                  class:on={entry.desiredValue}
-                  type="button"
-                  onclick={() => toggleCoilValue(entry.address)}
-                  title="Toggle value"
-                >
-                  <div class="toggle-thumb-lg"></div>
-                </button>
-              </div>
-
-              <div class="card-actions">
-                <button
-                  class="read-mini"
-                  type="button"
-                  disabled={!connected}
-                  onclick={() => { void readCoil(entry.address); }}
-                  title={connected ? "Read from device" : "Connect to device first"}
-                >
-                  <RefreshCw size={11} />
-                  Read
-                </button>
-                <button
-                  class="write-mini"
-                  type="button"
-                  disabled={!connected}
-                  onclick={() => { void writeCoil(entry.address); }}
-                  title={connected ? (entry.desiredValue ? "Write ON" : "Write OFF") : "Connect to device first"}
-                >
-                  <Zap size={11} />
-                  Write
-                </button>
-                <button
-                  class="delete-mini"
-                  type="button"
-                  onclick={() => removeCoil(entry.address)}
-                  title="Delete coil"
-                >
-                  <X size={11} />
-                </button>
-              </div>
-            </div>
-          {/each}
+          {#if switchBottomSpacerHeight > 0}
+            <div class="switch-spacer" style={`height: ${switchBottomSpacerHeight}px;`}></div>
+          {/if}
         </div>
       {/if}
     {/snippet}
@@ -1271,6 +1276,20 @@
     color: var(--c-text-1);
   }
   .btn-apply:hover { border-color: var(--c-border-strong); }
+  .btn-processing,
+  .btn:disabled {
+    opacity: 0.78;
+    cursor: not-allowed;
+  }
+
+  .spin {
+    animation: spin 0.9s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
 
   .btn-write {
     border: 1px solid color-mix(in srgb, var(--c-accent) 30%, var(--c-border));
@@ -1317,8 +1336,17 @@
     overflow-x: auto;
   }
 
-  .ct-header,
-  .ct-row {
+  .ct-body {
+    max-height: min(62vh, 680px);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .ct-spacer {
+    width: 100%;
+  }
+
+  .ct-header {
     display: grid;
     grid-template-columns: minmax(140px, 1fr) 92px 64px 88px 60px 182px 52px;
     align-items: center;
@@ -1336,401 +1364,30 @@
     border-bottom: 1px solid var(--c-border);
   }
 
-  .ct-header > span,
-  .ct-row > span { padding: 0 4px; }
+  .ct-header > span { padding: 0 4px; }
 
-  .ct-row {
-    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
-    min-height: 34px;
-    transition: background 100ms;
-  }
-
-  .ct-row:last-child { border-bottom: none; }
-
-  .ct-row:hover {
-    background: color-mix(in srgb, var(--c-surface-3) 52%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-border) 52%, transparent);
-  }
-
-  .ct-row.row-on { background: color-mix(in srgb, var(--c-ok) 4%, transparent); }
-
-  .ct-row.row-dirty {
-    box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--c-warn) 60%, transparent);
-  }
-
-  .ct-row.row-pending { opacity: 0.7; }
-
-  .addr-cell {
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: var(--c-text-2);
-  }
-
-  /* Label cell */
-  .label-cell {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .label-text {
-    font-size: 0.78rem;
-    color: var(--c-text-1);
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .label-text.label-empty {
-    color: var(--c-text-2);
-    opacity: 0.45;
-    font-style: italic;
-  }
-
-  .label-input {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 6px;
-    border: 1px solid var(--c-accent);
-    border-radius: 4px;
-    background: var(--c-surface-2);
-    color: var(--c-text-1);
-    font: inherit;
-    font-size: 0.75rem;
-    outline: none;
-  }
-
-  .icon-micro {
+  .single-write-toggle {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    border: none;
-    border-radius: 3px;
-    background: transparent;
-    color: var(--c-text-2);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: color 100ms;
-  }
-  .icon-micro:hover { color: var(--c-text-1); }
-
-  .edit-trigger { opacity: 0; transition: opacity 100ms; }
-  .ct-row:hover .edit-trigger { opacity: 1; }
-
-  /* Value badge */
-  .value-cell { display: flex; align-items: center; }
-  .pending-cell { display: flex; align-items: center; }
-  .switch-cell { display: flex; align-items: center; }
-  .operation-cell { display: flex; align-items: center; gap: 6px; }
-  .operation-cell { flex-wrap: nowrap; }
-  .delete-cell { display: flex; align-items: center; }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 18px;
-    min-width: 34px;
-    border-radius: 9px;
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-  }
-
-  .pending-badge { background: color-mix(in srgb, var(--c-warn) 18%, var(--c-surface-3)); color: var(--c-warn); }
-  .badge-live-on  { background: color-mix(in srgb, var(--c-ok) 20%, var(--c-surface-3)); color: var(--c-ok); }
-  .badge-live-off { background: color-mix(in srgb, var(--c-text-2) 12%, var(--c-surface-3)); color: var(--c-text-2); opacity: 0.8; }
-
-  .dirty-indicator {
-    display: inline-flex;
-    align-items: center;
-    height: 20px;
-    padding: 0 7px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--c-warn) 36%, var(--c-border));
-    background: color-mix(in srgb, var(--c-warn) 12%, var(--c-surface-2));
-    color: var(--c-warn);
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .failed-indicator {
-    border-color: color-mix(in srgb, var(--c-danger) 40%, var(--c-border));
-    background: color-mix(in srgb, var(--c-danger) 12%, var(--c-surface-2));
-    color: var(--c-danger);
-  }
-
-  .toggle-mini {
-    position: relative;
-    width: 32px;
-    height: 17px;
-    border-radius: 9px;
-    border: 1px solid var(--c-border);
-    background: var(--c-surface-3);
-    cursor: pointer;
-    transition: background 180ms, border-color 180ms;
-    flex-shrink: 0;
-  }
-
-  .toggle-mini.on {
-    background: color-mix(in srgb, var(--c-ok) 35%, var(--c-surface-2));
-    border-color: var(--c-ok);
-  }
-
-  .toggle-mini .toggle-thumb {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    background: var(--c-text-2);
-    transition: transform 180ms, background 180ms;
-  }
-
-  .toggle-mini.on .toggle-thumb {
-    transform: translateX(15px);
-    background: var(--c-ok);
-  }
-
-  .write-mini {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 8px;
-    border: 1px solid color-mix(in srgb, var(--c-accent) 30%, var(--c-border));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2));
-    color: var(--c-accent);
-    font: inherit;
-    font-size: 0.66rem;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 120ms ease;
-  }
-
-  .write-mini:hover {
-    border-color: var(--c-accent);
-    color: var(--c-text-1);
-  }
-
-  .read-mini {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 8px;
-    border: 1px solid color-mix(in srgb, var(--c-text-2) 30%, var(--c-border));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--c-text-2) 8%, var(--c-surface-2));
-    color: var(--c-text-2);
-    font: inherit;
-    font-size: 0.66rem;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 120ms ease;
-  }
-
-  .read-mini:hover {
-    border-color: var(--c-border-strong);
-    color: var(--c-text-1);
-  }
-
-  .delete-mini {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border: 1px solid color-mix(in srgb, var(--c-error) 30%, var(--c-border));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--c-error) 10%, var(--c-surface-2));
-    color: var(--c-error);
-    font: inherit;
-    cursor: pointer;
-    transition: all 120ms ease;
-  }
-
-  .delete-mini:hover {
-    border-color: var(--c-error);
-    color: var(--c-text-1);
+    height: 30px;
   }
 
   /* ── Switch / card view ──────────────────────────────────────────────────── */
   .switch-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
-    justify-content: start;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    justify-content: stretch;
     gap: 7px;
   }
 
-  .coil-card {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
-    position: relative;
-    padding: 12px 10px 10px;
-    border: 1px solid var(--c-border);
-    border-radius: 10px;
-    background: var(--c-surface-2);
-    transition: all 160ms ease;
-    font: inherit;
-    text-align: left;
+  .switch-virtual-scroll {
+    max-height: min(62vh, 680px);
+    overflow: auto;
+    overscroll-behavior: contain;
   }
 
-  .coil-card:hover {
-    border-color: var(--c-border-strong);
-    background: var(--c-surface-3);
-  }
-
-  .coil-card.card-on {
-    border-color: color-mix(in srgb, var(--c-ok) 45%, var(--c-border));
-    background: color-mix(in srgb, var(--c-ok) 7%, var(--c-surface-1));
-  }
-
-  .coil-card.card-dirty {
-    border-color: color-mix(in srgb, var(--c-warn) 40%, var(--c-border));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-warn) 22%, transparent);
-  }
-
-  .coil-card.card-pending { opacity: 0.65; }
-
-  .card-addr {
-    font-family: monospace;
-    font-size: 0.7rem;
-    color: var(--c-text-2);
-    align-self: flex-start;
-  }
-
-  .card-label {
-    font-size: 0.7rem;
-    color: var(--c-text-2);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .switch-spacer {
     width: 100%;
-    line-height: 24px;
-  }
-
-  .card-label-wrap {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 24px;
-    min-height: 24px;
-  }
-
-  .card-label-input {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 6px;
-    border: 1px solid var(--c-accent);
-    border-radius: 4px;
-    background: var(--c-surface-2);
-    color: var(--c-text-1);
-    font: inherit;
-    font-size: 0.72rem;
-    outline: none;
-  }
-
-  .card-label-edit {
-    opacity: 0.8;
-  }
-
-  .card-label-empty {
-    opacity: 0.45;
-  }
-
-  .card-toggle-wrap {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    flex: 1;
-    padding: 4px 0;
-  }
-
-  .toggle-track {
-    position: relative;
-    width: 46px;
-    height: 26px;
-    border-radius: 13px;
-    border: 1px solid var(--c-border);
-    background: var(--c-surface-3);
-    padding: 0;
-    cursor: pointer;
-    transition: background 200ms, border-color 200ms;
-  }
-
-  .toggle-track.on {
-    background: color-mix(in srgb, var(--c-ok) 35%, var(--c-surface-2));
-    border-color: var(--c-ok);
-  }
-
-  .toggle-thumb-lg {
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--c-text-2);
-    transition: transform 200ms, background 200ms;
-    box-shadow: 0 1px 3px rgba(0,0,0,.35);
-  }
-
-  .toggle-track.on .toggle-thumb-lg {
-    transform: translateX(20px);
-    background: var(--c-ok);
-  }
-
-  .card-status { margin-top: auto; }
-
-  .card-actions {
-    margin-top: 2px;
-    display: grid;
-    grid-template-columns: 1fr 1fr auto;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    flex-wrap: nowrap;
-  }
-
-  .card-actions .read-mini,
-  .card-actions .write-mini {
-    min-width: 0;
-    justify-content: center;
-    padding: 0 6px;
-  }
-
-  .card-meta {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-  }
-
-  .card-inline-status {
-    height: 18px;
-    padding: 0 6px;
-    font-size: 0.6rem;
-    letter-spacing: 0.03em;
-    flex-shrink: 0;
   }
 
   @media (max-width: 760px) {
@@ -1746,30 +1403,6 @@
     .switch-grid {
       grid-template-columns: 1fr;
       justify-content: stretch;
-    }
-
-    .coil-card {
-      width: 100%;
-      align-items: stretch;
-    }
-
-    .card-toggle-wrap {
-      justify-content: center;
-    }
-
-    .card-status {
-      display: flex;
-      justify-content: center;
-    }
-
-    .card-actions {
-      grid-template-columns: 1fr 1fr auto;
-    }
-
-    .card-actions .write-mini,
-    .card-actions .read-mini {
-      width: 100%;
-      justify-content: center;
     }
   }
 

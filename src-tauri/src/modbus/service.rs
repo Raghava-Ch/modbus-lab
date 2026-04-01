@@ -10,13 +10,18 @@ use tokio::{
 };
 
 use modbus_rs::mbus_async::AsyncTcpClient;
-use modbus_rs::Coils;
+use modbus_rs::{Coils, DiscreteInputs, Registers};
 
 use super::types::{
-    AnalyticsContext, ApiError, ApiResult, CoilEntry, CoilWriteFailure, ConnectionStatus, ConnectionStatusPayload,
-    ReadCoilsRequest, ReadCoilsResponse, RetryBackoffStrategy, RetryJitterStrategy,
-    SerialConnectRequest, TcpConnectRequest, WriteCoilRequest, WriteCoilResponse,
-    WriteMassCoilsRequest, WriteMassCoilsResponse,
+    AnalyticsContext, ApiError, ApiResult, CoilEntry, CoilWriteFailure, ConnectionStatus,
+    ConnectionStatusPayload, DiscreteInputEntry, ReadCoilsRequest, ReadCoilsResponse,
+    ReadDiscreteInputsRequest, ReadDiscreteInputsResponse, ReadHoldingRegistersRequest,
+    ReadHoldingRegistersResponse, ReadInputRegistersRequest, ReadInputRegistersResponse,
+    RegisterEntry, RegisterWriteFailure, RetryBackoffStrategy,
+    RetryJitterStrategy, SerialConnectRequest, TcpConnectRequest, WriteCoilRequest,
+    WriteCoilResponse, WriteHoldingRegisterRequest, WriteHoldingRegisterResponse,
+    WriteMassCoilsRequest, WriteMassCoilsResponse, WriteMassHoldingRegistersRequest,
+    WriteMassHoldingRegistersResponse,
 };
 
 #[derive(Clone, Copy)]
@@ -109,7 +114,10 @@ impl AppState {
         }
     }
 
-    pub async fn connect_tcp(&self, request: &TcpConnectRequest) -> ApiResult<ConnectionStatusPayload> {
+    pub async fn connect_tcp(
+        &self,
+        request: &TcpConnectRequest,
+    ) -> ApiResult<ConnectionStatusPayload> {
         if request.host.trim().is_empty() {
             return Err(ApiError::invalid_request(
                 "TCP host is required.",
@@ -133,7 +141,8 @@ impl AppState {
 
         let config = TcpRuntimeConfig::from_request(request);
         let connection_timeout = Duration::from_millis(request.resolved_connection_timeout_ms());
-        let heartbeat_idle_after = Duration::from_millis(request.resolved_heartbeat_idle_after_ms());
+        let heartbeat_idle_after =
+            Duration::from_millis(request.resolved_heartbeat_idle_after_ms());
 
         {
             let mut rt = self.runtime.lock().await;
@@ -232,7 +241,10 @@ impl AppState {
         let rt = self.runtime.lock().await;
         let details = match &rt.active {
             Some(ActiveConnection::Tcp(session)) => {
-                let base = format!("TCP {}:{} (slave {})", session.host, session.port, session.slave_id);
+                let base = format!(
+                    "TCP {}:{} (slave {})",
+                    session.host, session.port, session.slave_id
+                );
                 if matches!(rt.status, ConnectionStatus::Reconnecting) {
                     let mut extra = format!("reconnect attempt {}", session.reconnect_attempt);
                     if let Some(code) = &session.last_reconnect_error_code {
@@ -309,10 +321,166 @@ impl AppState {
         )
         .await?;
 
-        Ok(WriteCoilResponse { address: addr, value })
+        Ok(WriteCoilResponse {
+            address: addr,
+            value,
+        })
     }
 
-    pub async fn write_coils_optimized(&self, request: &WriteMassCoilsRequest) -> ApiResult<WriteMassCoilsResponse> {
+    pub async fn read_discrete_inputs(
+        &self,
+        request: &ReadDiscreteInputsRequest,
+    ) -> ApiResult<ReadDiscreteInputsResponse> {
+        self.mark_tcp_activity().await;
+
+        if request.quantity == 0 || request.quantity > 2000 {
+            return Err(ApiError::invalid_request(
+                "Quantity must be between 1 and 2000.",
+                request.analytics.clone(),
+            ));
+        }
+
+        let (client, slave_id, config) = self.active_tcp_session(request.analytics.clone()).await?;
+
+        let inputs = read_multiple_discrete_inputs_with_retry(
+            &client,
+            slave_id,
+            request.start_address,
+            request.quantity,
+            config,
+            request.analytics.clone(),
+        )
+        .await?;
+
+        let entries: Vec<DiscreteInputEntry> = (0..request.quantity)
+            .map(|i| {
+                let addr = request.start_address + i;
+                DiscreteInputEntry {
+                    address: addr,
+                    value: inputs.value(addr).unwrap_or(false),
+                }
+            })
+            .collect();
+
+        Ok(ReadDiscreteInputsResponse {
+            inputs: entries,
+            start_address: request.start_address,
+            quantity: request.quantity,
+        })
+    }
+
+    pub async fn read_holding_registers(
+        &self,
+        request: &ReadHoldingRegistersRequest,
+    ) -> ApiResult<ReadHoldingRegistersResponse> {
+        self.mark_tcp_activity().await;
+
+        if request.quantity == 0 || request.quantity > 125 {
+            return Err(ApiError::invalid_request(
+                "Quantity must be between 1 and 125.",
+                request.analytics.clone(),
+            ));
+        }
+
+        let (client, slave_id, config) = self.active_tcp_session(request.analytics.clone()).await?;
+
+        let registers = read_multiple_holding_registers_with_retry(
+            &client,
+            slave_id,
+            request.start_address,
+            request.quantity,
+            config,
+            request.analytics.clone(),
+        )
+        .await?;
+
+        let entries: Vec<RegisterEntry> = (0..request.quantity)
+            .map(|i| {
+                let addr = request.start_address + i;
+                RegisterEntry {
+                    address: addr,
+                    value: registers.value(addr).unwrap_or(0),
+                }
+            })
+            .collect();
+
+        Ok(ReadHoldingRegistersResponse {
+            registers: entries,
+            start_address: request.start_address,
+            quantity: request.quantity,
+        })
+    }
+
+    pub async fn read_input_registers(
+        &self,
+        request: &ReadInputRegistersRequest,
+    ) -> ApiResult<ReadInputRegistersResponse> {
+        self.mark_tcp_activity().await;
+
+        if request.quantity == 0 || request.quantity > 125 {
+            return Err(ApiError::invalid_request(
+                "Quantity must be between 1 and 125.",
+                request.analytics.clone(),
+            ));
+        }
+
+        let (client, slave_id, config) = self.active_tcp_session(request.analytics.clone()).await?;
+
+        let registers = read_multiple_input_registers_with_retry(
+            &client,
+            slave_id,
+            request.start_address,
+            request.quantity,
+            config,
+            request.analytics.clone(),
+        )
+        .await?;
+
+        let entries: Vec<RegisterEntry> = (0..request.quantity)
+            .map(|i| {
+                let addr = request.start_address + i;
+                RegisterEntry {
+                    address: addr,
+                    value: registers.value(addr).unwrap_or(0),
+                }
+            })
+            .collect();
+
+        Ok(ReadInputRegistersResponse {
+            registers: entries,
+            start_address: request.start_address,
+            quantity: request.quantity,
+        })
+    }
+
+    pub async fn write_holding_register(
+        &self,
+        request: &WriteHoldingRegisterRequest,
+    ) -> ApiResult<WriteHoldingRegisterResponse> {
+        self.mark_tcp_activity().await;
+
+        let (client, slave_id, config) = self.active_tcp_session(request.analytics.clone()).await?;
+
+        let (addr, value) = write_single_register_with_retry(
+            &client,
+            slave_id,
+            request.address,
+            request.value,
+            config,
+            request.analytics.clone(),
+        )
+        .await?;
+
+        Ok(WriteHoldingRegisterResponse {
+            address: addr,
+            value,
+        })
+    }
+
+    pub async fn write_coils_optimized(
+        &self,
+        request: &WriteMassCoilsRequest,
+    ) -> ApiResult<WriteMassCoilsResponse> {
         self.mark_tcp_activity().await;
 
         if request.coils.is_empty() {
@@ -461,6 +629,115 @@ impl AppState {
         })
     }
 
+    pub async fn write_holding_registers_optimized(
+        &self,
+        request: &WriteMassHoldingRegistersRequest,
+    ) -> ApiResult<WriteMassHoldingRegistersResponse> {
+        self.mark_tcp_activity().await;
+
+        if request.registers.is_empty() {
+            return Ok(WriteMassHoldingRegistersResponse {
+                written_count: 0,
+                total_count: 0,
+                failures: vec![],
+            });
+        }
+
+        let (client, slave_id, config) = self.active_tcp_session(request.analytics.clone()).await?;
+
+        let total = request.registers.len();
+        let mut written = 0;
+        let mut failures = Vec::new();
+
+        let mut sorted_registers = request.registers.clone();
+        sorted_registers.sort_by_key(|r| r.address);
+
+        let mut ranges: Vec<Vec<&RegisterEntry>> = vec![];
+        let mut current_range = vec![&sorted_registers[0]];
+
+        for i in 1..sorted_registers.len() {
+            if sorted_registers[i].address == sorted_registers[i - 1].address + 1 {
+                current_range.push(&sorted_registers[i]);
+            } else {
+                ranges.push(current_range.clone());
+                current_range = vec![&sorted_registers[i]];
+            }
+        }
+        ranges.push(current_range);
+
+        for range in ranges {
+            if range.len() >= 2 {
+                let start_addr = range[0].address;
+                let values: Vec<u16> = range.iter().map(|r| r.value).collect();
+
+                match write_multiple_registers_with_retry(
+                    &client,
+                    slave_id,
+                    start_addr,
+                    &values,
+                    config,
+                    request.analytics.clone(),
+                )
+                .await
+                {
+                    Ok(_) => {
+                        written += range.len();
+                    }
+                    Err(fc16_err) => {
+                        for reg in &range {
+                            match write_single_register_with_retry(
+                                &client,
+                                slave_id,
+                                reg.address,
+                                reg.value,
+                                config,
+                                request.analytics.clone(),
+                            )
+                            .await
+                            {
+                                Ok(_) => written += 1,
+                                Err(single_err) => failures.push(RegisterWriteFailure {
+                                    address: reg.address,
+                                    code: api_error_code(&single_err).to_string(),
+                                    message: format!(
+                                        "FC16 failed ({}) and FC06 fallback failed ({}).",
+                                        describe_api_error(&fc16_err),
+                                        describe_api_error(&single_err)
+                                    ),
+                                }),
+                            }
+                        }
+                    }
+                }
+            } else {
+                let reg = range[0];
+                match write_single_register_with_retry(
+                    &client,
+                    slave_id,
+                    reg.address,
+                    reg.value,
+                    config,
+                    request.analytics.clone(),
+                )
+                .await
+                {
+                    Ok(_) => written += 1,
+                    Err(err) => failures.push(RegisterWriteFailure {
+                        address: reg.address,
+                        code: api_error_code(&err).to_string(),
+                        message: describe_api_error(&err),
+                    }),
+                }
+            }
+        }
+
+        Ok(WriteMassHoldingRegistersResponse {
+            written_count: written,
+            total_count: total,
+            failures,
+        })
+    }
+
     pub async fn scaffold_serial_rtu(
         &self,
         request: &SerialConnectRequest,
@@ -487,9 +764,11 @@ impl AppState {
     ) -> ApiResult<(Arc<AsyncTcpClient<9>>, u8, TcpRuntimeConfig)> {
         let rt = self.runtime.lock().await;
         match &rt.active {
-            Some(ActiveConnection::Tcp(session)) => {
-                Ok((Arc::clone(&session.client), session.slave_id, session.config))
-            }
+            Some(ActiveConnection::Tcp(session)) => Ok((
+                Arc::clone(&session.client),
+                session.slave_id,
+                session.config,
+            )),
             None => Err(ApiError::not_connected(
                 "No active Modbus connection.",
                 analytics,
@@ -536,7 +815,9 @@ async fn run_tcp_supervisor(runtime: Arc<Mutex<RuntimeState>>, session_id: u64) 
             }
         };
 
-        let Some((client, host, port, slave_id, config, connection_timeout, _heartbeat_idle_after)) = snapshot else {
+        let Some((client, host, port, slave_id, config, connection_timeout, _heartbeat_idle_after)) =
+            snapshot
+        else {
             continue;
         };
 
@@ -680,7 +961,8 @@ async fn connect_tcp_client(
 
     for attempt in 0..=u32::from(config.retry_attempts) {
         let host_for_attempt = host.clone();
-        let connect_handle = task::spawn_blocking(move || AsyncTcpClient::<9>::connect(&host_for_attempt, port));
+        let connect_handle =
+            task::spawn_blocking(move || AsyncTcpClient::<9>::connect(&host_for_attempt, port));
 
         match timeout(connection_timeout, connect_handle).await {
             Ok(join_result) => match join_result {
@@ -747,6 +1029,123 @@ async fn read_multiple_coils_with_retry(
     ))
 }
 
+async fn read_multiple_discrete_inputs_with_retry(
+    client: &AsyncTcpClient<9>,
+    slave_id: u8,
+    start_address: u16,
+    quantity: u16,
+    config: TcpRuntimeConfig,
+    analytics: Option<AnalyticsContext>,
+) -> ApiResult<DiscreteInputs> {
+    let mut last_details = None;
+
+    for attempt in 0..=u32::from(config.retry_attempts) {
+        match timeout(
+            config.response_timeout,
+            client.read_discrete_inputs(slave_id, start_address, quantity),
+        )
+        .await
+        {
+            Ok(Ok(inputs)) => return Ok(inputs),
+            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Err(_) => {
+                last_details = Some(format!(
+                    "Response timed out after {} ms.",
+                    config.response_timeout.as_millis()
+                ));
+            }
+        }
+
+        if attempt < u32::from(config.retry_attempts) {
+            sleep(config.retry_delay((attempt + 1) as u8)).await;
+        }
+    }
+
+    Err(ApiError::backend_failure(
+        "Read discrete inputs failed.",
+        last_details,
+        analytics,
+    ))
+}
+
+async fn read_multiple_holding_registers_with_retry(
+    client: &AsyncTcpClient<9>,
+    slave_id: u8,
+    start_address: u16,
+    quantity: u16,
+    config: TcpRuntimeConfig,
+    analytics: Option<AnalyticsContext>,
+) -> ApiResult<Registers> {
+    let mut last_details = None;
+
+    for attempt in 0..=u32::from(config.retry_attempts) {
+        match timeout(
+            config.response_timeout,
+            client.read_holding_registers(slave_id, start_address, quantity),
+        )
+        .await
+        {
+            Ok(Ok(registers)) => return Ok(registers),
+            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Err(_) => {
+                last_details = Some(format!(
+                    "Response timed out after {} ms.",
+                    config.response_timeout.as_millis()
+                ));
+            }
+        }
+
+        if attempt < u32::from(config.retry_attempts) {
+            sleep(config.retry_delay((attempt + 1) as u8)).await;
+        }
+    }
+
+    Err(ApiError::backend_failure(
+        "Read holding registers failed.",
+        last_details,
+        analytics,
+    ))
+}
+
+async fn read_multiple_input_registers_with_retry(
+    client: &AsyncTcpClient<9>,
+    slave_id: u8,
+    start_address: u16,
+    quantity: u16,
+    config: TcpRuntimeConfig,
+    analytics: Option<AnalyticsContext>,
+) -> ApiResult<Registers> {
+    let mut last_details = None;
+
+    for attempt in 0..=u32::from(config.retry_attempts) {
+        match timeout(
+            config.response_timeout,
+            client.read_input_registers(slave_id, start_address, quantity),
+        )
+        .await
+        {
+            Ok(Ok(registers)) => return Ok(registers),
+            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Err(_) => {
+                last_details = Some(format!(
+                    "Response timed out after {} ms.",
+                    config.response_timeout.as_millis()
+                ));
+            }
+        }
+
+        if attempt < u32::from(config.retry_attempts) {
+            sleep(config.retry_delay((attempt + 1) as u8)).await;
+        }
+    }
+
+    Err(ApiError::backend_failure(
+        "Read input registers failed.",
+        last_details,
+        analytics,
+    ))
+}
+
 async fn write_single_coil_with_retry(
     client: &AsyncTcpClient<9>,
     slave_id: u8,
@@ -786,6 +1185,45 @@ async fn write_single_coil_with_retry(
     ))
 }
 
+async fn write_single_register_with_retry(
+    client: &AsyncTcpClient<9>,
+    slave_id: u8,
+    address: u16,
+    value: u16,
+    config: TcpRuntimeConfig,
+    analytics: Option<AnalyticsContext>,
+) -> ApiResult<(u16, u16)> {
+    let mut last_details = None;
+
+    for attempt in 0..=u32::from(config.retry_attempts) {
+        match timeout(
+            config.response_timeout,
+            client.write_single_register(slave_id, address, value),
+        )
+        .await
+        {
+            Ok(Ok(response)) => return Ok(response),
+            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Err(_) => {
+                last_details = Some(format!(
+                    "Response timed out after {} ms.",
+                    config.response_timeout.as_millis()
+                ));
+            }
+        }
+
+        if attempt < u32::from(config.retry_attempts) {
+            sleep(config.retry_delay((attempt + 1) as u8)).await;
+        }
+    }
+
+    Err(ApiError::backend_failure(
+        "Write holding register failed.",
+        last_details,
+        analytics,
+    ))
+}
+
 async fn write_multiple_coils_with_retry(
     client: &AsyncTcpClient<9>,
     slave_id: u8,
@@ -820,6 +1258,45 @@ async fn write_multiple_coils_with_retry(
 
     Err(ApiError::backend_failure(
         "Write multiple coils failed.",
+        last_details,
+        analytics,
+    ))
+}
+
+async fn write_multiple_registers_with_retry(
+    client: &AsyncTcpClient<9>,
+    slave_id: u8,
+    start_address: u16,
+    values: &[u16],
+    config: TcpRuntimeConfig,
+    analytics: Option<AnalyticsContext>,
+) -> ApiResult<()> {
+    let mut last_details = None;
+
+    for attempt in 0..=u32::from(config.retry_attempts) {
+        match timeout(
+            config.response_timeout,
+            client.write_multiple_registers(slave_id, start_address, values),
+        )
+        .await
+        {
+            Ok(Ok(_)) => return Ok(()),
+            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Err(_) => {
+                last_details = Some(format!(
+                    "Response timed out after {} ms.",
+                    config.response_timeout.as_millis()
+                ));
+            }
+        }
+
+        if attempt < u32::from(config.retry_attempts) {
+            sleep(config.retry_delay((attempt + 1) as u8)).await;
+        }
+    }
+
+    Err(ApiError::backend_failure(
+        "Write multiple holding registers failed.",
         last_details,
         analytics,
     ))

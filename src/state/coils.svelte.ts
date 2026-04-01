@@ -2,6 +2,12 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
+import { notifyWarning } from "./notifications.svelte";
+import {
+  getGlobalPollingMaxAddressCount,
+  getSettingsSnapshot,
+  isPollingAllowedForCount,
+} from "./settings.svelte";
 
 export type CoilView = "table" | "switch";
 export type CoilFilter = "all" | "on" | "off";
@@ -57,8 +63,59 @@ function parseInvokeError(err: unknown): string {
   return "Unknown error";
 }
 
+function warnLocal(message: string): void {
+  addLog("warn", message);
+  notifyWarning(message);
+}
+
 
 const COIL_VIEW_KEY = "modbux.coilView";
+const COIL_MAX_COUNT = 2000;
+const MODBUS_ADDRESS_MIN = 0;
+const MODBUS_ADDRESS_MAX = COIL_MAX_COUNT - 1;
+
+interface AddressSection {
+  start: number;
+  quantity: number;
+}
+
+function buildAddressSections(addresses: number[]): AddressSection[] {
+  if (addresses.length === 0) return [];
+
+  const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
+  const sections: AddressSection[] = [];
+
+  let sectionStart = uniqueSorted[0];
+  let prev = uniqueSorted[0];
+
+  for (let i = 1; i < uniqueSorted.length; i += 1) {
+    const current = uniqueSorted[i];
+    if (current === prev + 1) {
+      prev = current;
+      continue;
+    }
+
+    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+    sectionStart = current;
+    prev = current;
+  }
+
+  sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+  return sections;
+}
+
+function formatSectionPreview(sections: AddressSection[], max = 4): string {
+  if (sections.length === 0) return "-";
+  const preview = sections
+    .slice(0, max)
+    .map((section) => `[${section.start}..${section.start + section.quantity - 1}]`)
+    .join(",");
+  return sections.length > max ? `${preview},...` : preview;
+}
+
+function estimateReadOps(sections: AddressSection[], chunkMax: number): number {
+  return sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
+}
 
 function generateCoils(startAddress: number, count: number): CoilEntry[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -75,7 +132,7 @@ function generateCoils(startAddress: number, count: number): CoilEntry[] {
 export const coilState = $state({
   view: "table" as CoilView,
   filter: "all" as CoilFilter,
-  entries: generateCoils(0, 16) as CoilEntry[],
+  entries: [] as CoilEntry[],
   startAddress: 0,
   coilCount: 16,
   // Poll
@@ -97,10 +154,22 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 export function initCoilState(): void {
-  const savedView = localStorage.getItem(COIL_VIEW_KEY);
-  if (savedView === "switch" || savedView === "table") {
-    coilState.view = savedView;
+  const settings = getSettingsSnapshot();
+
+  if (!settings.rememberLastFeatureState) {
+    coilState.view = settings.defaults.coils.view === "switch" ? "switch" : "table";
+    applyAddressRange(settings.defaults.coils.startAddress, settings.defaults.coils.count);
+  } else {
+    const savedView = localStorage.getItem(COIL_VIEW_KEY);
+    if (savedView === "switch" || savedView === "table") {
+      coilState.view = savedView;
+    }
+    if (coilState.entries.length === 0) {
+      applyAddressRange(settings.defaults.coils.startAddress, settings.defaults.coils.count);
+    }
   }
+
+  setPollInterval(settings.polling.defaultIntervalMs);
 }
 
 // ── View & Filter ─────────────────────────────────────────────────────────────
@@ -130,6 +199,18 @@ export function setCoilValue(address: number, value: boolean): void {
   entry.writeError = null;
 }
 
+export function syncAllSlaveToDesired(): number {
+  let changed = 0;
+  for (const entry of coilState.entries) {
+    if (entry.desiredValue !== entry.slaveValue || entry.writeError !== null) {
+      changed += 1;
+    }
+    entry.desiredValue = entry.slaveValue;
+    entry.writeError = null;
+  }
+  return changed;
+}
+
 export async function writeCoil(address: number): Promise<void> {
   const entry = coilState.entries.find((e) => e.address === address);
   if (!entry) return;
@@ -146,7 +227,7 @@ export async function writeCoil(address: number): Promise<void> {
       e.pending = false;
       e.writeError = null;
     }
-    addLog("traffic", `Coil ${address} → ${response.value ? "ON" : "OFF"} ✓`);
+    addLog("info", `fc05.write ok addr=${address} val=${response.value ? 1 : 0}`);
   } catch (err) {
     const e = coilState.entries.find((e2) => e2.address === address);
     const message = parseInvokeError(err);
@@ -154,7 +235,7 @@ export async function writeCoil(address: number): Promise<void> {
       e.pending = false;
       e.writeError = message;
     }
-    addLog("error", `Write coil ${address} failed: ${message}`);
+    addLog("error", `fc05.write err addr=${address} msg=${message}`);
   }
 }
 
@@ -178,21 +259,21 @@ export async function readCoil(address: number): Promise<void> {
     const e = coilState.entries.find((e2) => e2.address === address);
     if (e && coilVal !== undefined) {
       e.slaveValue = coilVal.value;
-      if (!e.pending || e.desiredValue === e.slaveValue) {
-        e.desiredValue = coilVal.value;
-      }
-      if (e.desiredValue === e.slaveValue) {
-        e.writeError = null;
-      }
+      // Successful read confirms availability; clear stale read/write error chip.
+      e.writeError = null;
       e.pending = false;
     } else if (e) {
       e.pending = false;
     }
-    addLog("traffic", `Coil ${address} read → ${coilVal?.value ? "ON" : "OFF"}`);
+    addLog("info", `fc01.read ok addr=${address} val=${coilVal?.value ? 1 : 0}`);
   } catch (err) {
     const e = coilState.entries.find((e2) => e2.address === address);
-    if (e) e.pending = false;
-    addLog("error", `Read coil ${address} failed: ${parseInvokeError(err)}`);
+    const reason = parseInvokeError(err);
+    if (e) {
+      e.pending = false;
+      e.writeError = reason;
+    }
+    addLog("error", `fc01.read err addr=${address} msg=${reason}`);
   }
 }
 
@@ -244,6 +325,12 @@ async function writeAddressMap(
 ): Promise<BackendWriteMassCoilsResponse | null> {
   if (valueMap.size === 0) return null;
 
+  const planSections = buildAddressSections([...valueMap.keys()].sort((a, b) => a - b));
+  addLog(
+    "info",
+    `fc15.write plan req=${valueMap.size} sections=${planSections.length} sample=${formatSectionPreview(planSections)}`,
+  );
+
   // Set pending state immediately
   for (const [address, value] of valueMap) {
     const entry = coilState.entries.find((e) => e.address === address);
@@ -280,16 +367,13 @@ async function writeAddressMap(
     }
 
     if (response.failures.length === 0) {
-      addLog(
-        "traffic",
-        `Batch write: ${response.writtenCount}/${response.totalCount} coil${response.totalCount === 1 ? "" : "s"} ✓`
-      );
+      addLog("info", `fc15.write ok req=${response.totalCount} ok=${response.writtenCount} fail=0`);
     } else {
       const failedAddresses = response.failures.map((failure) => failure.address).join(", ");
       const failureCodes = [...new Set(response.failures.map((failure) => failure.code))].join(", ");
       addLog(
         "warn",
-        `Batch partial failure: ${response.writtenCount}/${response.totalCount} succeeded; failed coil${response.failures.length === 1 ? "" : "s"} ${failedAddresses}; exception code${failureCodes.includes(",") ? "s" : ""}: ${failureCodes}`
+        `fc15.write partial req=${response.totalCount} ok=${response.writtenCount} fail=${response.failures.length} addrs=${failedAddresses} codes=${failureCodes}`
       );
     }
 
@@ -304,7 +388,7 @@ async function writeAddressMap(
         e.writeError = message;
       }
     }
-    addLog("error", `Batch write failed: ${message}`);
+    addLog("error", `fc15.write err req=${valueMap.size} msg=${message}`);
     return null;
   }
 }
@@ -371,10 +455,44 @@ function upsertAndSortEntries(next: CoilEntry[]): void {
   coilState.entries = [...map.values()].sort((a, b) => a.address - b.address);
 }
 
+function getCoilAcceptedAddressRange(): { min: number; max: number } {
+  if (coilState.entries.length === 0) {
+    return { min: MODBUS_ADDRESS_MIN, max: MODBUS_ADDRESS_MAX };
+  }
+
+  const addresses = coilState.entries.map((e) => e.address);
+  const currentMin = Math.min(...addresses);
+  const currentMax = Math.max(...addresses);
+
+  return {
+    min: Math.max(MODBUS_ADDRESS_MIN, currentMax - (COIL_MAX_COUNT - 1)),
+    max: Math.min(MODBUS_ADDRESS_MAX, currentMin + (COIL_MAX_COUNT - 1)),
+  };
+}
+
 export function addExclusiveCoil(address: number): boolean {
-  if (!Number.isFinite(address)) return false;
+  // Modbus limit: max 2000 coils per read
+  if (coilState.entries.length >= COIL_MAX_COUNT) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${COIL_MAX_COUNT}; already at ${COIL_MAX_COUNT}.`);
+    return false;
+  }
+
+  if (!Number.isFinite(address)) {
+    warnLocal(`Address is invalid. Accepted address range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}.`);
+    return false;
+  }
   const normalized = Math.floor(address);
-  if (normalized < 0 || normalized > 65535) return false;
+  if (normalized < MODBUS_ADDRESS_MIN || normalized > MODBUS_ADDRESS_MAX) {
+    warnLocal(`Address is invalid. Accepted address range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}.`);
+    return false;
+  }
+
+  const accepted = getCoilAcceptedAddressRange();
+  if (normalized < accepted.min || normalized > accepted.max) {
+    warnLocal(`Address is invalid. Accepted address range is ${accepted.min}-${accepted.max} to keep max span ${COIL_MAX_COUNT}.`);
+    return false;
+  }
+
   if (coilState.entries.some((e) => e.address === normalized)) return false;
 
   upsertAndSortEntries([
@@ -393,18 +511,27 @@ export function addExclusiveCoil(address: number): boolean {
 }
 
 function pickRandomAvailableCoilAddress(): number | null {
+  // Modbus limit: max 2000 coils per read
+  if (coilState.entries.length >= COIL_MAX_COUNT) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${COIL_MAX_COUNT}; already at ${COIL_MAX_COUNT}.`);
+    return null;
+  }
+
   const used = new Set(coilState.entries.map((e) => e.address));
+  const accepted = getCoilAcceptedAddressRange();
   const pool: number[] = [];
 
   // Pick from current range neighborhood first, then broaden.
-  for (let addr = coilState.startAddress; addr < coilState.startAddress + coilState.coilCount + 256; addr++) {
-    if (addr >= 0 && addr <= 65535 && !used.has(addr)) {
+  const preferredMin = Math.max(accepted.min, coilState.startAddress);
+  const preferredMax = Math.min(accepted.max, coilState.startAddress + coilState.coilCount + 255);
+  for (let addr = preferredMin; addr <= preferredMax; addr++) {
+    if (!used.has(addr)) {
       pool.push(addr);
     }
   }
 
   if (pool.length === 0) {
-    for (let addr = 0; addr <= 65535; addr++) {
+    for (let addr = accepted.min; addr <= accepted.max; addr++) {
       if (!used.has(addr)) pool.push(addr);
       if (pool.length >= 2048) break;
     }
@@ -429,57 +556,108 @@ export function removeCoil(address: number): void {
   coilState.entries = coilState.entries.filter((e) => e.address !== address);
 }
 
-export function removeAllCustomCoils(): void {
-  coilState.entries = coilState.entries.filter((e) => e.origin !== "custom");
+export function removeAllCoils(): void {
+  coilState.entries = [];
 }
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
-export async function readAllCoils(): Promise<void> {
+export async function readAllCoils(options?: { trace?: boolean }): Promise<void> {
   if (coilState.entries.length === 0) return;
 
-  const addresses = coilState.entries.map((e) => e.address);
-  const startAddress = Math.min(...addresses);
-  const endAddress = Math.max(...addresses);
-  const quantity = endAddress - startAddress + 1;
-
-  if (quantity > 2000) {
-    addLog("warn", `Coil range too large (${quantity} > 2000). Narrow the address range.`);
-    return;
+  const sections = buildAddressSections(coilState.entries.map((e) => e.address));
+  const trace = options?.trace ?? true;
+  if (trace) {
+    addLog(
+      "info",
+      `fc01.read plan total=${coilState.entries.length} sections=${sections.length} ops=${estimateReadOps(sections, COIL_MAX_COUNT)} sample=${formatSectionPreview(sections)}`,
+    );
   }
 
-  try {
-    const response = await invoke<BackendReadCoilsResponse>("read_coils", {
-      request: { startAddress, quantity },
-    });
+  const entryByAddress = new Map<number, CoilEntry>(coilState.entries.map((entry) => [entry.address, entry]));
 
-    for (const coilVal of response.coils) {
-      const entry = coilState.entries.find((e) => e.address === coilVal.address);
-      if (entry && !entry.pending) {
-        entry.slaveValue = coilVal.value;
-        if (entry.desiredValue === entry.slaveValue || !entry.pending) {
-          entry.desiredValue = coilVal.value;
+  let okCount = 0;
+
+  for (const section of sections) {
+    try {
+      if (section.quantity === 1) {
+        const response = await invoke<BackendReadCoilsResponse>("read_coils", {
+          request: { startAddress: section.start, quantity: 1 },
+        });
+        const single = response.coils.find((coilVal) => coilVal.address === section.start);
+        const entry = entryByAddress.get(section.start);
+        if (entry) {
+          if (single) {
+            entry.slaveValue = single.value;
+            entry.writeError = null;
+            okCount += 1;
+          } else {
+            entry.writeError = "Address not available";
+          }
         }
-        if (entry.desiredValue === entry.slaveValue) {
+        continue;
+      }
+
+      for (let chunkStart = section.start; chunkStart < section.start + section.quantity; chunkStart += COIL_MAX_COUNT) {
+        const chunkQty = Math.min(COIL_MAX_COUNT, section.start + section.quantity - chunkStart);
+        const response = await invoke<BackendReadCoilsResponse>("read_coils", {
+          request: { startAddress: chunkStart, quantity: chunkQty },
+        });
+
+        for (const coilVal of response.coils) {
+          const entry = entryByAddress.get(coilVal.address);
+          if (!entry) continue;
+          entry.slaveValue = coilVal.value;
           entry.writeError = null;
+          okCount += 1;
+        }
+
+        const chunkEnd = chunkStart + chunkQty - 1;
+        const seen = new Set(response.coils.map((coilVal) => coilVal.address));
+        for (let address = chunkStart; address <= chunkEnd; address += 1) {
+          const entry = entryByAddress.get(address);
+          if (!entry) continue;
+          if (!seen.has(address)) {
+            entry.writeError = "Address not available";
+          }
         }
       }
+    } catch (err) {
+      const sectionEnd = section.start + section.quantity - 1;
+      for (let address = section.start; address <= sectionEnd; address += 1) {
+        const entry = entryByAddress.get(address);
+        if (!entry) continue;
+        entry.writeError = "Address not available";
+      }
+      addLog(
+        "error",
+        `fc01.read err start=${section.start} qty=${section.quantity} end=${sectionEnd} msg=${parseInvokeError(err)}`,
+      );
     }
-    addLog("traffic", `FC01 read ${quantity} coil${quantity === 1 ? "" : "s"} from ${startAddress}`);
-  } catch (err) {
-    addLog("error", `Read coils failed: ${parseInvokeError(err)}`);
+  }
+
+  if (okCount > 0) {
+    addLog("info", `fc01.read ok total=${coilState.entries.length} ok=${okCount} sections=${sections.length}`);
   }
 }
 
 export function setPollActive(active: boolean): void {
+  if (active && !isPollingAllowedForCount(coilState.entries.length)) {
+    warnLocal(
+      `Polling disabled for lists larger than ${getGlobalPollingMaxAddressCount()} addresses. Use Read once for bulk refresh.`,
+    );
+    coilState.pollActive = false;
+    return;
+  }
+
   coilState.pollActive = active;
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
   if (active) {
-    void readAllCoils();
-    pollTimer = setInterval(() => { void readAllCoils(); }, coilState.pollInterval);
+    void readAllCoils({ trace: false });
+    pollTimer = setInterval(() => { void readAllCoils({ trace: false }); }, coilState.pollInterval);
   }
 }
 
@@ -495,12 +673,26 @@ export function applyAddressRange(startAddress: number, count: number): void {
   if (coilState.massAutoActive) stopAutoToggle();
   if (coilState.pollActive) setPollActive(false);
 
-  coilState.startAddress = startAddress;
-  coilState.coilCount = count;
+  const requestedStart = Math.floor(startAddress);
+  const requestedCount = Math.floor(count);
+
+  const start = Math.max(MODBUS_ADDRESS_MIN, Math.min(MODBUS_ADDRESS_MAX, requestedStart));
+  const maxCountFromStart = Math.min(COIL_MAX_COUNT, MODBUS_ADDRESS_MAX - start + 1);
+  const qty = Math.max(1, Math.min(maxCountFromStart, requestedCount));
+
+  if (!Number.isFinite(startAddress) || requestedStart !== start) {
+    warnLocal(`Address is invalid. Accepted start range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}. Applied ${start}.`);
+  }
+  if (!Number.isFinite(count) || requestedCount !== qty) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${maxCountFromStart} for start ${start}. Applied ${qty}.`);
+  }
+
+  coilState.startAddress = start;
+  coilState.coilCount = qty;
 
   // Keep custom-added coils while rebuilding base range entries.
   const customEntries = coilState.entries.filter((e) => e.origin === "custom");
-  const rangeEntries = generateCoils(startAddress, count).map((entry) => {
+  const rangeEntries = generateCoils(start, qty).map((entry) => {
     const existing = coilState.entries.find((e) => e.address === entry.address);
     if (!existing) return entry;
     return {
@@ -510,15 +702,30 @@ export function applyAddressRange(startAddress: number, count: number): void {
       writeError: existing.writeError,
       label: existing.label,
       pending: existing.pending,
-      origin: "range" as const,
+      origin: existing.origin,
     };
   });
 
-  upsertAndSortEntries([...rangeEntries, ...customEntries]);
+  const customCandidates = customEntries
+    .filter((e) => !rangeEntries.some((r) => r.address === e.address))
+    .sort((a, b) => a.address - b.address);
+  const rangeEnd = start + qty - 1;
+  const acceptedCustomMin = Math.max(MODBUS_ADDRESS_MIN, rangeEnd - (COIL_MAX_COUNT - 1));
+  const acceptedCustomMax = Math.min(MODBUS_ADDRESS_MAX, start + (COIL_MAX_COUNT - 1));
+  const keptCustom = customCandidates.filter(
+    (entry) => entry.address >= acceptedCustomMin && entry.address <= acceptedCustomMax,
+  );
+
+  upsertAndSortEntries([...rangeEntries, ...keptCustom]);
+
+  const droppedCustom = customCandidates.length - keptCustom.length;
+  if (droppedCustom > 0) {
+    warnLocal(`Address is invalid. Accepted address range is ${acceptedCustomMin}-${acceptedCustomMax} for custom coils at this range; dropped ${droppedCustom} custom coil${droppedCustom === 1 ? "" : "s"}.`);
+  }
 
   // Reset mass-write range to match new entries
-  coilState.massFrom = startAddress;
-  coilState.massTo = startAddress + count - 1;
+  coilState.massFrom = start;
+  coilState.massTo = start + qty - 1;
 }
 
 // ── Filtered view ─────────────────────────────────────────────────────────────

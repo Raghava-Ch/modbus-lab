@@ -22,13 +22,26 @@
     visibleCount: number;
     onFilter: (filter: LogFilter) => void;
     onClear: () => void;
-    onSave: (scope: LogExportScope) => void;
+    onSave: (scope: LogExportScope) => Promise<void> | void;
     onToggle: () => void;
   }>();
 
   let saveScope = $state<LogExportScope>("filtered");
+  let isSaving = $state(false);
 
-  const saveDisabled = $derived(saveScope === "all" ? totalCount === 0 : visibleCount === 0);
+  const saveDisabled = $derived(isSaving || (saveScope === "all" ? totalCount === 0 : visibleCount === 0));
+  const filteredScopeLabel = $derived(
+    filter === "all" ? `Filtered (${visibleCount})` : `Filtered ${filter.toUpperCase()} (${visibleCount})`,
+  );
+
+  async function handleSaveClick(): Promise<void> {
+    isSaving = true;
+    try {
+      await onSave(saveScope);
+    } finally {
+      isSaving = false;
+    }
+  }
 </script>
 
 <header class="log-toolbar">
@@ -47,7 +60,7 @@
             type="button"
             onclick={() => (saveScope = "filtered")}
           >
-            Selected ({visibleCount})
+            {filteredScopeLabel}
           </button>
           <button class:active={saveScope === "all"} type="button" onclick={() => (saveScope = "all")}>
             All ({totalCount})
@@ -55,7 +68,7 @@
         </div>
       </div>
 
-      <button class="save-btn" type="button" onclick={() => onSave(saveScope)} disabled={saveDisabled}>
+      <button class="save-btn" type="button" onclick={handleSaveClick} disabled={saveDisabled}>
         <Download size={14} />
         <span>Save</span>
       </button>

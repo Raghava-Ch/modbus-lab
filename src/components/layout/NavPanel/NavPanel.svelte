@@ -78,6 +78,7 @@
       padding: 4px;
       gap: 4px;
       background: var(--c-surface-1);
+      overflow: visible;
     }
 
     .main-nav,
@@ -88,6 +89,7 @@
 
     .main-nav {
       flex: 1;
+      min-width: 0;
     }
   }
 </style>

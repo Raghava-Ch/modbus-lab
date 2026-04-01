@@ -1,7 +1,6 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import { demoState, runDemoScript, toggleDemoMode } from "../../../state/demo.svelte";
   import {
     layoutState,
     toggleMobileLog,
@@ -9,7 +8,7 @@
   } from "../../../state/layout.svelte";
   import ConnectionBadge from "./ConnectionBadge.svelte";
   import DeviceInfo from "./DeviceInfo.svelte";
-  import StatusActions from "./StatusActions.svelte";
+  import StatusBarActions from "./StatusBarActions.svelte";
 </script>
 
 <header class="status-bar">
@@ -22,12 +21,8 @@
     <DeviceInfo compact={layoutState.statusCompact} />
   </div>
 
-  <StatusActions
-    demoEnabled={demoState.enabled}
-    demoRunning={demoState.running}
+  <StatusBarActions
     statusCompact={layoutState.statusCompact}
-    onToggleDemo={toggleDemoMode}
-    onRunDemo={runDemoScript}
     onToggleStatus={toggleStatusCompact}
     onToggleMobileLog={toggleMobileLog}
   />
