@@ -77,8 +77,8 @@
               onchange={(e) => setForcedLayoutMode(e.currentTarget.value as "auto" | "desktop" | "mobile")}
             >
               <option value="auto">Auto</option>
-              <option value="desktop">Desktop</option>
-              <option value="mobile">Mobile / Vertical</option>
+              <option value="desktop">Horizontal</option>
+              <option value="mobile">Vertical</option>
             </select>
           </label>
         </section>

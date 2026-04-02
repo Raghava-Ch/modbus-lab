@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "modbux",
+  "productName": "Modbus Lab",
   "version": "0.0.0",
-  "identifier": "com.modbux.app",
+  "identifier": "com.Modbus-Lab.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -19,7 +19,7 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "modbux",
+        "title": "Modbus Lab",
         "width": 800,
         "height": 600
       }
