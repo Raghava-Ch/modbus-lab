@@ -95,7 +95,7 @@ function estimateReadOps(sections: AddressSection[], chunkMax: number): number {
   return sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
 }
 
-const INPUT_VIEW_KEY = "modbux.inputRegView";
+const INPUT_VIEW_KEY = "Modbus-Lab.inputRegView";
 const INPUT_MAX_COUNT = 65536;
 const INPUT_ADDRESS_MIN = 0;
 const INPUT_ADDRESS_MAX = INPUT_MAX_COUNT - 1;

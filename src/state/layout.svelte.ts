@@ -6,9 +6,9 @@ export const layoutState = $state({
   mobileLogOpen: false,
 });
 
-const NAV_KEY = "modbux.navCollapsed";
-const LOG_KEY = "modbux.logCollapsed";
-const LOG_HEIGHT_KEY = "modbux.logHeight";
+const NAV_KEY = "Modbus-Lab.navCollapsed";
+const LOG_KEY = "Modbus-Lab.logCollapsed";
+const LOG_HEIGHT_KEY = "Modbus-Lab.logHeight";
 const LOG_HEIGHT_MIN = 140;
 const LOG_HEIGHT_MAX = 460;
 

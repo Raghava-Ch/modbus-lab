@@ -1,72 +1,75 @@
-# ModBux
+# Modbus Lab
 
-ModBux is a desktop Modbus master client built with Svelte + Tauri.
-It is focused on practical day-to-day register/coil operations with a fast UI, rich polling controls, and detailed operation logs.
+**Modbus Lab** is a fast, practical desktop Modbus master client built with Svelte 5 and Tauri v2. 
 
-## Project Status
+This tool is powered by the **[modbus-rs](https://github.com/Raghava-Ch/modbus-rs)** stack, a modern Rust implementation designed for:
 
-Current status: usable for core Modbus workflows.
+- embedded (no_std) systems
+- deterministic behavior
+- cross-platform use (desktop, RTOS, Baremetal, Linux)
 
-Implemented and working:
-- Connection management (Modbus TCP UI + protocol selector shell for TCP/RTU/ASCII)
-- Coils (FC01 read, FC05 single write, FC15 batch write)
-- Discrete Inputs (FC02 read)
-- Holding Registers (FC03 read, FC06 single write, FC16 batch write)
-- Input Registers (FC04 read)
-- Global settings (poll defaults, display format, forced layout, log preferences)
-- App log panel with filtering and native save-to-file export
+This application serves as a real-world validation of the stack.
 
-Not implemented yet (currently placeholder pages):
-- File Records (FC20/FC21)
-- FIFO Queue (FC24)
-- Diagnostics (FC08)
+Designed for day-to-day Modbus operations, it features a highly responsive UI, rich polling controls, and detailed operation logs.
 
-## Feature Summary
+---
 
-### Connection
-- Connection page with protocol cards and TCP settings
-- Connected/disconnected state badges in header
-- Device context chips (protocol, endpoint, slave id)
+## 🚀 Project Status: Alpha
 
-### Coils (FC01/FC05/FC15)
-- Table and switch-card views
-- Single read/write actions
-- Batch write for pending desired values
-- Polling with interval control and limits
-- Range add + single custom address add
+The application is currently in **alpha**. It is fully usable for core Modbus TCP workflows, with active, ongoing development to expand protocol support and features.
 
-### Discrete Inputs (FC02)
-- Read-only table view
-- Polling support
-- Address range and custom address add
+### Currently Implemented
+* **Connection Management:** Modbus TCP UI with a protocol selector shell prepared for RTU/ASCII.
+* **Coils:** Read (FC01), Single Write (FC05), Batch Write (FC15).
+* **Discrete Inputs:** Read (FC02).
+* **Holding Registers:** Read (FC03), Single Write (FC06), Batch Write (FC16).
+* **Input Registers:** Read (FC04).
+* **Global Settings:** Configurable poll defaults, display formats, layout forcing, and log preferences.
+* **App Logging:** Dedicated log panel with filtering capabilities and native save-to-file export.
 
-### Holding Registers (FC03/FC06/FC16)
-- Table and card views
-- Read value vs desired value editing
-- Single write and pending batch write
-- Address filtering (range/list include/exclude)
-- Polling with practical interval handling
+### Planned Features (Placeholders)
+* File Records (FC20/FC21)
+* FIFO Queue (FC24)
+* Diagnostics (FC08)
 
-### Input Registers (FC04)
-- Read-only table and card views
-- Address filtering (range/list include/exclude)
-- Polling with chunked section planning
+---
 
-### Logging
-- Live log panel with level filters: `ALL`, `TRAFFIC`, `INFO`, `WARN`, `ERROR`
-- Scheduling/plan logs for grouped reads and writes
-- Native desktop export with save dialog
-- Retention control via settings
+## 📡 Protocol Support
 
-### Settings
-- Default polling interval
-- Maximum address count allowed for polling
-- Address/value display format: decimal or hex
-- Forced layout: auto, desktop, mobile
-- Log time format and precision
-- Per-feature defaults (view/start/count)
+| Protocol | Status |
+|---------|--------|
+| Modbus TCP | ✅ Implemented |
+| Modbus RTU | 🚧 Planned |
+| Modbus ASCII | 🚧 Planned |
 
-## Screenshots
+## ✨ Feature Summary
+
+### 🔌 Connection
+* Dedicated connection page featuring protocol cards and detailed TCP settings.
+* Persistent connected/disconnected state badges in the global header.
+* Device context chips displaying protocol, endpoint, and slave ID at a glance.
+
+### 🟢 Coils & Discrete Inputs (FC01, FC02, FC05, FC15)
+* **Flexible Views:** Toggle between dense table views and interactive switch-card views.
+* **Operations:** Support for single read/write actions and pending batch writes for desired values.
+* **Polling:** Granular polling controls with interval adjustments and limits.
+* **Addressing:** Add custom address ranges or single custom addresses on the fly.
+
+### 🔢 Registers (FC03, FC04, FC06, FC16)
+* **Flexible Views:** Table and card views for both Input and Holding registers.
+* **Smart Editing:** Compare "Read Value" versus "Desired Value" before committing writes.
+* **Advanced Filtering:** Include/exclude specific addresses via ranges or lists.
+* **Intelligent Polling:** Practical interval handling with chunked section planning for Input Registers.
+
+### 📝 Logging & Settings
+* **Live Traffic Logs:** Filter by `ALL`, `INFO`, `WARN`, and `ERROR`.
+* **Plan Logs:** Scheduling and plan logs for grouped read/write operations.
+* **Native Export:** Save logs directly to your local filesystem via a native desktop dialog.
+* **Customization:** Tailor the experience with display formats (Decimal/Hex), log time precision, forced UI layouts (Auto/Vertical/Horizontal), and per-feature default limits.
+
+---
+
+## 📸 Demo Screenshots
 
 ### Connection
 ![Connection Settings](screenshots/ConnectionSettings.png)
@@ -77,6 +80,7 @@ Not implemented yet (currently placeholder pages):
 
 ### Discrete Inputs
 ![Discrete Inputs - Table View](screenshots/DiscreteInputsTableView.png)
+![Discrete Inputs - Switch View](screenshots/DiscreteInputsSwitchView.png)
 
 ### Holding Registers
 ![Holding Registers - Switch View](screenshots/HoldingRegistersSwitchView.png)
@@ -87,10 +91,10 @@ Not implemented yet (currently placeholder pages):
 
 ## Log Examples
 
-Representative runtime logs from current implementation:
+This helps debugging real-world Modbus communication issues.
 
 ```text
-INFO  ModBux shell initialized.
+INFO  Modbus Lab shell initialized.
 INFO  [CONNECTION] connect.tcp start host=192.168.55.200 port=502
 INFO  [CONNECTION] connect.tcp ok | status=connectedTcp (TCP 192.168.55.200:502)
 INFO  fc01.read plan total=16 sections=1 ops=1 sample=[0..15]
@@ -100,28 +104,69 @@ INFO  fc03.read ok total=16 ok=16 sections=1
 ERROR fc04.read err addr=15 msg=Read input registers failed.
 ```
 
-## Tech Stack
+## 🛠 Tech Stack
 
-- Frontend: Svelte 5 + TypeScript + Vite
-- Desktop runtime: Tauri v2
-- Icons/bundling: Tauri icon/bundle pipeline
+This project bridges a cutting-edge web frontend with a high-performance native backend:
 
-## Local Development
+* **Modbus Engine:** [`modbus-rs`](https://github.com/Raghava-Ch/modbus-rs) (Custom Rust implementation)
+* **Desktop Runtime:** Tauri v2
+* **Frontend:** Svelte 5 + TypeScript + Vite
+* **Tooling:** Tauri icon/bundle pipeline
+
+---
+
+## 🎯 Who is this for?
+
+- Industrial automation engineers
+- Embedded developers working with Modbus devices
+- PLC / SCADA developers
+- Anyone testing or debugging Modbus TCP devices
+
+## 📦 Installation
+
+### Download
+
+Download the latest release from:
+👉 https://github.com/Raghava-Ch/modbus-lab/releases
+
+It is recommended to build from source yourself. See the [Local Development](#-local-development) section below for instructions.   
+
+### Run
+
+- Launch the application
+- Enter Modbus TCP host and port
+- Start reading/writing registers
+
+## ⚡ Quick Start
+
+1. Open the app
+2. Navigate to the **Connection** page
+3. Enter:
+   - Host: `192.168.x.x`
+   - Port: `502`
+4. Connect
+5. Go to **Holding Registers**
+6. Read address range (e.g., 0–10)
+
+## 💻 Local Development
 
 ### Prerequisites
-- Node.js 20+
-- Rust toolchain + Cargo
-- Tauri v2 prerequisites for your OS
-
-### Install
-```bash
-npm install
+* Node.js 20+
+* Rust toolchain + Cargo
+* [Tauri v2 Prerequisites](https://v2.tauri.app/start/prerequisites/) for your specific OS (Windows, macOS, or Linux).
 ```
 
 ### Run web dev server
 ```bash
 npm run dev
 ```
+
+## ⚠ Limitations
+
+- RTU/ASCII not yet implemented in the tool, modbus-rs stack supports them but UI is pending.
+- Advanced functions (file record, FIFO) are placeholders, planned for future releases.
+
+Note: This tool is intended as both a **daily-use Modbus client** and a **reference implementation** for modbus-rs.
 
 ### Run desktop app (Tauri)
 ```bash
@@ -138,6 +183,16 @@ npm run check
 npm run tauri build
 ```
 
-## License
+## 📄 License
 
-See [LICENSE](LICENSE).
+This project is dual-licensed:
+
+- Will always be **GPL v3** for open-source use 
+
+For contributing, see the [Contributing](CONTRIBUTING.md) guidelines.
+
+
+## Contact
+
+**Name:** Raghava Ch  
+**Email:** [ch.raghava44@gmail.com](mailto:ch.raghava44@gmail.com)  

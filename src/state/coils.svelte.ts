@@ -69,7 +69,7 @@ function warnLocal(message: string): void {
 }
 
 
-const COIL_VIEW_KEY = "modbux.coilView";
+const COIL_VIEW_KEY = "Modbus-Lab.coilView";
 const COIL_MAX_COUNT = 2000;
 const MODBUS_ADDRESS_MIN = 0;
 const MODBUS_ADDRESS_MAX = COIL_MAX_COUNT - 1;

@@ -109,7 +109,7 @@ function estimateReadOps(sections: AddressSection[], chunkMax: number): number {
   return sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
 }
 
-const HOLDING_VIEW_KEY = "modbux.holdingView";
+const HOLDING_VIEW_KEY = "Modbus-Lab.holdingView";
 const HOLDING_MAX_COUNT = 65536;
 const HOLDING_ADDRESS_MIN = 0;
 const HOLDING_ADDRESS_MAX = HOLDING_MAX_COUNT - 1;

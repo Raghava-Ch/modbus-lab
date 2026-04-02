@@ -30,7 +30,7 @@ export interface AppSettings {
   };
 }
 
-const SETTINGS_KEY = "modbux.settings.v1";
+const SETTINGS_KEY = "Modbus-Lab.settings.v1";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   rememberLastFeatureState: true,

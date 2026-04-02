@@ -12,7 +12,7 @@
     }
 
     seeded = true;
-    addLog("info", "ModBux shell initialized.");
+    addLog("info", "Modbus Lab shell initialized.");
   });
 </script>
 

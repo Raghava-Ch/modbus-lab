@@ -49,7 +49,7 @@ export function setLogFilter(filter: LogFilter): void {
 
 function formatLogEntries(entries: LogEntry[], scope: LogExportScope, filter: LogFilter): string {
   const header = [
-    "# ModBux Log Export",
+    "# Modbus-Lab Log Export",
     `# exportedAt=${new Date().toISOString()}`,
     `# scope=${scope}`,
     `# filter=${filter}`,
@@ -67,7 +67,7 @@ function formatLogEntries(entries: LogEntry[], scope: LogExportScope, filter: Lo
 function buildLogFileName(scope: LogExportScope, filter: LogFilter): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const suffix = scope === "all" ? "all-events" : filter === "all" ? "visible-events" : `${filter}-events`;
-  return `modbux-${suffix}-${stamp}.log`;
+  return `Modbus-Lab-${suffix}-${stamp}.log`;
 }
 
 export async function saveLogsToFile(entries: LogEntry[], scope: LogExportScope, filter: LogFilter): Promise<void> {
