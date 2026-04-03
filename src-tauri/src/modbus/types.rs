@@ -185,6 +185,7 @@ impl ApiError {
         }
     }
 
+    #[allow(dead_code)]
     pub fn not_implemented(
         feature: impl Into<String>,
         analytics: Option<AnalyticsContext>,

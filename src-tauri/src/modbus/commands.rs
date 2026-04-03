@@ -187,9 +187,12 @@ pub async fn connect_modbus_serial_ascii(
 ) -> ApiResult<CommandAck> {
     emit_log(
         &app,
-        BackendEventLevel::Warn,
+        BackendEventLevel::Info,
         "connection",
-        "connect.ascii scaffold",
+        format!(
+            "connect.ascii start port={} baud={} slave={}",
+            request.port, request.baud_rate, request.slave_id
+        ),
         None,
         request.analytics.clone(),
     )

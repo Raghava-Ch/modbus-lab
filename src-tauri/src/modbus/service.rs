@@ -90,6 +90,7 @@ struct TcpSession {
 }
 
 struct SerialSession {
+    frame_mode: SerialFrameMode,
     port_name: String,
     baud_rate: u32,
     data_bits: u8,
@@ -100,15 +101,23 @@ struct SerialSession {
     port: Box<dyn SerialPort>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SerialFrameMode {
+    Rtu,
+    Ascii,
+}
+
 enum ActiveConnection {
     Tcp(TcpSession),
     SerialRtu(SerialSession),
+    SerialAscii(SerialSession),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActiveConnectionKind {
     Tcp,
     SerialRtu,
+    SerialAscii,
 }
 
 struct RuntimeState {
@@ -248,6 +257,10 @@ impl AppState {
                     // Dropping the serial port closes the underlying device handle.
                     drop(session.port);
                 }
+                ActiveConnection::SerialAscii(session) => {
+                    // Dropping the serial port closes the underlying device handle.
+                    drop(session.port);
+                }
             }
         }
 
@@ -306,6 +319,22 @@ impl AppState {
                 session.slave_id,
                 session.timeout.as_millis(),
             )),
+            Some(ActiveConnection::SerialAscii(session)) => Some(format!(
+                "Serial ASCII {} @ {} bps, {}{}{}, slave {}, timeout={}ms",
+                session.port_name,
+                session.baud_rate,
+                session.data_bits,
+                if session.parity.eq_ignore_ascii_case("none") {
+                    "N"
+                } else if session.parity.eq_ignore_ascii_case("even") {
+                    "E"
+                } else {
+                    "O"
+                },
+                session.stop_bits,
+                session.slave_id,
+                session.timeout.as_millis(),
+            )),
             None => None,
         };
 
@@ -350,7 +379,7 @@ impl AppState {
                     })
                     .collect()
             }
-            ActiveConnectionKind::SerialRtu => {
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);
                 payload.extend_from_slice(&request.start_address.to_be_bytes());
                 payload.extend_from_slice(&request.quantity.to_be_bytes());
@@ -405,7 +434,7 @@ impl AppState {
                 )
                 .await?
             }
-            ActiveConnectionKind::SerialRtu => {
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);
                 payload.extend_from_slice(&request.address.to_be_bytes());
                 payload.extend_from_slice(if request.value { &[0xFF, 0x00] } else { &[0x00, 0x00] });
@@ -470,7 +499,7 @@ impl AppState {
                     })
                     .collect()
             }
-            ActiveConnectionKind::SerialRtu => {
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);
                 payload.extend_from_slice(&request.start_address.to_be_bytes());
                 payload.extend_from_slice(&request.quantity.to_be_bytes());
@@ -545,7 +574,7 @@ impl AppState {
                     })
                     .collect()
             }
-            ActiveConnectionKind::SerialRtu => {
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);
                 payload.extend_from_slice(&request.start_address.to_be_bytes());
                 payload.extend_from_slice(&request.quantity.to_be_bytes());
@@ -620,7 +649,7 @@ impl AppState {
                     })
                     .collect()
             }
-            ActiveConnectionKind::SerialRtu => {
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);
                 payload.extend_from_slice(&request.start_address.to_be_bytes());
                 payload.extend_from_slice(&request.quantity.to_be_bytes());
@@ -678,7 +707,7 @@ impl AppState {
                 )
                 .await?
             }
-            ActiveConnectionKind::SerialRtu => {
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);
                 payload.extend_from_slice(&request.address.to_be_bytes());
                 payload.extend_from_slice(&request.value.to_be_bytes());
@@ -719,7 +748,10 @@ impl AppState {
             });
         }
 
-        if self.active_connection_kind(request.analytics.clone()).await? == ActiveConnectionKind::SerialRtu {
+        if matches!(
+            self.active_connection_kind(request.analytics.clone()).await?,
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii
+        ) {
             let total = request.coils.len();
             let mut written = 0;
             let mut failures = Vec::new();
@@ -911,7 +943,10 @@ impl AppState {
             });
         }
 
-        if self.active_connection_kind(request.analytics.clone()).await? == ActiveConnectionKind::SerialRtu {
+        if matches!(
+            self.active_connection_kind(request.analytics.clone()).await?,
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii
+        ) {
             let total = request.registers.len();
             let mut written = 0;
             let mut failures = Vec::new();
@@ -1057,7 +1092,7 @@ impl AppState {
                         .await
                         .map_err(|err| ApiError::backend_failure("FC07 failed", Some(err), None))?
                 }
-                ActiveConnectionKind::SerialRtu => {
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                     self.with_serial_session(None, |session| serial_read_exception_status(session))
                         .await?
                 }
@@ -1090,7 +1125,7 @@ impl AppState {
                         )
                     })?
                 }
-                ActiveConnectionKind::SerialRtu => {
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                     self.with_serial_session(request.analytics.clone(), |session| {
                         serial_diagnostic(session, request.subfunction, &request.data)
                     })
@@ -1111,7 +1146,7 @@ impl AppState {
                         .await
                         .map_err(|err| ApiError::backend_failure("FC11 failed", Some(err), None))?
                 }
-                ActiveConnectionKind::SerialRtu => {
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                     self.with_serial_session(None, |session| serial_get_com_event_counter(session))
                         .await?
                 }
@@ -1150,7 +1185,7 @@ impl AppState {
                         )
                     })?
                 }
-                ActiveConnectionKind::SerialRtu => {
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                     self.with_serial_session(request.analytics.clone(), |session| {
                         serial_get_com_event_log(session, request.start, request.count)
                     })
@@ -1171,7 +1206,7 @@ impl AppState {
                         .await
                         .map_err(|err| ApiError::backend_failure("FC17 failed", Some(err), None))?
                 }
-                ActiveConnectionKind::SerialRtu => {
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                     self.with_serial_session(None, |session| serial_report_server_id(session))
                         .await?
                 }
@@ -1218,7 +1253,7 @@ impl AppState {
                             )
                         })?
                     }
-                    ActiveConnectionKind::SerialRtu => {
+                    ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                         self.with_serial_session(request.analytics.clone(), |session| {
                             serial_read_device_identification(
                                 session,
@@ -1328,6 +1363,7 @@ impl AppState {
         }
 
         rt.active = Some(ActiveConnection::SerialRtu(SerialSession {
+            frame_mode: SerialFrameMode::Rtu,
             port_name: port_name.clone(),
             baud_rate: request.baud_rate,
             data_bits: request.data_bits,
@@ -1363,10 +1399,127 @@ impl AppState {
         &self,
         request: &SerialConnectRequest,
     ) -> ApiResult<ConnectionStatusPayload> {
-        Err(ApiError::not_implemented(
-            "Serial ASCII connection",
-            request.analytics.clone(),
-        ))
+        if request.port.trim().is_empty() {
+            return Err(ApiError::invalid_request(
+                "Serial port is required.",
+                request.analytics.clone(),
+            ));
+        }
+
+        if !(1..=247).contains(&request.slave_id) {
+            return Err(ApiError::invalid_request(
+                "Slave ID must be between 1 and 247.",
+                request.analytics.clone(),
+            ));
+        }
+
+        if request.baud_rate == 0 {
+            return Err(ApiError::invalid_request(
+                "Baud rate must be greater than 0.",
+                request.analytics.clone(),
+            ));
+        }
+
+        if !matches!(request.data_bits, 5..=8) {
+            return Err(ApiError::invalid_request(
+                "Data bits must be 5, 6, 7, or 8.",
+                request.analytics.clone(),
+            ));
+        }
+
+        if !matches!(request.stop_bits, 1 | 2) {
+            return Err(ApiError::invalid_request(
+                "Stop bits must be 1 or 2.",
+                request.analytics.clone(),
+            ));
+        }
+
+        let parity = request.parity.trim().to_ascii_lowercase();
+        if !matches!(parity.as_str(), "none" | "even" | "odd") {
+            return Err(ApiError::invalid_request(
+                "Parity must be one of: none, even, odd.",
+                request.analytics.clone(),
+            ));
+        }
+
+        let timeout_ms = request.timeout_ms.unwrap_or(2_000).clamp(100, 60_000);
+
+        {
+            let mut rt = self.runtime.lock().await;
+            if rt.active.is_some() || matches!(rt.status, ConnectionStatus::Connecting) {
+                return Err(ApiError::conflict(
+                    "An active Modbus connection already exists. Disconnect first.",
+                    request.analytics.clone(),
+                ));
+            }
+
+            rt.status = ConnectionStatus::Connecting;
+        }
+
+        let port_name = request.port.trim().to_string();
+        let open_result = open_serial_port(
+            port_name.clone(),
+            request.baud_rate,
+            request.data_bits,
+            request.stop_bits,
+            parity.clone(),
+            timeout_ms,
+        )
+        .await;
+
+        let serial_port = match open_result {
+            Ok(port) => port,
+            Err(err) => {
+                let mut rt = self.runtime.lock().await;
+                rt.status = ConnectionStatus::Disconnected;
+                return Err(ApiError::backend_failure(
+                    "Failed to open serial port.",
+                    Some(err),
+                    request.analytics.clone(),
+                ));
+            }
+        };
+
+        let mut rt = self.runtime.lock().await;
+        if rt.active.is_some() {
+            rt.status = ConnectionStatus::Disconnected;
+            return Err(ApiError::conflict(
+                "An active Modbus connection already exists. Disconnect first.",
+                request.analytics.clone(),
+            ));
+        }
+
+        rt.active = Some(ActiveConnection::SerialAscii(SerialSession {
+            frame_mode: SerialFrameMode::Ascii,
+            port_name: port_name.clone(),
+            baud_rate: request.baud_rate,
+            data_bits: request.data_bits,
+            stop_bits: request.stop_bits,
+            parity: parity.clone(),
+            timeout: Duration::from_millis(timeout_ms),
+            slave_id: request.slave_id,
+            port: serial_port,
+        }));
+        rt.status = ConnectionStatus::ConnectedSerialAscii;
+
+        Ok(ConnectionStatusPayload {
+            status: rt.status.clone(),
+            details: Some(format!(
+                "Serial ASCII {} @ {} bps, {}{}{}, slave {}",
+                port_name,
+                request.baud_rate,
+                request.data_bits,
+                if parity == "none" {
+                    "N"
+                } else if parity == "even" {
+                    "E"
+                } else {
+                    "O"
+                },
+                request.stop_bits,
+                request.slave_id,
+            )),
+        })
     }
 
     async fn active_tcp_session(
@@ -1385,6 +1538,11 @@ impl AppState {
                 Some("This command path is currently TCP-only while serial routing is being implemented.".to_string()),
                 analytics,
             )),
+            Some(ActiveConnection::SerialAscii(_)) => Err(ApiError::backend_failure(
+                "Operation not available on Serial ASCII yet.",
+                Some("This command path is currently TCP-only while serial routing is being implemented.".to_string()),
+                analytics,
+            )),
             None => Err(ApiError::not_connected(
                 "No active Modbus connection.",
                 analytics,
@@ -1400,6 +1558,7 @@ impl AppState {
         match &rt.active {
             Some(ActiveConnection::Tcp(_)) => Ok(ActiveConnectionKind::Tcp),
             Some(ActiveConnection::SerialRtu(_)) => Ok(ActiveConnectionKind::SerialRtu),
+            Some(ActiveConnection::SerialAscii(_)) => Ok(ActiveConnectionKind::SerialAscii),
             None => Err(ApiError::not_connected(
                 "No active Modbus connection.",
                 analytics,
@@ -1426,9 +1585,18 @@ impl AppState {
                     )
                 })
             }
+            Some(ActiveConnection::SerialAscii(session)) => {
+                op(session).map_err(|details| {
+                    ApiError::backend_failure(
+                        "Serial ASCII operation failed.",
+                        Some(details),
+                        analytics,
+                    )
+                })
+            }
             Some(ActiveConnection::Tcp(_)) => Err(ApiError::backend_failure(
                 "Operation requires Serial RTU connection.",
-                Some("Switch protocol to Serial RTU and reconnect.".to_string()),
+                Some("Switch protocol to Serial RTU/ASCII and reconnect.".to_string()),
                 analytics,
             )),
             None => Err(ApiError::not_connected(
@@ -1452,6 +1620,11 @@ impl AppState {
             )),
             Some(ActiveConnection::SerialRtu(_)) => Err(ApiError::backend_failure(
                 "Operation not available on Serial RTU yet.",
+                Some("This command path is currently TCP-only while serial routing is being implemented.".to_string()),
+                analytics,
+            )),
+            Some(ActiveConnection::SerialAscii(_)) => Err(ApiError::backend_failure(
+                "Operation not available on Serial ASCII yet.",
                 Some("This command path is currently TCP-only while serial routing is being implemented.".to_string()),
                 analytics,
             )),
@@ -2064,7 +2237,155 @@ fn crc16_modbus(data: &[u8]) -> u16 {
     crc
 }
 
+fn lrc_modbus(data: &[u8]) -> u8 {
+    let sum: u8 = data.iter().fold(0_u8, |acc, b| acc.wrapping_add(*b));
+    (!sum).wrapping_add(1)
+}
+
+fn nibble_to_hex(n: u8) -> u8 {
+    match n {
+        0..=9 => b'0' + n,
+        10..=15 => b'A' + (n - 10),
+        _ => b'0',
+    }
+}
+
+fn hex_to_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(10 + (b - b'a')),
+        b'A'..=b'F' => Some(10 + (b - b'A')),
+        _ => None,
+    }
+}
+
+fn bytes_to_ascii_hex_frame(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + data.len() * 2 + 2);
+    out.push(b':');
+    for byte in data {
+        out.push(nibble_to_hex(byte >> 4));
+        out.push(nibble_to_hex(byte & 0x0F));
+    }
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
+fn ascii_hex_frame_to_bytes(frame: &[u8]) -> Result<Vec<u8>, String> {
+    let mut body = frame;
+    if let Some(pos) = body.iter().position(|b| *b == b':') {
+        body = &body[pos + 1..];
+    }
+
+    while matches!(body.last(), Some(b'\r' | b'\n')) {
+        body = &body[..body.len() - 1];
+    }
+
+    if body.len() % 2 != 0 {
+        return Err("ASCII frame has odd hex length.".to_string());
+    }
+
+    let mut out = Vec::with_capacity(body.len() / 2);
+    let mut i = 0;
+    while i < body.len() {
+        let hi = hex_to_nibble(body[i])
+            .ok_or_else(|| format!("Invalid ASCII hex character 0x{:02X}.", body[i]))?;
+        let lo = hex_to_nibble(body[i + 1])
+            .ok_or_else(|| format!("Invalid ASCII hex character 0x{:02X}.", body[i + 1]))?;
+        out.push((hi << 4) | lo);
+        i += 2;
+    }
+
+    Ok(out)
+}
+
 fn serial_send_request(
+    session: &mut SerialSession,
+    function: u8,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    match session.frame_mode {
+        SerialFrameMode::Rtu => serial_send_request_rtu(session, function, payload),
+        SerialFrameMode::Ascii => serial_send_request_ascii(session, function, payload),
+    }
+}
+
+fn serial_send_request_ascii(
+    session: &mut SerialSession,
+    function: u8,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    let mut pdu = Vec::with_capacity(2 + payload.len() + 1);
+    pdu.push(session.slave_id);
+    pdu.push(function);
+    pdu.extend_from_slice(payload);
+    pdu.push(lrc_modbus(&pdu));
+
+    let frame = bytes_to_ascii_hex_frame(&pdu);
+
+    let _ = session.port.clear(ClearBuffer::All);
+    session
+        .port
+        .write_all(&frame)
+        .map_err(|err| format!("Serial ASCII write failed: {}", err))?;
+    session
+        .port
+        .flush()
+        .map_err(|err| format!("Serial ASCII flush failed: {}", err))?;
+
+    let mut buffer = Vec::with_capacity(256);
+    let mut byte = [0_u8; 1];
+    loop {
+        session
+            .port
+            .read_exact(&mut byte)
+            .map_err(|err| format!("Serial ASCII read failed: {}", err))?;
+        buffer.push(byte[0]);
+        if byte[0] == b'\n' {
+            break;
+        }
+        if buffer.len() > 2048 {
+            return Err("Serial ASCII response exceeded max frame size.".to_string());
+        }
+    }
+
+    let bytes = ascii_hex_frame_to_bytes(&buffer)?;
+    if bytes.len() < 4 {
+        return Err("Serial ASCII response frame too short.".to_string());
+    }
+
+    let frame_lrc = *bytes.last().unwrap_or(&0);
+    let computed_lrc = lrc_modbus(&bytes[..bytes.len() - 1]);
+    if frame_lrc != computed_lrc {
+        return Err("Invalid LRC in serial ASCII response frame.".to_string());
+    }
+
+    if bytes[0] != session.slave_id {
+        return Err(format!(
+            "Unit ID mismatch: expected {}, got {}.",
+            session.slave_id, bytes[0]
+        ));
+    }
+
+    let response_function = bytes[1];
+    if response_function == (function | 0x80) {
+        let exception_code = *bytes.get(2).unwrap_or(&0);
+        return Err(format!(
+            "Modbus exception for FC{:02X}: code 0x{:02X}.",
+            function, exception_code
+        ));
+    }
+
+    if response_function != function {
+        return Err(format!(
+            "Function code mismatch: expected 0x{:02X}, got 0x{:02X}.",
+            function, response_function
+        ));
+    }
+
+    Ok(bytes[2..bytes.len() - 1].to_vec())
+}
+
+fn serial_send_request_rtu(
     session: &mut SerialSession,
     function: u8,
     payload: &[u8],
