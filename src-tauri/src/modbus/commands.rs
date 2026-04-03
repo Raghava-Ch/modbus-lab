@@ -14,6 +14,13 @@ use super::types::{
     WriteMassHoldingRegistersResponse,
 };
 
+fn format_error_message(err: &ApiError) -> String {
+    match &err.details {
+        Some(details) if !details.trim().is_empty() => format!("{} ({})", err.message, details),
+        _ => err.message.clone(),
+    }
+}
+
 #[tauri::command]
 pub async fn list_serial_ports() -> ApiResult<Vec<String>> {
     let ports = serialport::available_ports().map_err(|err| {
@@ -236,6 +243,7 @@ pub async fn read_coils(
     match state.read_coils(&request).await {
         Ok(response) => Ok(response),
         Err(err) => {
+            let details_msg = format_error_message(&err);
             emit_log(
                 &app,
                 BackendEventLevel::Error,
@@ -247,7 +255,7 @@ pub async fn read_coils(
                     request
                         .start_address
                         .saturating_add(request.quantity.saturating_sub(1)),
-                    err.message
+                    details_msg
                 ),
                 None,
                 err.analytics.clone(),

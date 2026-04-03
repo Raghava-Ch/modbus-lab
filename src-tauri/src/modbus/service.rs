@@ -1,5 +1,5 @@
 use std::{
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -2327,10 +2327,8 @@ fn serial_send_request_ascii(
         .port
         .write_all(&frame)
         .map_err(|err| format!("Serial ASCII write failed: {}", err))?;
-    session
-        .port
-        .flush()
-        .map_err(|err| format!("Serial ASCII flush failed: {}", err))?;
+    // Some Windows serial drivers report flush as unsupported; write_all is sufficient here.
+    let _ = session.port.flush();
 
     let mut buffer = Vec::with_capacity(256);
     let mut byte = [0_u8; 1];
@@ -2402,154 +2400,191 @@ fn serial_send_request_rtu(
         .port
         .write_all(&frame)
         .map_err(|err| format!("Serial write failed: {}", err))?;
-    session
-        .port
-        .flush()
-        .map_err(|err| format!("Serial flush failed: {}", err))?;
+    // Some Windows serial drivers report flush as unsupported; write_all is sufficient here.
+    let _ = session.port.flush();
 
-    let mut header = [0_u8; 2];
-    session
-        .port
-        .read_exact(&mut header)
-        .map_err(|err| format!("Serial response header read failed: {}", err))?;
+    let deadline = Instant::now() + session.timeout;
+    let mut buffer = Vec::with_capacity(256);
+    let mut chunk = [0_u8; 256];
 
-    if header[0] != session.slave_id {
-        return Err(format!(
-            "Unit ID mismatch: expected {}, got {}.",
-            session.slave_id, header[0]
-        ));
-    }
-
-    if header[1] == (function | 0x80) {
-        let mut tail = [0_u8; 3];
-        session
-            .port
-            .read_exact(&mut tail)
-            .map_err(|err| format!("Serial exception frame read failed: {}", err))?;
-
-        let err_frame = vec![header[0], header[1], tail[0]];
-        let crc_expected = u16::from_le_bytes([tail[1], tail[2]]);
-        let crc_actual = crc16_modbus(&err_frame);
-        if crc_expected != crc_actual {
-            return Err("Invalid CRC in exception response frame.".to_string());
+    loop {
+        if let Some(response_payload) = try_extract_serial_rtu_response(
+            &mut buffer,
+            session.slave_id,
+            function,
+            payload,
+            &frame,
+        )? {
+            return Ok(response_payload);
         }
 
-        return Err(format!(
-            "Modbus exception for FC{:02X}: code 0x{:02X}.",
-            function, tail[0]
-        ));
-    }
-
-    if header[1] != function {
-        return Err(format!(
-            "Function code mismatch: expected 0x{:02X}, got 0x{:02X}.",
-            function, header[1]
-        ));
-    }
-
-    let mut response_payload = Vec::new();
-    let crc_bytes: [u8; 2] = match function {
-        0x01 | 0x02 | 0x03 | 0x04 | 0x0C | 0x11 => {
-            let mut byte_count = [0_u8; 1];
-            session
-                .port
-                .read_exact(&mut byte_count)
-                .map_err(|err| format!("Serial byte-count read failed: {}", err))?;
-
-            response_payload.push(byte_count[0]);
-            let mut data_and_crc = vec![0_u8; usize::from(byte_count[0]) + 2];
-            session
-                .port
-                .read_exact(&mut data_and_crc)
-                .map_err(|err| format!("Serial payload read failed: {}", err))?;
-
-            response_payload.extend_from_slice(&data_and_crc[..usize::from(byte_count[0])]);
-            [
-                data_and_crc[usize::from(byte_count[0])],
-                data_and_crc[usize::from(byte_count[0]) + 1],
-            ]
-        }
-        0x05 | 0x06 | 0x0F | 0x10 | 0x0B => {
-            let mut data_and_crc = [0_u8; 6];
-            session
-                .port
-                .read_exact(&mut data_and_crc)
-                .map_err(|err| format!("Serial payload read failed: {}", err))?;
-            response_payload.extend_from_slice(&data_and_crc[..4]);
-            [data_and_crc[4], data_and_crc[5]]
-        }
-        0x07 => {
-            let mut data_and_crc = [0_u8; 3];
-            session
-                .port
-                .read_exact(&mut data_and_crc)
-                .map_err(|err| format!("Serial payload read failed: {}", err))?;
-            response_payload.push(data_and_crc[0]);
-            [data_and_crc[1], data_and_crc[2]]
-        }
-        0x08 => {
-            let expected = payload.len();
-            let mut data_and_crc = vec![0_u8; expected + 2];
-            session
-                .port
-                .read_exact(&mut data_and_crc)
-                .map_err(|err| format!("Serial payload read failed: {}", err))?;
-            response_payload.extend_from_slice(&data_and_crc[..expected]);
-            [data_and_crc[expected], data_and_crc[expected + 1]]
-        }
-        0x2B => {
-            let mut base = [0_u8; 6];
-            session
-                .port
-                .read_exact(&mut base)
-                .map_err(|err| format!("Serial FC43 base read failed: {}", err))?;
-            response_payload.extend_from_slice(&base);
-
-            let object_count = usize::from(base[5]);
-            for _ in 0..object_count {
-                let mut obj_header = [0_u8; 2];
-                session
-                    .port
-                    .read_exact(&mut obj_header)
-                    .map_err(|err| format!("Serial FC43 object header read failed: {}", err))?;
-                response_payload.extend_from_slice(&obj_header);
-
-                let value_len = usize::from(obj_header[1]);
-                let mut value = vec![0_u8; value_len];
-                session
-                    .port
-                    .read_exact(&mut value)
-                    .map_err(|err| format!("Serial FC43 object value read failed: {}", err))?;
-                response_payload.extend_from_slice(&value);
-            }
-
-            let mut crc = [0_u8; 2];
-            session
-                .port
-                .read_exact(&mut crc)
-                .map_err(|err| format!("Serial FC43 CRC read failed: {}", err))?;
-            crc
-        }
-        _ => {
+        if Instant::now() >= deadline {
+            let observed = if buffer.is_empty() {
+                "no bytes received".to_string()
+            } else {
+                format!("received {}", format_hex_bytes(&buffer))
+            };
             return Err(format!(
-                "Serial RTU function 0x{:02X} not implemented in request parser.",
-                function
+                "Serial response timed out after {} ms ({observed}).",
+                session.timeout.as_millis()
             ));
         }
-    };
 
-    let mut crc_frame = Vec::with_capacity(2 + response_payload.len());
-    crc_frame.push(header[0]);
-    crc_frame.push(header[1]);
-    crc_frame.extend_from_slice(&response_payload);
+        match session.port.read(&mut chunk) {
+            Ok(0) => {}
+            Ok(read) => {
+                buffer.extend_from_slice(&chunk[..read]);
+                if buffer.len() > 4096 {
+                    return Err("Serial response exceeded max frame size.".to_string());
+                }
+            }
+            Err(err) if matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {}
+            Err(err) => return Err(format!("Serial response read failed: {}", err)),
+        }
+    }
+}
 
-    let expected_crc = u16::from_le_bytes(crc_bytes);
-    let actual_crc = crc16_modbus(&crc_frame);
-    if expected_crc != actual_crc {
-        return Err("Invalid CRC in serial response frame.".to_string());
+fn try_extract_serial_rtu_response(
+    buffer: &mut Vec<u8>,
+    slave_id: u8,
+    function: u8,
+    request_payload: &[u8],
+    request_frame: &[u8],
+) -> Result<Option<Vec<u8>>, String> {
+    loop {
+        if buffer.is_empty() {
+            return Ok(None);
+        }
+
+        if buffer.len() >= request_frame.len()
+            && buffer.starts_with(request_frame)
+            && !serial_response_can_equal_request(function)
+        {
+            buffer.drain(..request_frame.len());
+            continue;
+        }
+
+        if buffer[0] != slave_id {
+            buffer.remove(0);
+            continue;
+        }
+
+        if buffer.len() < 2 {
+            return Ok(None);
+        }
+
+        let response_function = buffer[1];
+        if response_function != function && response_function != (function | 0x80) {
+            buffer.remove(0);
+            continue;
+        }
+
+        let Some(frame_len) = serial_rtu_frame_length(buffer, function, request_payload)? else {
+            return Ok(None);
+        };
+
+        if buffer.len() < frame_len {
+            return Ok(None);
+        }
+
+        let frame = buffer[..frame_len].to_vec();
+        let expected_crc = u16::from_le_bytes([frame[frame_len - 2], frame[frame_len - 1]]);
+        let actual_crc = crc16_modbus(&frame[..frame_len - 2]);
+        if expected_crc != actual_crc {
+            if frame == request_frame {
+                buffer.drain(..frame_len);
+                continue;
+            }
+
+            buffer.remove(0);
+            continue;
+        }
+
+        buffer.drain(..frame_len);
+
+        if response_function == (function | 0x80) {
+            let exception_code = frame.get(2).copied().unwrap_or_default();
+            return Err(format!(
+                "Modbus exception for FC{:02X}: code 0x{:02X}.",
+                function, exception_code
+            ));
+        }
+
+        return Ok(Some(frame[2..frame_len - 2].to_vec()));
+    }
+}
+
+fn serial_response_can_equal_request(function: u8) -> bool {
+    matches!(function, 0x05 | 0x06 | 0x08)
+}
+
+fn serial_rtu_frame_length(
+    frame: &[u8],
+    function: u8,
+    request_payload: &[u8],
+) -> Result<Option<usize>, String> {
+    if frame.len() < 2 {
+        return Ok(None);
     }
 
-    Ok(response_payload)
+    let response_function = frame[1];
+    if response_function == (function | 0x80) {
+        return Ok(Some(5));
+    }
+
+    if response_function != function {
+        return Ok(None);
+    }
+
+    match function {
+        0x01 | 0x02 | 0x03 | 0x04 | 0x0C | 0x11 => {
+            if frame.len() < 3 {
+                Ok(None)
+            } else {
+                Ok(Some(usize::from(frame[2]) + 5))
+            }
+        }
+        0x05 | 0x06 | 0x0F | 0x10 | 0x0B => Ok(Some(8)),
+        0x07 => Ok(Some(5)),
+        0x08 => Ok(Some(request_payload.len() + 4)),
+        0x2B => {
+            if frame.len() < 8 {
+                return Ok(None);
+            }
+
+            let object_count = usize::from(frame[7]);
+            let mut total_len = 10;
+            let mut cursor = 8;
+            for _ in 0..object_count {
+                if frame.len() < cursor + 2 {
+                    return Ok(None);
+                }
+
+                let value_len = usize::from(frame[cursor + 1]);
+                cursor += 2;
+                if frame.len() < cursor + value_len {
+                    return Ok(None);
+                }
+
+                cursor += value_len;
+                total_len += 2 + value_len;
+            }
+
+            Ok(Some(total_len))
+        }
+        _ => Err(format!(
+            "Serial RTU function 0x{:02X} not implemented in request parser.",
+            function
+        )),
+    }
+}
+
+fn format_hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{:02X}", byte))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_bit_read_response(payload: &[u8], quantity: u16, function: u8) -> Result<Vec<bool>, String> {
@@ -3044,5 +3079,65 @@ fn decode_modbus_text(bytes: &[u8]) -> String {
             .map(|byte| format!("{:02X}", byte))
             .collect::<Vec<_>>()
             .join(" ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{crc16_modbus, try_extract_serial_rtu_response};
+
+    #[test]
+    fn extracts_fc01_response_after_echoed_request_frame() {
+        let request_payload = [0x00, 0x00, 0x00, 0x01];
+
+        let mut request_frame = vec![0x01, 0x01];
+        request_frame.extend_from_slice(&request_payload);
+        let request_crc = crc16_modbus(&request_frame);
+        request_frame.extend_from_slice(&request_crc.to_le_bytes());
+
+        let mut response_frame = vec![0x01, 0x01, 0x01, 0x00];
+        let response_crc = crc16_modbus(&response_frame);
+        response_frame.extend_from_slice(&response_crc.to_le_bytes());
+
+        let mut buffer = request_frame.clone();
+        buffer.extend_from_slice(&response_frame);
+
+        let payload = try_extract_serial_rtu_response(
+            &mut buffer,
+            0x01,
+            0x01,
+            &request_payload,
+            &request_frame,
+        )
+        .expect("response should parse")
+        .expect("response should be available");
+
+        assert_eq!(payload, vec![0x01, 0x00]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn accepts_fc05_response_equal_to_request_frame() {
+        let request_payload = [0x00, 0x06, 0xFF, 0x00];
+
+        let mut request_frame = vec![0x01, 0x05];
+        request_frame.extend_from_slice(&request_payload);
+        let request_crc = crc16_modbus(&request_frame);
+        request_frame.extend_from_slice(&request_crc.to_le_bytes());
+
+        let mut buffer = request_frame.clone();
+
+        let payload = try_extract_serial_rtu_response(
+            &mut buffer,
+            0x01,
+            0x05,
+            &request_payload,
+            &request_frame,
+        )
+        .expect("response should parse")
+        .expect("response should be available");
+
+        assert_eq!(payload, request_payload);
+        assert!(buffer.is_empty());
     }
 }
