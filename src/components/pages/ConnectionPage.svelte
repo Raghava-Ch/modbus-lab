@@ -1,6 +1,7 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { Link2, LogOut } from "lucide-svelte";
   import {
@@ -22,6 +23,14 @@
   import SectionHeader from "../shared/SectionHeader.svelte";
 
   let connecting = $state(false);
+  let listingPorts = $state(false);
+  let availableSerialPorts = $state<string[]>([]);
+  let showSerialPortDropdown = $state(false);
+  const filteredSerialPorts = $derived.by(() => {
+    const query = connectionState.serial.port.trim().toLowerCase();
+    if (!query) return availableSerialPorts;
+    return availableSerialPorts.filter((port) => port.toLowerCase().includes(query));
+  });
   const backendSource = $derived.by(() => {
     const normalized = connectionState.backendStatus.toLowerCase();
     if (normalized.includes("connectedtcp")) {
@@ -225,7 +234,40 @@
   function handleProtocolChange(proto: ModbusProtocol): void {
     setProtocol(proto);
     addLog("info", `Protocol changed to ${proto.toUpperCase()}.`);
+
+    if (proto === "serial-rtu" || proto === "serial-ascii") {
+      void refreshSerialPorts();
+    }
   }
+
+  async function refreshSerialPorts(): Promise<void> {
+    if (listingPorts) return;
+
+    listingPorts = true;
+    try {
+      const ports = await invoke<string[]>("list_serial_ports");
+      availableSerialPorts = ports;
+      addLog("info", `Serial ports refreshed (${ports.length} found).`);
+    } catch (err) {
+      const parsed = parseApiError(err);
+      const msg = parsed.message ?? "Failed to list serial ports.";
+      const extra = parsed.details ? ` (${parsed.details})` : "";
+      addLog("warn", `${msg}${extra}`);
+    } finally {
+      listingPorts = false;
+    }
+  }
+
+  function selectSerialPort(port: string): void {
+    updateSerialSettings({ port });
+    showSerialPortDropdown = false;
+  }
+
+  onMount(() => {
+    if (connectionState.protocol === "serial-rtu" || connectionState.protocol === "serial-ascii") {
+      void refreshSerialPorts();
+    }
+  });
 </script>
 
 <div class="connection-page">
@@ -400,14 +442,54 @@
             </div>
 
             <div class="form-group">
-              <label for="serial-port">Port</label>
-              <input
-                id="serial-port"
-                type="text"
-                placeholder="/dev/ttyUSB0 or COM3"
-                value={connectionState.serial.port}
-                onchange={(e) => updateSerialSettings({ port: e.currentTarget.value })}
-              />
+              <label for="serial-port-input">Port</label>
+              <div class="serial-port-row">
+                <div class="serial-port-combobox">
+                  <input
+                    id="serial-port-input"
+                    type="text"
+                    placeholder="/dev/ttyUSB0 or COM3"
+                    value={connectionState.serial.port}
+                    onfocus={() => (showSerialPortDropdown = true)}
+                    oninput={(e) => {
+                      updateSerialSettings({ port: e.currentTarget.value });
+                      showSerialPortDropdown = true;
+                    }}
+                    onblur={() => {
+                      setTimeout(() => {
+                        showSerialPortDropdown = false;
+                      }, 120);
+                    }}
+                  />
+
+                  {#if showSerialPortDropdown}
+                    <div class="serial-port-list" role="listbox">
+                      {#if filteredSerialPorts.length === 0}
+                        <div class="serial-port-empty">No detected ports match.</div>
+                      {:else}
+                        {#each filteredSerialPorts as port}
+                          <button
+                            type="button"
+                            class="serial-port-option"
+                            onclick={() => selectSerialPort(port)}
+                          >
+                            {port}
+                          </button>
+                        {/each}
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+
+                <button
+                  class="btn btn-inline"
+                  type="button"
+                  onclick={() => void refreshSerialPorts()}
+                  disabled={listingPorts}
+                >
+                  {listingPorts ? "Refreshing..." : "Refresh Ports"}
+                </button>
+              </div>
             </div>
 
             <div class="form-row">
@@ -698,6 +780,81 @@
     letter-spacing: 0.02em;
   }
 
+  .serial-port-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .serial-port-combobox {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .serial-port-combobox input {
+    width: 100%;
+    padding-right: 28px;
+  }
+
+  .serial-port-combobox::after {
+    content: "";
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    width: 10px;
+    height: 6px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    opacity: 0.85;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23c9cfda' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-size: 10px 6px;
+  }
+
+  .serial-port-combobox:focus-within::after {
+    opacity: 1;
+  }
+
+  .serial-port-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 15;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid var(--c-border-strong);
+    border-radius: 8px;
+    background: var(--c-surface-2);
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--c-bg) 70%, transparent);
+    padding: 4px;
+  }
+
+  .serial-port-option {
+    width: 100%;
+    text-align: left;
+    border: 0;
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: transparent;
+    color: var(--c-text-1);
+    font: inherit;
+    font-size: 0.74rem;
+    cursor: pointer;
+  }
+
+  .serial-port-option:hover {
+    background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2));
+  }
+
+  .serial-port-empty {
+    padding: 6px 8px;
+    color: var(--c-text-2);
+    font-size: 0.72rem;
+  }
+
   input,
   select {
     border: 1px solid var(--c-border);
@@ -810,6 +967,22 @@
   .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+  }
+
+  .btn-inline {
+    min-height: 34px;
+    padding: 0 10px;
+    flex: 0;
+    font-size: 0.7rem;
+    font-weight: 500;
+    border-color: color-mix(in srgb, var(--c-border) 85%, var(--c-surface-3));
+    background: color-mix(in srgb, var(--c-surface-2) 90%, var(--c-bg));
+    color: var(--c-text-2);
+  }
+
+  .btn-inline:hover:not(:disabled) {
+    border-color: var(--c-border-strong);
+    color: var(--c-text-1);
   }
 
   .spinner {

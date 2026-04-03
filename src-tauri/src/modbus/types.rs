@@ -402,3 +402,80 @@ pub struct BackendEvent {
     pub status: Option<ConnectionStatusPayload>,
     pub analytics: Option<AnalyticsContext>,
 }
+
+// ── Diagnostics DTOs (FC07/08/11/12/17/43) ─────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadExceptionStatusResponse {
+    pub status: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticRequest {
+    pub subfunction: u16,
+    pub data: Vec<u8>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticResponse {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetComEventCounterResponse {
+    pub status: u16,
+    pub event_count: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComEventLogEntry {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetComEventLogResponse {
+    pub entries: Vec<ComEventLogEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetComEventLogRequest {
+    pub start: u16,
+    pub count: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportServerIdResponse {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadDeviceIdentificationRequest {
+    pub level: u8,
+    pub object_id: u8,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceIdObject {
+    pub id: u8,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadDeviceIdentificationResponse {
+    pub conformity: Option<u8>,
+    pub objects: Vec<DeviceIdObject>,
+}
