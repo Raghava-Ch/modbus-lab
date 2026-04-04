@@ -20,12 +20,12 @@
 <button
   class:active
   class:collapsed
-  class="nav-item"
+  class="nav-item has-tip"
   type="button"
   onclick={() => onSelect(tab.id)}
-  title={`${tab.label} (${tab.feature})`}
+  data-tip={`${tab.label} (${tab.feature})`}
 >
-  <IconGlyph icon={tab.icon} size={18} />
+  <IconGlyph icon={tab.icon} size={16} />
   <span>{tab.label}</span>
 </button>
 
@@ -33,29 +33,31 @@
   .nav-item {
     width: 100%;
     display: grid;
-    grid-template-columns: 20px 1fr;
+    grid-template-columns: 18px 1fr;
     align-items: center;
-    gap: 10px;
-    border: 1px solid transparent;
-    border-radius: 10px;
+    gap: 8px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 24%, transparent);
+    border-radius: 6px;
     background: transparent;
     color: var(--c-text-2);
-    padding: 10px 12px;
+    padding: 7px 9px;
     text-align: left;
-    transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+    font-size: 0.68rem;
+    letter-spacing: 0.01em;
+    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
   }
 
   .nav-item:hover {
     border-color: var(--c-border-strong);
     color: var(--c-text-1);
-    background: var(--c-surface-2);
+    background: color-mix(in srgb, var(--c-surface-3) 34%, transparent);
   }
 
   .nav-item.active {
     border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
-    background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-surface-3) 56%, var(--c-surface-2));
     color: var(--c-text-1);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
+    box-shadow: inset 0 -1px 0 0 var(--c-accent);
   }
 
   .nav-item.active :global(svg) {
@@ -65,7 +67,7 @@
   .nav-item.collapsed {
     grid-template-columns: 1fr;
     justify-items: center;
-    padding: 10px 6px;
+    padding: 7px 4px;
   }
 
   .nav-item.collapsed span {

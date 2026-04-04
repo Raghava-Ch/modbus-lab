@@ -10,7 +10,7 @@
 <div class="log-row">
   <span class="time">{formatLogTimestamp(entry.timestamp)}</span>
   <span class={`level ${entry.level}`}>{entry.level.toUpperCase()}</span>
-  <span class="message" title={entry.message}>{entry.message}</span>
+  <span class="message">{entry.message}</span>
 </div>
 
 <style>

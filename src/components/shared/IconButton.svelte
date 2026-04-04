@@ -9,6 +9,7 @@
     onclick,
     active = false,
     compact = false,
+    tooltip = true,
     children,
   } = $props<{
     label: string;
@@ -16,11 +17,21 @@
     onclick: () => void;
     active?: boolean;
     compact?: boolean;
+    tooltip?: boolean;
     children?: Snippet;
   }>();
 </script>
 
-<button class:active class:compact class="icon-btn" type="button" {title} aria-label={label} {onclick}>
+<button
+  class:active
+  class:compact
+  class:has-tip={tooltip}
+  class="icon-btn"
+  type="button"
+  data-tip={tooltip ? title : undefined}
+  aria-label={label}
+  {onclick}
+>
   {@render children?.()}
 </button>
 
@@ -55,6 +66,9 @@
   }
 
   .icon-btn.compact {
-    width: 32px;
+    height: 24px;
+    min-width: 24px;
+    width: 24px;
+    border-radius: 6px;
   }
 </style>

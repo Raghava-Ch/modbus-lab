@@ -28,17 +28,21 @@
 
 <style>
   .filters {
-    display: flex;
-    gap: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
   }
 
   button {
     border: 1px solid var(--c-border);
-    border-radius: 8px;
-    padding: 4px 8px;
-    background: var(--c-surface-2);
+    border-radius: 6px;
+    height: 24px;
+    padding: 0 8px;
+    background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
     color: var(--c-text-2);
-    font-size: 0.72rem;
+    font-size: 0.62rem;
+    letter-spacing: 0.01em;
   }
 
   button:hover {
@@ -49,7 +53,7 @@
   button.active {
     border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
     color: var(--c-text-1);
-    background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
   }
 </style>

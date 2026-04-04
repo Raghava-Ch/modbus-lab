@@ -48,7 +48,7 @@ export const connectionState = $state<ConnectionConfig>({
     retryJitterStrategy: "none",
   },
   serial: {
-    port: "/dev/ttyUSB0",
+    port: "",
     baudRate: 9600,
     dataBits: 8,
     stopBits: 1,

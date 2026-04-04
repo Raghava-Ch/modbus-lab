@@ -24,13 +24,13 @@
 </script>
 
 <button
-  class="toggle-switch"
+  class="toggle-switch has-tip"
   class:checked
   class:disabled
   class:size-sm={size === "sm"}
   class:size-md={size === "md"}
   type="button"
-  {title}
+  data-tip={title}
   aria-pressed={checked}
   aria-label={title}
   disabled={disabled}

@@ -9,14 +9,27 @@
     setLogFilter,
     type LogExportScope,
   } from "../../../state/logs.svelte";
-  import { layoutState, setLogHeight, toggleLogCollapsed } from "../../../state/layout.svelte";
+  import {
+    layoutState,
+    setLogHeight,
+    setLogPanelView,
+    toggleLogCollapsed,
+  } from "../../../state/layout.svelte";
   import LogList from "./LogList.svelte";
   import LogToolbar from "./LogToolbar.svelte";
+  import RegisterDetailsPanel from "./RegisterDetailsPanel.svelte";
 
   const filtered = $derived(getFilteredLogs(logState.filter));
 
   async function handleSave(scope: LogExportScope): Promise<void> {
     await saveLogsToFile(scope === "all" ? logState.entries : filtered, scope, logState.filter);
+  }
+
+  function handlePanelView(view: "logs" | "details"): void {
+    setLogPanelView(view);
+    if (layoutState.logCollapsed) {
+      toggleLogCollapsed();
+    }
   }
 
   function startResize(event: PointerEvent): void {
@@ -51,7 +64,6 @@
     class="resize-handle"
     type="button"
     aria-label="Resize log panel"
-    title="Drag to resize log panel"
     onpointerdown={startResize}
   >
     <span></span>
@@ -59,17 +71,25 @@
 
   <LogToolbar
     collapsed={layoutState.logCollapsed}
+    panelView={layoutState.logPanelView}
     filter={logState.filter}
     totalCount={logState.entries.length}
     visibleCount={filtered.length}
     onFilter={setLogFilter}
     onClear={clearLogs}
     onSave={handleSave}
+    onPanelView={handlePanelView}
     onToggle={toggleLogCollapsed}
   />
 
   {#if !layoutState.logCollapsed}
-    <LogList entries={filtered} />
+    <div class="log-content" class:details-mode={layoutState.logPanelView === "details"}>
+      {#if layoutState.logPanelView === "logs"}
+        <LogList entries={filtered} />
+      {:else}
+        <RegisterDetailsPanel inline={true} />
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -87,6 +107,8 @@
 
   .log-panel.collapsed {
     height: 52px !important;
+    min-height: 52px !important;
+    max-height: 52px !important;
     grid-template-rows: auto;
   }
 
@@ -122,6 +144,16 @@
 
   .log-panel.collapsed .resize-handle {
     display: none;
+  }
+
+  .log-content {
+    min-height: 0;
+    display: block;
+    overflow: hidden;
+  }
+
+  .log-content.details-mode {
+    padding: 0 10px 2px;
   }
 
   @media (max-width: 767px) {

@@ -80,28 +80,28 @@
         onblur={onCommitEdit}
         onkeydown={onLabelKeydown}
       />
-      <button class="icon-micro" type="button" onclick={onCommitEdit} title="Save">
+      <button class="icon-micro has-tip" type="button" onclick={onCommitEdit} data-tip="Save">
         <Check size={11} />
       </button>
-      <button class="icon-micro" type="button" onclick={onCancelEdit} title="Cancel">
+      <button class="icon-micro has-tip" type="button" onclick={onCancelEdit} data-tip="Cancel">
         <X size={11} />
       </button>
     {:else}
     <button
-      class="icon-micro card-label-edit"
+      class="icon-micro card-label-edit has-tip"
       type="button"
       onclick={() => onBeginEdit(address, label)}
-      title="Edit label"
+      data-tip="Edit label"
     >
       <Pencil size={10} />
     </button>
       <div class="card-label" class:card-label-empty={!label}>{label || "-"}</div>
 
       <button
-      class="delete-mini"
+      class="delete-mini has-tip"
       type="button"
       onclick={() => onDelete(address)}
-      title={deleteButtonTitle}
+      data-tip={deleteButtonTitle}
     >
       <X size={11} />
     </button>
@@ -114,9 +114,9 @@
     <div class="card-inline-status-slot">
       {#if statusBadgeText}
         <span
-          class="dirty-indicator card-inline-status"
+          class="dirty-indicator card-inline-status has-tip"
           class:failed-indicator={statusBadgeVariant === "failed"}
-          title={statusBadgeTitle}
+          data-tip={statusBadgeTitle}
         >
           {statusBadgeText}
         </span>
@@ -141,11 +141,11 @@
 
   <div class="card-actions" class:card-actions-two={onToggle != undefined}>
     <button
-      class="read-mini"
+      class="read-mini has-tip"
       type="button"
       disabled={!connected}
       onclick={() => onRead(address)}
-      title={effectiveReadTitle}
+      data-tip={effectiveReadTitle}
     >
       <RefreshCw size={11} />
       Read
@@ -153,11 +153,11 @@
 
     {#if onToggle != undefined}
       <button
-        class="write-mini"
+        class="write-mini has-tip"
         type="button"
         disabled={!connected}
         onclick={() => onWrite?.(address)}
-        title={effectiveWriteTitle}
+        data-tip={effectiveWriteTitle}
       >
         <Zap size={11} />
         Write

@@ -32,15 +32,18 @@
   .device-info {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     color: var(--c-text-2);
-    font-size: 0.8rem;
+    font-size: 0.62rem;
   }
 
   .device-info span {
-    border: 1px solid var(--c-border);
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 70%, transparent);
     border-radius: 999px;
-    padding: 3px 8px;
-    background: var(--c-surface-2);
+    padding: 0 7px;
+    background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
   }
 </style>

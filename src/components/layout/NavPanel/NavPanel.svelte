@@ -47,7 +47,7 @@
     display: grid;
     grid-template-rows: auto 1fr auto;
     border-right: 1px solid var(--c-border);
-    background: var(--c-surface-1);
+    background: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
     width: var(--nav-width-open);
     transition: width 180ms ease;
     overflow: hidden;
@@ -59,11 +59,18 @@
 
   .main-nav,
   .settings-nav {
-    padding: 8px;
+    padding: 6px;
+  }
+
+  .main-nav {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .settings-nav {
     border-top: 1px solid var(--c-border);
+    background: color-mix(in srgb, var(--c-surface-1) 92%, transparent);
   }
 
   @media (max-width: 767px) {

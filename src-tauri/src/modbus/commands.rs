@@ -4,6 +4,8 @@ use super::events::emit_log;
 use super::service::AppState;
 use super::types::{
     ApiError, ApiResult, BackendEventLevel, CommandAck, ConnectionStatusPayload, DisconnectRequest,
+    DiagnosticRequest, DiagnosticResponse, ReadExceptionStatusResponse, GetComEventCounterResponse,
+    GetComEventLogRequest, GetComEventLogResponse, ReportServerIdResponse, ReadDeviceIdentificationRequest,
     ReadCoilsRequest, ReadCoilsResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
     ReadHoldingRegistersRequest, ReadHoldingRegistersResponse, ReadInputRegistersRequest,
     ReadInputRegistersResponse, SerialConnectRequest, TcpConnectRequest, WriteCoilRequest,
@@ -11,6 +13,27 @@ use super::types::{
     WriteMassCoilsRequest, WriteMassCoilsResponse, WriteMassHoldingRegistersRequest,
     WriteMassHoldingRegistersResponse,
 };
+
+fn format_error_message(err: &ApiError) -> String {
+    match &err.details {
+        Some(details) if !details.trim().is_empty() => format!("{} ({})", err.message, details),
+        _ => err.message.clone(),
+    }
+}
+
+#[tauri::command]
+pub async fn list_serial_ports() -> ApiResult<Vec<String>> {
+    let ports = serialport::available_ports().map_err(|err| {
+        ApiError::backend_failure(
+            "Unable to enumerate serial ports.",
+            Some(err.to_string()),
+            None,
+        )
+    })?;
+
+    Ok(ports.into_iter().map(|p| p.port_name).collect())
+}
+
 
 #[tauri::command]
 pub async fn connect_modbus_tcp(
@@ -130,9 +153,12 @@ pub async fn connect_modbus_serial_rtu(
 ) -> ApiResult<CommandAck> {
     emit_log(
         &app,
-        BackendEventLevel::Warn,
+        BackendEventLevel::Info,
         "connection",
-        "connect.rtu scaffold",
+        format!(
+            "connect.rtu start port={} baud={} slave={}",
+            request.port, request.baud_rate, request.slave_id
+        ),
         None,
         request.analytics.clone(),
     )
@@ -168,9 +194,12 @@ pub async fn connect_modbus_serial_ascii(
 ) -> ApiResult<CommandAck> {
     emit_log(
         &app,
-        BackendEventLevel::Warn,
+        BackendEventLevel::Info,
         "connection",
-        "connect.ascii scaffold",
+        format!(
+            "connect.ascii start port={} baud={} slave={}",
+            request.port, request.baud_rate, request.slave_id
+        ),
         None,
         request.analytics.clone(),
     )
@@ -214,6 +243,7 @@ pub async fn read_coils(
     match state.read_coils(&request).await {
         Ok(response) => Ok(response),
         Err(err) => {
+            let details_msg = format_error_message(&err);
             emit_log(
                 &app,
                 BackendEventLevel::Error,
@@ -225,7 +255,7 @@ pub async fn read_coils(
                     request
                         .start_address
                         .saturating_add(request.quantity.saturating_sub(1)),
-                    err.message
+                    details_msg
                 ),
                 None,
                 err.analytics.clone(),
@@ -389,6 +419,144 @@ pub async fn read_input_registers(
                         .saturating_add(request.quantity.saturating_sub(1)),
                     details_msg
                 ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn read_exception_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> ApiResult<ReadExceptionStatusResponse> {
+    match state.read_exception_status().await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "diagnostics",
+                format!("fc07.read err msg={}", err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn diagnostic(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: DiagnosticRequest,
+) -> ApiResult<DiagnosticResponse> {
+    match state.diagnostic(&request).await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "diagnostics",
+                format!("fc08.run err sub={} msg={}", request.subfunction, err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_com_event_counter(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> ApiResult<GetComEventCounterResponse> {
+    match state.get_com_event_counter().await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "diagnostics",
+                format!("fc11.read err msg={}", err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_com_event_log(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: GetComEventLogRequest,
+) -> ApiResult<GetComEventLogResponse> {
+    match state.get_com_event_log(&request).await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "diagnostics",
+                format!(
+                    "fc12.read err start={} count={} msg={}",
+                    request.start, request.count, err.message
+                ),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn report_server_id(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> ApiResult<ReportServerIdResponse> {
+    match state.report_server_id().await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "diagnostics",
+                format!("fc17.read err msg={}", err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn read_device_identification(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadDeviceIdentificationRequest,
+) -> ApiResult<super::types::ReadDeviceIdentificationResponse> {
+    match state.read_device_identification(&request).await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "diagnostics",
+                format!("fc43.read err msg={}", err.message),
                 None,
                 err.analytics.clone(),
             )

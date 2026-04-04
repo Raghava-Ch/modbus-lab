@@ -8,21 +8,25 @@
 
   let {
     collapsed,
+    panelView,
     filter,
     totalCount,
     visibleCount,
     onFilter,
     onClear,
     onSave,
+    onPanelView,
     onToggle,
   } = $props<{
     collapsed: boolean;
+    panelView: "logs" | "details";
     filter: LogFilter;
     totalCount: number;
     visibleCount: number;
     onFilter: (filter: LogFilter) => void;
     onClear: () => void;
     onSave: (scope: LogExportScope) => Promise<void> | void;
+    onPanelView: (view: "logs" | "details") => void;
     onToggle: () => void;
   }>();
 
@@ -45,51 +49,83 @@
 </script>
 
 <header class="log-toolbar">
-  <strong>Log Panel</strong>
+  <div class="toolbar-title">
+    <div class="panel-tabs" role="tablist" aria-label="Bottom panel mode">
+      <button
+        class="tab-btn"
+        class:active={panelView === "logs"}
+        role="tab"
+        aria-selected={panelView === "logs"}
+        type="button"
+        onclick={() => onPanelView("logs")}
+      >Logs</button>
+      <button
+        class="tab-btn"
+        class:active={panelView === "details"}
+        role="tab"
+        aria-selected={panelView === "details"}
+        type="button"
+        onclick={() => onPanelView("details")}
+      >Details</button>
+    </div>
+  </div>
 
-  <LogFilterTabs active={filter} onSelect={onFilter} />
+  {#if collapsed}
+    <div class="toolbar-filters"></div>
+    <div class="actions compact">
+      <IconButton label="Expand panel" title="Expand panel" active={collapsed} compact={true} tooltip={false} onclick={onToggle}>
+        {#snippet children()}
+          <ChevronUp size={13} />
+        {/snippet}
+      </IconButton>
+    </div>
+  {:else}
+    <div class="toolbar-filters"></div>
 
-  <div class="actions">
-    <div class="export-group">
-      <div class="export-controls">
-        <span class="export-label">Export</span>
+    <div class="actions">
+      {#if panelView === "logs"}
+        <div class="right-filters">
+          <LogFilterTabs active={filter} onSelect={onFilter} />
+        </div>
 
-        <div class="scope-toggle" role="group" aria-label="Select log export scope">
-          <button
-            class:active={saveScope === "filtered"}
-            type="button"
-            onclick={() => (saveScope = "filtered")}
-          >
-            {filteredScopeLabel}
-          </button>
-          <button class:active={saveScope === "all"} type="button" onclick={() => (saveScope = "all")}>
-            All ({totalCount})
+        <div class="export-group">
+          <div class="export-controls">
+            <span class="export-label">Export</span>
+
+            <div class="scope-toggle" role="group" aria-label="Select log export scope">
+              <button
+                class:active={saveScope === "filtered"}
+                type="button"
+                onclick={() => (saveScope = "filtered")}
+              >
+                {filteredScopeLabel}
+              </button>
+              <button class:active={saveScope === "all"} type="button" onclick={() => (saveScope = "all")}>
+                All ({totalCount})
+              </button>
+            </div>
+          </div>
+
+          <button class="save-btn" type="button" onclick={handleSaveClick} disabled={saveDisabled}>
+            <Download size={12} />
+            <span>Save</span>
           </button>
         </div>
-      </div>
 
-      <button class="save-btn" type="button" onclick={handleSaveClick} disabled={saveDisabled}>
-        <Download size={14} />
-        <span>Save</span>
-      </button>
+        <IconButton label="Clear logs" title="Clear logs" compact={true} tooltip={false} onclick={onClear}>
+          {#snippet children()}
+            <Eraser size={13} />
+          {/snippet}
+        </IconButton>
+      {/if}
+
+      <IconButton label="Collapse panel" title="Collapse panel" active={collapsed} compact={true} tooltip={false} onclick={onToggle}>
+        {#snippet children()}
+          <ChevronDown size={13} />
+        {/snippet}
+      </IconButton>
     </div>
-
-    <IconButton label="Clear logs" title="Clear logs" onclick={onClear}>
-      {#snippet children()}
-        <Eraser size={16} />
-      {/snippet}
-    </IconButton>
-
-    <IconButton label="Toggle log panel" title="Toggle log panel" active={collapsed} onclick={onToggle}>
-      {#snippet children()}
-        {#if collapsed}
-          <ChevronUp size={16} />
-        {:else}
-          <ChevronDown size={16} />
-        {/if}
-      {/snippet}
-    </IconButton>
-  </div>
+  {/if}
 </header>
 
 <style>
@@ -97,19 +133,76 @@
     display: grid;
     grid-template-columns: auto 1fr auto;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
+    gap: 6px;
+    padding: 0 10px;
     border-bottom: 1px solid var(--c-border);
+    height: 32px;
+    background: color-mix(in srgb, var(--c-surface-1) 86%, var(--c-surface-2));
   }
 
-  strong {
-    font-size: 0.8rem;
+  .toolbar-title {
+    min-width: 0;
+    align-self: stretch;
+    display: flex;
+    align-items: stretch;
+  }
+
+  .toolbar-filters {
+    min-width: 0;
   }
 
   .actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    justify-self: end;
+  }
+
+  .right-filters {
+    display: flex;
+    align-items: center;
+  }
+
+  .actions.compact {
+    gap: 6px;
+  }
+
+  .panel-tabs {
+    display: inline-flex;
+    align-items: stretch;
+    height: 100%;
+    gap: 0;
+  }
+
+  .tab-btn {
+    height: 100%;
+    min-width: 66px;
+    padding: 0 12px;
+    border: 0;
+    background: transparent;
+    color: var(--c-text-2);
+    font: inherit;
+    font-size: 0.64rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    position: relative;
+    border-right: 1px solid color-mix(in srgb, var(--c-border) 35%, transparent);
+  }
+
+  .tab-btn:last-child {
+    border-right: 0;
+  }
+
+  .tab-btn:hover {
+    color: var(--c-text-1);
+    background: color-mix(in srgb, var(--c-surface-3) 34%, transparent);
+  }
+
+  .tab-btn.active {
+    color: var(--c-text-1);
+    background: color-mix(in srgb, var(--c-surface-3) 50%, transparent);
+    box-shadow: inset 0 -1px 0 0 color-mix(in srgb, var(--c-accent) 90%, #ffffff);
   }
 
   .export-group {
@@ -117,22 +210,22 @@
     align-items: center;
     gap: 0;
     border: 1px solid var(--c-border);
-    border-radius: 8px;
-    background: var(--c-surface-2);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--c-surface-1) 70%, var(--c-surface-2));
     overflow: hidden;
   }
 
   .export-controls {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
+    gap: 5px;
+    padding: 3px 7px;
     border-right: 1px solid var(--c-border);
   }
 
   .export-label {
     color: var(--c-text-1);
-    font-size: 0.74rem;
+    font-size: 0.6rem;
     letter-spacing: 0.02em;
     white-space: nowrap;
   }
@@ -147,11 +240,12 @@
   .scope-toggle button {
     border: 0;
     border-right: 1px solid var(--c-border);
-    padding: 4px 8px;
+    height: 20px;
+    padding: 0 6px;
     background: transparent;
     color: var(--c-text-2);
     font: inherit;
-    font-size: 0.75rem;
+    font-size: 0.6rem;
     white-space: nowrap;
     cursor: pointer;
     transition: all 140ms ease;
@@ -175,14 +269,14 @@
   .save-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    height: 32px;
-    padding: 0 10px;
+    gap: 3px;
+    height: 22px;
+    padding: 0 8px;
     border: 0;
     background: transparent;
     color: var(--c-text-1);
     font: inherit;
-    font-size: 0.75rem;
+    font-size: 0.62rem;
     white-space: nowrap;
     cursor: pointer;
     transition: all 140ms ease;
@@ -205,6 +299,11 @@
     .log-toolbar {
       grid-template-columns: 1fr;
       align-items: stretch;
+    }
+
+    .actions {
+      justify-self: stretch;
+      justify-content: space-between;
     }
 
     .actions,

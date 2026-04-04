@@ -5,7 +5,13 @@
   import { listen } from "@tauri-apps/api/event";
   import { X } from "lucide-svelte";
   import { applyBackendConnectionStatus } from "../../state/connection.svelte";
-  import { initLayoutState, layoutState, closeMobileLog, toggleLogCollapsed } from "../../state/layout.svelte";
+  import {
+    initLayoutState,
+    layoutState,
+    closeMobileLog,
+    setLogPanelView,
+    toggleLogCollapsed,
+  } from "../../state/layout.svelte";
   import { initSettingsState, settingsState } from "../../state/settings.svelte";
   import {
     addLog,
@@ -170,12 +176,14 @@
       </header>
       <LogToolbar
         collapsed={layoutState.logCollapsed}
+        panelView={layoutState.logPanelView}
         filter={logState.filter}
         totalCount={logState.entries.length}
         visibleCount={filtered.length}
         onFilter={setLogFilter}
         onClear={clearLogs}
         onSave={handleSave}
+        onPanelView={setLogPanelView}
         onToggle={toggleLogCollapsed}
       />
       {#if !layoutState.logCollapsed}
@@ -205,7 +213,8 @@
     grid-area: content;
     min-width: 0;
     min-height: 0;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 12px 12px 18px;
     background:
       radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--c-accent) 18%, transparent) 0%, transparent 42%),

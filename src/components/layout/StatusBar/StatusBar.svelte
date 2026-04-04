@@ -34,23 +34,25 @@
     display: grid;
     grid-template-columns: auto 1fr auto;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     border-bottom: 1px solid var(--c-border);
-    padding: 8px 12px;
-    background: var(--c-surface-1);
+    padding: 4px 10px;
+    min-height: 32px;
+    background: color-mix(in srgb, var(--c-surface-1) 86%, var(--c-surface-2));
   }
 
   .left {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
 
   h1 {
     margin: 0;
-    font-size: 0.95rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
     color: var(--c-text-1);
   }
 

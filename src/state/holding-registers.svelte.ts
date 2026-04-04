@@ -23,6 +23,8 @@ export interface HoldingRegisterEntry {
   desiredValue: number;
   pending: boolean;
   writeError: string | null;
+  lastReadAt: number | null;
+  lastWriteAt: number | null;
   label: string;
   origin: HoldingRegisterOrigin;
 }
@@ -162,6 +164,8 @@ function generateRegisters(startAddress: number, count: number): HoldingRegister
     desiredValue: 0,
     pending: false,
     writeError: null,
+    lastReadAt: null,
+    lastWriteAt: null,
     label: "",
     origin: "range",
   }));
@@ -281,6 +285,7 @@ export async function readHoldingRegister(address: number): Promise<void> {
       entry.slaveValue = reg.value;
       // Successful read means address is available; clear stale availability error.
       entry.writeError = null;
+      entry.lastReadAt = Date.now();
     }
   } catch (err) {
     addLog("error", `fc03.read err addr=${address} msg=${parseInvokeError(err)}`);
@@ -352,6 +357,7 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean 
             if (single) {
               entry.slaveValue = single.value;
               entry.writeError = null;
+              entry.lastReadAt = Date.now();
               okCount += 1;
             } else {
               entry.writeError = "Address not available";
@@ -394,6 +400,7 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean 
             if (valueMap.has(address)) {
               entry.slaveValue = valueMap.get(address) ?? entry.slaveValue;
               entry.writeError = null;
+              entry.lastReadAt = Date.now();
               okCount += 1;
             } else {
               entry.writeError = "Address not available";
@@ -500,6 +507,7 @@ export async function writeHoldingRegister(address: number): Promise<void> {
     entry.slaveValue = response.value;
     entry.pending = false;
     entry.writeError = null;
+    entry.lastWriteAt = Date.now();
     addLog("info", `fc06.write ok addr=${address} val=${response.value}`);
   } catch (err) {
     entry.pending = false;
@@ -562,6 +570,7 @@ export async function writePendingHoldingRegisters(): Promise<number> {
     } else {
       entry.slaveValue = entry.desiredValue;
       entry.writeError = null;
+      entry.lastWriteAt = Date.now();
     }
   }
 
@@ -604,6 +613,8 @@ export function applyHoldingRegisterRange(startAddress: number, count: number): 
       entry.desiredValue = prev.desiredValue;
       entry.pending = false;
       entry.writeError = prev.writeError;
+      entry.lastReadAt = prev.lastReadAt;
+      entry.lastWriteAt = prev.lastWriteAt;
       entry.label = prev.label;
       entry.origin = prev.origin;
     }
@@ -664,6 +675,8 @@ export function addExclusiveHoldingRegister(address: number): boolean {
     desiredValue: 0,
     pending: false,
     writeError: null,
+    lastReadAt: null,
+    lastWriteAt: null,
     label: "",
     origin: "custom",
   };

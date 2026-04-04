@@ -3,12 +3,14 @@ export const layoutState = $state({
   statusCompact: false,
   logCollapsed: false,
   logHeight: 220,
+  logPanelView: "logs" as "logs" | "details",
   mobileLogOpen: false,
 });
 
 const NAV_KEY = "Modbus-Lab.navCollapsed";
 const LOG_KEY = "Modbus-Lab.logCollapsed";
 const LOG_HEIGHT_KEY = "Modbus-Lab.logHeight";
+const LOG_VIEW_KEY = "Modbus-Lab.logPanelView";
 const LOG_HEIGHT_MIN = 140;
 const LOG_HEIGHT_MAX = 460;
 
@@ -19,6 +21,10 @@ export function initLayoutState(): void {
 
   layoutState.navCollapsed = localStorage.getItem(NAV_KEY) === "1";
   layoutState.logCollapsed = localStorage.getItem(LOG_KEY) === "1";
+  const savedView = localStorage.getItem(LOG_VIEW_KEY);
+  if (savedView === "logs" || savedView === "details") {
+    layoutState.logPanelView = savedView;
+  }
 
   const savedHeight = Number(localStorage.getItem(LOG_HEIGHT_KEY));
   if (Number.isFinite(savedHeight) && savedHeight > 0) {
@@ -59,6 +65,13 @@ export function setLogHeight(height: number): void {
 
 export function toggleMobileLog(): void {
   layoutState.mobileLogOpen = !layoutState.mobileLogOpen;
+}
+
+export function setLogPanelView(view: "logs" | "details"): void {
+  layoutState.logPanelView = view;
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(LOG_VIEW_KEY, view);
+  }
 }
 
 export function closeMobileLog(): void {

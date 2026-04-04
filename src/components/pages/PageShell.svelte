@@ -6,15 +6,20 @@
   import PanelFrame from "../shared/PanelFrame.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import type { TabIcon } from "../../state/navigation.svelte";
+  import type { Snippet } from "svelte";
 
   let {
     title,
     feature,
     icon,
+    actions,
+    children,
   } = $props<{
     title: string;
     feature: string;
     icon: TabIcon;
+    actions?: Snippet;
+    children?: Snippet;
   }>();
 </script>
 
@@ -25,11 +30,15 @@
     {/snippet}
   </SectionHeader>
 
-  <PanelFrame>
-    {#snippet children()}
-      <EmptyState message={`The ${title} workspace is ready. Implementation comes in the next phase.`} />
-    {/snippet}
-  </PanelFrame>
+  {#if children}
+    {@render children()}
+  {:else}
+    <PanelFrame>
+      {#snippet children()}
+        <EmptyState message={`The ${title} workspace is ready. Implementation comes in the next phase.`} />
+      {/snippet}
+    </PanelFrame>
+  {/if}
 </div>
 
 <style>

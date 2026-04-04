@@ -58,29 +58,29 @@
         onblur={commitEdit}
         onkeydown={onLabelKeydown}
       />
-      <button class="icon-micro" type="button" onclick={commitEdit} title="Save">
+      <button class="icon-micro has-tip" type="button" onclick={commitEdit} data-tip="Save">
         <Check size={11} />
       </button>
-      <button class="icon-micro" type="button" onclick={cancelEdit} title="Cancel">
+      <button class="icon-micro has-tip" type="button" onclick={cancelEdit} data-tip="Cancel">
         <X size={11} />
       </button>
     {:else}
       <span
-        class="cell-label"
+        class="cell-label has-tip"
         class:label-empty={!entry.label}
         role="button"
         tabindex="0"
         onclick={() => beginEdit(entry.address, entry.label)}
         onkeydown={(e) => { if (e.key === "Enter") beginEdit(entry.address, entry.label); }}
-        title="Click to edit label"
+        data-tip="Click to edit label"
       >
         {entry.label || "-"}
       </span>
       <button
-        class="icon-micro edit-trigger"
+        class="icon-micro edit-trigger has-tip"
         type="button"
         onclick={() => beginEdit(entry.address, entry.label)}
-        title="Edit label"
+        data-tip="Edit label"
       >
         <Pencil size={10} />
       </button>
@@ -90,9 +90,9 @@
   <span class="pending-cell">
     {#if entry.writeError || entry.desiredValue !== entry.slaveValue}
       {#if entry.writeError}
-        <span class="dirty-indicator failed-indicator" title={entry.writeError}>Not avail</span>
+        <span class="dirty-indicator failed-indicator has-tip" data-tip={entry.writeError}>Not avail</span>
       {:else}
-        <span class="dirty-indicator" title="Local value differs from device">Unsynced</span>
+        <span class="dirty-indicator has-tip" data-tip="Local value differs from device">Unsynced</span>
       {/if}
     {/if}
   </span>
@@ -113,21 +113,21 @@
 
   <span class="operation-cell">
     <button
-      class="read-mini"
+      class="read-mini has-tip"
       type="button"
       disabled={!connected}
       onclick={() => onRead(entry.address)}
-      title={connected ? "Read from device" : "Connect to device first"}
+      data-tip={connected ? "Read from device" : "Connect to device first"}
     >
       <RefreshCw size={11} />
       Read
     </button>
     <button
-      class="write-mini"
+      class="write-mini has-tip"
       type="button"
       disabled={!connected}
       onclick={() => onWrite(entry.address)}
-      title={connected ? "Write register" : "Connect to device first"}
+      data-tip={connected ? "Write register" : "Connect to device first"}
     >
       <Zap size={11} />
       Write
@@ -135,7 +135,7 @@
   </span>
 
   <span class="delete-cell">
-    <button class="delete-mini" type="button" onclick={() => onDelete(entry.address)} title="Delete register">
+    <button class="delete-mini has-tip" type="button" onclick={() => onDelete(entry.address)} data-tip="Delete register">
       <X size={11} />
     </button>
   </span>
@@ -159,6 +159,10 @@
 
   .rt-row:last-child {
     border-bottom: none;
+  }
+
+  .rt-row:nth-child(even) {
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
   }
 
   .rt-row:hover {

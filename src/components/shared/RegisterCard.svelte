@@ -65,14 +65,14 @@
         onblur={onCommitEdit}
         onkeydown={onLabelKeydown}
       />
-      <button class="icon-micro" type="button" onclick={onCommitEdit} title="Save"><Check size={11} /></button>
-      <button class="icon-micro" type="button" onclick={onCancelEdit} title="Cancel"><X size={11} /></button>
+      <button class="icon-micro has-tip" type="button" onclick={onCommitEdit} data-tip="Save"><Check size={11} /></button>
+      <button class="icon-micro has-tip" type="button" onclick={onCancelEdit} data-tip="Cancel"><X size={11} /></button>
     {:else}
-      <button class="icon-micro card-label-edit" type="button" onclick={() => onBeginEdit(address, label)} title="Edit label">
+      <button class="icon-micro card-label-edit has-tip" type="button" onclick={() => onBeginEdit(address, label)} data-tip="Edit label">
         <Pencil size={10} />
       </button>
       <div class="card-label" class:card-label-empty={!label}>{label || "-"}</div>
-      <button class="delete-mini" type="button" onclick={() => onDelete(address)} title="Delete register">
+      <button class="delete-mini has-tip" type="button" onclick={() => onDelete(address)} data-tip="Delete register">
         <X size={11} />
       </button>
     {/if}
@@ -81,11 +81,12 @@
   <div class="card-meta">
     <div class="card-addr">{addrFmt(address)}</div>
     <div class="card-inline-status-slot">
-      {#if statusBadgeText}
-        <span class="dirty-indicator card-inline-status" class:failed-indicator={statusBadgeVariant === "failed"} title={statusBadgeTitle}>
-          {statusBadgeText}
-        </span>
-      {/if}
+      <span
+        class="dirty-indicator card-inline-status has-tip"
+        class:failed-indicator={statusBadgeVariant === "failed"}
+        class:badge-hidden={!statusBadgeText}
+        data-tip={statusBadgeText ? statusBadgeTitle : undefined}
+      >{statusBadgeText ?? ""}</span>
     </div>
   </div>
 
@@ -108,11 +109,11 @@
   </div>
 
   <div class="card-actions">
-    <button class="read-mini" type="button" disabled={!connected} onclick={() => onRead(address)} title={connected ? "Read from device" : "Connect to device first"}>
+    <button class="read-mini has-tip" type="button" disabled={!connected} onclick={() => onRead(address)} data-tip={connected ? "Read from device" : "Connect to device first"}>
       <RefreshCw size={11} />
       Read
     </button>
-    <button class="write-mini" type="button" disabled={!connected} onclick={() => onWrite(address)} title={connected ? "Write register" : "Connect to device first"}>
+    <button class="write-mini has-tip" type="button" disabled={!connected} onclick={() => onWrite(address)} data-tip={connected ? "Write register" : "Connect to device first"}>
       <Zap size={11} />
       Write
     </button>
@@ -132,7 +133,7 @@
     border: 1px solid color-mix(in srgb, var(--c-border-strong) 48%, var(--c-border));
     border-radius: 10px;
     background: var(--c-surface-2);
-    transition: all 160ms ease;
+    transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
     font: inherit;
     text-align: left;
   }
@@ -295,6 +296,10 @@
 
   .icon-micro:hover {
     color: var(--c-text-1);
+  }
+
+  .badge-hidden {
+    visibility: hidden;
   }
 
   .dirty-indicator {

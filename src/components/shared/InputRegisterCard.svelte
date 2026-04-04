@@ -55,14 +55,14 @@
         onblur={onCommitEdit}
         onkeydown={onLabelKeydown}
       />
-      <button class="icon-micro" type="button" onclick={onCommitEdit} title="Save"><Check size={11} /></button>
-      <button class="icon-micro" type="button" onclick={onCancelEdit} title="Cancel"><X size={11} /></button>
+      <button class="icon-micro has-tip" type="button" onclick={onCommitEdit} data-tip="Save"><Check size={11} /></button>
+      <button class="icon-micro has-tip" type="button" onclick={onCancelEdit} data-tip="Cancel"><X size={11} /></button>
     {:else}
-      <button class="icon-micro card-label-edit" type="button" onclick={() => onBeginEdit(address, label)} title="Edit label">
+      <button class="icon-micro card-label-edit has-tip" type="button" onclick={() => onBeginEdit(address, label)} data-tip="Edit label">
         <Pencil size={10} />
       </button>
       <div class="card-label" class:card-label-empty={!label}>{label || "-"}</div>
-      <button class="delete-mini" type="button" onclick={() => onDelete(address)} title="Delete register">
+      <button class="delete-mini has-tip" type="button" onclick={() => onDelete(address)} data-tip="Delete register">
         <X size={11} />
       </button>
     {/if}
@@ -72,7 +72,7 @@
     <div class="card-addr">{addrFmt(address)}</div>
     <div class="card-inline-status-slot">
       {#if statusBadgeText}
-        <span class="dirty-indicator card-inline-status failed-indicator" title={statusBadgeTitle}>
+        <span class="dirty-indicator card-inline-status failed-indicator has-tip" data-tip={statusBadgeTitle}>
           {statusBadgeText}
         </span>
       {/if}
@@ -88,11 +88,11 @@
 
   <div class="card-actions">
     <button
-      class="read-mini"
+      class="read-mini has-tip"
       type="button"
       disabled={!connected}
       onclick={() => onRead(address)}
-      title={connected ? "Read from device" : "Connect to device first"}
+      data-tip={connected ? "Read from device" : "Connect to device first"}
     >
       <RefreshCw size={11} />
       Read

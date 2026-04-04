@@ -51,14 +51,21 @@ interface BackendWriteMassCoilsResponse {
 function parseInvokeError(err: unknown): string {
   if (typeof err === "string") {
     try {
-      const parsed = JSON.parse(err) as { message?: string };
+      const parsed = JSON.parse(err) as { message?: string; details?: string };
+      if (typeof parsed.details === "string" && parsed.details.trim().length > 0) {
+        return `${parsed.message ?? "Unknown error"} (${parsed.details})`;
+      }
       return parsed.message ?? err;
     } catch {
       return err;
     }
   }
   if (typeof err === "object" && err !== null && "message" in err) {
-    return String((err as { message: unknown }).message);
+    const maybe = err as { message: unknown; details?: unknown };
+    if (typeof maybe.details === "string" && maybe.details.trim().length > 0) {
+      return `${String(maybe.message)} (${maybe.details})`;
+    }
+    return String(maybe.message);
   }
   return "Unknown error";
 }
