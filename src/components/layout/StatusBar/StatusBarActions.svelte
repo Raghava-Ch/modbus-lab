@@ -20,17 +20,18 @@
     label="Collapse status details"
     title="Collapse status details"
     active={statusCompact}
+    compact={true}
     onclick={onToggleStatus}
   >
     {#snippet children()}
-      <ListChecks size={16} />
+      <ListChecks size={13} />
     {/snippet}
   </IconButton>
 
   <div class="mobile-only">
-    <IconButton label="Toggle logs" title="Toggle logs" onclick={onToggleMobileLog}>
+    <IconButton label="Toggle logs" title="Toggle logs" compact={true} onclick={onToggleMobileLog}>
       {#snippet children()}
-        <Logs size={16} />
+        <Logs size={13} />
       {/snippet}
     </IconButton>
   </div>
@@ -40,7 +41,7 @@
   .status-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .mobile-only {

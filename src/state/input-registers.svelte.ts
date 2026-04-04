@@ -24,6 +24,7 @@ export interface InputRegisterEntry {
   value: number;
   pending: boolean;
   readError: string | null;
+  lastReadAt: number | null;
   label: string;
   origin: InputRegisterOrigin;
 }
@@ -145,6 +146,7 @@ function generateRegisters(startAddress: number, count: number): InputRegisterEn
     value: 0,
     pending: false,
     readError: null,
+    lastReadAt: null,
     label: "",
     origin: "range" as InputRegisterOrigin,
   }));
@@ -234,6 +236,7 @@ export async function readInputRegister(address: number): Promise<void> {
     if (reg) {
       entry.value = reg.value;
       entry.readError = null;
+      entry.lastReadAt = Date.now();
     }
   } catch (err) {
     addLog("error", `fc04.read err addr=${address} msg=${parseInvokeError(err)}`);
@@ -301,6 +304,7 @@ export async function readAllInputRegisters(options?: { markPending?: boolean })
             if (single) {
               entry.value = single.value;
               entry.readError = null;
+              entry.lastReadAt = Date.now();
               okCount += 1;
             } else {
               entry.readError = "Address not available";
@@ -336,6 +340,7 @@ export async function readAllInputRegisters(options?: { markPending?: boolean })
             if (valueMap.has(address)) {
               entry.value = valueMap.get(address) ?? entry.value;
               entry.readError = null;
+              entry.lastReadAt = Date.now();
               okCount += 1;
             } else {
               entry.readError = "Address not available";
@@ -437,6 +442,7 @@ export function applyInputRegisterRange(startAddress: number, count: number): vo
       entry.value = prev.value;
       entry.pending = false;
       entry.readError = prev.readError;
+      entry.lastReadAt = prev.lastReadAt;
       entry.label = prev.label;
       entry.origin = prev.origin;
     }
@@ -493,6 +499,7 @@ export function addExclusiveInputRegister(address: number): boolean {
     value: 0,
     pending: false,
     readError: null,
+    lastReadAt: null,
     label: "",
     origin: "custom",
   };

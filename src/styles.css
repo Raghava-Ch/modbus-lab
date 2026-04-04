@@ -12,8 +12,8 @@
   --c-warn: #e0b55f;
   --c-error: #de7d76;
 
-  --nav-width-open: 220px;
-  --nav-width-collapsed: 72px;
+  --nav-width-open: 170px;
+  --nav-width-collapsed: 56px;
 
   color-scheme: dark;
   font-family:
@@ -56,4 +56,98 @@ button {
   border: 0;
   outline: none;
   font: inherit;
+}
+
+/* Thin, blended scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--c-border) 70%, transparent);
+  border-radius: 3px;
+  border: 1px solid transparent;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--c-border-strong) 70%, transparent);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--c-border) 70%, transparent) transparent;
+}
+
+/* Custom tooltips */
+.has-tip {
+  position: relative;
+}
+
+.has-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
+  box-shadow:
+    0 8px 18px color-mix(in srgb, var(--c-bg) 62%, transparent),
+    0 1px 0 color-mix(in srgb, var(--c-text-1) 10%, transparent);
+  color: var(--c-text-1);
+  font-size: 0.58rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+  z-index: 9999;
+}
+
+.spinner-btn.has-tip::after {
+  left: auto;
+  right: calc(100% + 8px);
+  bottom: 50%;
+  transform: translateY(50%);
+}
+
+.spinner-btn.has-tip::before {
+  left: auto;
+  right: calc(100% + 3px);
+  bottom: 50%;
+  transform: translateY(50%);
+  border: 5px solid transparent;
+  border-left-color: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
+  border-top: none;
+  border-bottom: none;
+}
+
+.message.has-tip::after {
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+}
+
+.message.has-tip::before {
+  left: 50%;
+  bottom: calc(100% + 3px);
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
+  border-left: none;
+  border-right: none;
+}
+
+.has-tip:hover::after,
+.has-tip:hover::before,
+.has-tip:focus-visible::after,
+.has-tip:focus-visible::before {
+  opacity: 1;
 }

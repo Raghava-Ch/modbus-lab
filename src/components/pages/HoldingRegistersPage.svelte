@@ -45,6 +45,7 @@
     formatWordValueWithSettings,
     getGlobalPollingMaxAddressCount,
   } from "../../state/settings.svelte";
+  import { registerDetailsState, selectRegisterDetails } from "../../state/register-details.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
   import RegisterTableRow from "../shared/RegisterTableRow.svelte";
@@ -459,6 +460,7 @@
           <LayoutGrid size={15} />
         </button>
       </div>
+
     {/snippet}
   </SectionHeader>
 
@@ -719,24 +721,39 @@
               <div class="rt-spacer" style={`height: ${topSpacerHeight}px;`}></div>
             {/if}
 
-            {#each visibleRows as entry (entry.address)}
-              <RegisterTableRow
-                {entry}
-                {connected}
-                {editingAddress}
-                {editLabelVal}
-                {addrFmt}
-                {valueFmt}
-                {beginEdit}
-                {commitEdit}
-                {cancelEdit}
-                {onLabelKeydown}
-                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                onDesiredChange={(address: number, value: number) => setHoldingRegisterDesiredValue(address, value)}
-                onRead={(address: number) => { void readHoldingRegister(address); }}
-                onWrite={(address: number) => { void writeHoldingRegister(address); }}
-                onDelete={(address: number) => removeHoldingRegister(address)}
-              />
+            {#each visibleRows as entry, rowIndex (entry.address)}
+              <div
+                class="selectable-item"
+                class:zebra-row={(virtualStart + rowIndex) % 2 === 1}
+                class:selected-item={registerDetailsState.kind === "holding" && registerDetailsState.address === entry.address}
+                role="button"
+                tabindex="0"
+                onclick={() => { selectRegisterDetails("holding", entry.address); }}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectRegisterDetails("holding", entry.address);
+                  }
+                }}
+              >
+                <RegisterTableRow
+                  {entry}
+                  {connected}
+                  {editingAddress}
+                  {editLabelVal}
+                  {addrFmt}
+                  {valueFmt}
+                  {beginEdit}
+                  {commitEdit}
+                  {cancelEdit}
+                  {onLabelKeydown}
+                  onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                  onDesiredChange={(address: number, value: number) => setHoldingRegisterDesiredValue(address, value)}
+                  onRead={(address: number) => { void readHoldingRegister(address); }}
+                  onWrite={(address: number) => { void writeHoldingRegister(address); }}
+                  onDelete={(address: number) => removeHoldingRegister(address)}
+                />
+              </div>
             {/each}
 
             {#if bottomSpacerHeight > 0}
@@ -759,31 +776,45 @@
 
           <div class="switch-grid">
             {#each visibleCards as entry (entry.address)}
-              <RegisterCard
-                address={entry.address}
-                label={entry.label}
-                pending={entry.pending}
-                slaveValue={entry.slaveValue}
-                {valueFmt}
-                desiredValue={entry.desiredValue}
-                {connected}
-                cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
-                {editingAddress}
-                {editLabelVal}
-                {addrFmt}
-                onBeginEdit={beginEdit}
-                onCommitEdit={commitEdit}
-                onCancelEdit={cancelEdit}
-                {onLabelKeydown}
-                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                onDesiredChange={(address: number, value: number) => setHoldingRegisterDesiredValue(address, value)}
-                onRead={(address: number) => { void readHoldingRegister(address); }}
-                onWrite={(address: number) => { void writeHoldingRegister(address); }}
-                onDelete={(address: number) => removeHoldingRegister(address)}
-                statusBadgeText={entry.writeError ? "Not avail" : (entry.desiredValue !== entry.slaveValue ? "Unsynced" : null)}
-                statusBadgeTitle={entry.writeError ?? "Local value differs from device"}
-                statusBadgeVariant={entry.writeError ? "failed" : "pending"}
-              />
+              <div
+                class="selectable-item"
+                class:selected-item={registerDetailsState.kind === "holding" && registerDetailsState.address === entry.address}
+                role="button"
+                tabindex="0"
+                onclick={() => { selectRegisterDetails("holding", entry.address); }}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectRegisterDetails("holding", entry.address);
+                  }
+                }}
+              >
+                <RegisterCard
+                  address={entry.address}
+                  label={entry.label}
+                  pending={entry.pending}
+                  slaveValue={entry.slaveValue}
+                  {valueFmt}
+                  desiredValue={entry.desiredValue}
+                  {connected}
+                  cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
+                  {editingAddress}
+                  {editLabelVal}
+                  {addrFmt}
+                  onBeginEdit={beginEdit}
+                  onCommitEdit={commitEdit}
+                  onCancelEdit={cancelEdit}
+                  {onLabelKeydown}
+                  onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                  onDesiredChange={(address: number, value: number) => setHoldingRegisterDesiredValue(address, value)}
+                  onRead={(address: number) => { void readHoldingRegister(address); }}
+                  onWrite={(address: number) => { void writeHoldingRegister(address); }}
+                  onDelete={(address: number) => removeHoldingRegister(address)}
+                  statusBadgeText={entry.writeError ? "Not avail" : (entry.desiredValue !== entry.slaveValue ? "Unsynced" : null)}
+                  statusBadgeTitle={entry.writeError ?? "Local value differs from device"}
+                  statusBadgeVariant={entry.writeError ? "failed" : "pending"}
+                />
+              </div>
             {/each}
           </div>
 
@@ -794,6 +825,7 @@
       {/if}
     {/snippet}
   </PanelFrame>
+
 </div>
 
 <style>
@@ -814,6 +846,19 @@
     gap: 2px;
   }
 
+  .selectable-item {
+    border-radius: 8px;
+  }
+
+  .selectable-item.zebra-row :global(.rt-row) {
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+  }
+
+  .selected-item {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 62%, transparent);
+    background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+  }
+
   .divider-v {
     width: 1px;
     height: 20px;
@@ -821,40 +866,40 @@
   }
 
   .ctrl-select {
-    height: 28px;
-    padding: 0 22px 0 8px;
+    height: 24px;
+    padding: 0 20px 0 7px;
     border: 1px solid var(--c-border);
-    border-radius: 6px;
-    background: var(--c-surface-2);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23c9cfda' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 6px center;
+    background-position: right 5px center;
     appearance: none;
     color: var(--c-text-2);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: 0.64rem;
     cursor: pointer;
   }
 
   .ctrl-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    height: 28px;
-    padding: 0 9px;
+    gap: 3px;
+    height: 24px;
+    padding: 0 8px;
     border: 1px solid var(--c-border);
-    border-radius: 6px;
-    background: var(--c-surface-2);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
     color: var(--c-text-2);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: 0.64rem;
     cursor: pointer;
-    transition: all 140ms ease;
+    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
     white-space: nowrap;
   }
 
   .ctrl-btn.icon-only {
-    padding: 0 7px;
+    padding: 0 6px;
   }
 
   .ctrl-btn:hover {
@@ -864,9 +909,9 @@
 
   .ctrl-btn.active {
     border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
-    background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
     color: var(--c-text-1);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
+    box-shadow: inset 0 -1px 0 0 var(--c-accent);
   }
 
   .ctrl-btn.active :global(svg) {
@@ -897,7 +942,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
   }
 
   .toolbar-left {
@@ -907,48 +952,55 @@
   }
 
   .filter-tabs {
-    display: flex;
+    display: inline-flex;
+    align-items: center;
     gap: 2px;
-    background: var(--c-surface-2);
-    border: 1px solid var(--c-border);
-    border-radius: 8px;
-    padding: 3px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
   }
 
   .filter-tab {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     height: 24px;
-    padding: 0 10px;
-    border: 1px solid transparent;
-    border-radius: 5px;
+    padding: 0 9px;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    border-radius: 0;
     background: transparent;
     color: var(--c-text-2);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: 0.62rem;
     font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
     cursor: pointer;
-    transition: all 140ms ease;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
   }
 
   .filter-tab:hover {
     color: var(--c-text-1);
+    background: color-mix(in srgb, var(--c-surface-3) 34%, transparent);
   }
 
   .filter-tab.active {
-    border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
-    background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-2));
+    border-bottom-color: var(--c-accent);
+    background: color-mix(in srgb, var(--c-surface-3) 50%, transparent);
     color: var(--c-text-1);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
   }
 
   .count {
-    font-size: 0.65rem;
+    display: inline-flex;
+    align-items: center;
+    height: 14px;
+    font-size: 0.58rem;
     color: var(--c-text-2);
     background: var(--c-surface-3);
-    border-radius: 10px;
-    padding: 1px 5px;
+    border-radius: 999px;
+    padding: 0 5px;
   }
 
   .count.on  { color: var(--c-ok); background: color-mix(in srgb, var(--c-ok) 15%, var(--c-surface-3)); }
@@ -957,7 +1009,7 @@
   .toolbar-actions {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
   }
 
   .address-filter-row {
@@ -1188,12 +1240,12 @@
   .register-table {
     display: grid;
     gap: 0;
-    overflow-x: auto;
   }
 
   .rt-body {
     max-height: min(62vh, 680px);
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     overscroll-behavior: contain;
   }
 
@@ -1206,7 +1258,6 @@
     grid-template-columns: minmax(140px, 1fr) 92px 64px 88px 110px 182px 52px;
     align-items: center;
     gap: 0;
-    min-width: 730px;
     font-size: 0.63rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -1229,7 +1280,8 @@
 
   .switch-virtual-scroll {
     max-height: min(62vh, 680px);
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     overscroll-behavior: contain;
   }
 

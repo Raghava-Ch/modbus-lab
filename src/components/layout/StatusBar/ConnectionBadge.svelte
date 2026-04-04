@@ -21,18 +21,20 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    border: 1px solid var(--c-border);
+    gap: 6px;
+    height: 22px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 70%, transparent);
     border-radius: 999px;
-    padding: 4px 10px;
-    font-size: 0.8rem;
+    padding: 0 8px;
+    font-size: 0.62rem;
+    letter-spacing: 0.02em;
     color: var(--c-text-1);
-    background: var(--c-surface-2);
+    background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
   }
 
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--c-warn);
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-warn) 45%, transparent);

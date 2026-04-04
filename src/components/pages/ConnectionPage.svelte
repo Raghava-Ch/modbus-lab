@@ -282,7 +282,7 @@
           <span class="status-chip">{backendSource}</span>
         {/if}
         {#if compactBackendDetails}
-          <span class="status-chip details" title={connectionState.backendDetails}>
+          <span class="status-chip details has-tip" data-tip={connectionState.backendDetails}>
             {compactBackendDetails}
           </span>
         {/if}
