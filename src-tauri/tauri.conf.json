@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Modbus Lab",
-  "version": "0.0.0",
+  "productName": "Modbus-Lab",
+  "version": "0.0.2",
   "identifier": "com.Modbus-Lab.app",
   "build": {
     "beforeDevCommand": "npm run dev",
