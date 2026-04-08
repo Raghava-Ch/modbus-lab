@@ -39,8 +39,8 @@ The application is currently in **alpha**. It is fully usable for core Modbus TC
 | Protocol | Status |
 |---------|--------|
 | Modbus TCP | ✅ Implemented |
-| Modbus RTU | 🚧 Planned |
-| Modbus ASCII | 🚧 Planned |
+| Modbus RTU | ✅ Implemented |
+| Modbus ASCII | ✅ Implemented |
 
 ## ✨ Feature Summary
 
