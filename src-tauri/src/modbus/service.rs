@@ -1901,6 +1901,13 @@ async fn connect_tcp_client(
         if let Some(sink) = traffic_sink.clone() {
             client.set_traffic_handler(move |event| {
                 let direction = format!("{:?}", event.direction).to_ascii_lowercase();
+
+                // Ignore short RX chunks that cannot represent a full Modbus TCP ADU.
+                // These are often partial socket reads and produce noisy "invalid_adu reason=short" logs.
+                if direction.contains("rx") && event.frame.len() < 8 {
+                    return;
+                }
+
                 let bytes = format_hex_bytes(&event.frame);
                 let adu = describe_tcp_adu_human(&event.frame, direction.as_str());
                 let message = if let Some(err) = event.error {
