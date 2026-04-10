@@ -85,11 +85,13 @@ button {
 }
 
 /* Custom tooltips */
-.has-tip {
+.has-tip,
+[data-tip] {
   position: relative;
 }
 
-.has-tip::after {
+.has-tip::after,
+[data-tip]::after {
   content: attr(data-tip);
   position: absolute;
   left: 50%;
@@ -148,6 +150,10 @@ button {
 .has-tip:hover::after,
 .has-tip:hover::before,
 .has-tip:focus-visible::after,
-.has-tip:focus-visible::before {
+.has-tip:focus-visible::before,
+[data-tip]:hover::after,
+[data-tip]:hover::before,
+[data-tip]:focus-visible::after,
+[data-tip]:focus-visible::before {
   opacity: 1;
 }

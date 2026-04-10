@@ -1,5 +1,6 @@
 <svelte:options runes={true} />
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     Table2,
     LayoutGrid,
@@ -45,7 +46,7 @@
 
   // ── Init & cleanup ──────────────────────────────────────────────────────────
   $effect(() => {
-    initDiscreteInputState();
+    untrack(() => initDiscreteInputState());
     return () => {
       setDiscreteInputPollActive(false);
     };

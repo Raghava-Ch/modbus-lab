@@ -13,12 +13,13 @@ use tokio::{
 };
 
 use modbus_rs::mbus_async::AsyncTcpClient;
-use modbus_rs::{Coils, DiscreteInputs, Registers};
+use modbus_rs::{Coils, DiagnosticSubFunction, DiscreteInputs, EncapsulatedInterfaceType, Registers};
 use serialport::{ClearBuffer, DataBits, Parity, SerialPort, StopBits};
 
 use super::types::{
     AnalyticsContext, ApiError, ApiResult, CoilEntry, CoilWriteFailure, ConnectionStatus,
-    ConnectionStatusPayload, DiagnosticRequest, DiagnosticResponse, DiscreteInputEntry,
+    ConnectionStatusPayload, CustomFrameMode, CustomFrameRequest, CustomFrameResponse,
+    DiagnosticRequest, DiagnosticResponse, DiscreteInputEntry,
     GetComEventCounterResponse, GetComEventLogRequest, GetComEventLogResponse,
     ReadCoilsRequest, ReadCoilsResponse, ReadDeviceIdentificationRequest,
     ReadDeviceIdentificationResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
@@ -86,8 +87,11 @@ struct TcpSession {
     reconnect_attempt: u32,
     last_reconnect_error_code: Option<String>,
     last_reconnect_error_message: Option<String>,
+    traffic_sink: Option<TcpTrafficSink>,
     client: Arc<AsyncTcpClient<9>>,
 }
+
+type TcpTrafficSink = Arc<dyn Fn(String) + Send + Sync + 'static>;
 
 struct SerialSession {
     frame_mode: SerialFrameMode,
@@ -150,6 +154,7 @@ impl AppState {
     pub async fn connect_tcp(
         &self,
         request: &TcpConnectRequest,
+        traffic_sink: Option<TcpTrafficSink>,
     ) -> ApiResult<ConnectionStatusPayload> {
         if request.host.trim().is_empty() {
             return Err(ApiError::invalid_request(
@@ -195,6 +200,7 @@ impl AppState {
             connection_timeout,
             config,
             request.analytics.clone(),
+            traffic_sink.clone(),
         )
         .await
         {
@@ -229,6 +235,7 @@ impl AppState {
             reconnect_attempt: 0,
             last_reconnect_error_code: None,
             last_reconnect_error_message: None,
+            traffic_sink,
             client: Arc::new(client),
         }));
         rt.status = ConnectionStatus::ConnectedTcp;
@@ -1136,6 +1143,59 @@ impl AppState {
             Ok(DiagnosticResponse { data: response })
         }
 
+        pub async fn send_custom_frame(
+            &self,
+            request: &CustomFrameRequest,
+        ) -> ApiResult<CustomFrameResponse> {
+            self.mark_tcp_activity().await;
+
+            let (function_code, payload) = resolve_custom_frame_request(request)?;
+            let response_payload = match self.active_connection_kind(request.analytics.clone()).await? {
+                ActiveConnectionKind::Tcp => {
+                    let (host, port, slave_id, config) =
+                        self.active_tcp_endpoint(request.analytics.clone()).await?;
+                    send_raw_modbus_request_with_retry(
+                        &host,
+                        port,
+                        slave_id,
+                        function_code,
+                        &payload,
+                        config,
+                    )
+                    .await
+                    .map_err(|err| {
+                        ApiError::backend_failure(
+                            "Custom frame send failed.",
+                            Some(err),
+                            request.analytics.clone(),
+                        )
+                    })?
+                }
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
+                    self.with_serial_session(request.analytics.clone(), |session| {
+                        serial_send_request(session, function_code, &payload)
+                    })
+                    .await?
+                }
+            };
+
+            let response_ascii = decode_modbus_text(&response_payload);
+            Ok(CustomFrameResponse {
+                mode: request.mode,
+                function_code,
+                function_name: modbus_function_name(function_code).to_string(),
+                request_hex: format_hex_bytes(&payload),
+                response_hex: format_hex_bytes(&response_payload),
+                response_ascii: if response_ascii.is_empty() {
+                    None
+                } else {
+                    Some(response_ascii)
+                },
+                request_summary: describe_custom_pdu("request", function_code, &payload),
+                response_summary: describe_custom_pdu("response", function_code, &response_payload),
+            })
+        }
+
         pub async fn get_com_event_counter(&self) -> ApiResult<GetComEventCounterResponse> {
             self.mark_tcp_activity().await;
 
@@ -1740,21 +1800,23 @@ async fn attempt_supervisor_reconnect(
     connection_timeout: Duration,
     config: TcpRuntimeConfig,
 ) {
-    {
+    let traffic_sink = {
         let mut rt = runtime.lock().await;
         if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
             if session.session_id != session_id {
                 return;
             }
 
+            let sink = session.traffic_sink.clone();
             session.reconnect_attempt = session.reconnect_attempt.saturating_add(1);
             rt.status = ConnectionStatus::Reconnecting;
+            sink
         } else {
             return;
         }
-    }
+    };
 
-    let reconnect = connect_tcp_client(host, port, connection_timeout, config, None).await;
+    let reconnect = connect_tcp_client(host, port, connection_timeout, config, None, traffic_sink).await;
 
     let mut rt = runtime.lock().await;
     if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
@@ -1815,20 +1877,48 @@ async fn connect_tcp_client(
     connection_timeout: Duration,
     config: TcpRuntimeConfig,
     analytics: Option<AnalyticsContext>,
+    traffic_sink: Option<TcpTrafficSink>,
 ) -> ApiResult<AsyncTcpClient<9>> {
     let mut last_details = None;
 
     for attempt in 0..=u32::from(config.retry_attempts) {
-        let host_for_attempt = host.clone();
-        let connect_handle =
-            task::spawn_blocking(move || AsyncTcpClient::<9>::connect(&host_for_attempt, port));
+        let client = match AsyncTcpClient::<9>::new(host.as_str(), port) {
+            Ok(client) => client,
+            Err(err) => {
+                last_details = Some(err.to_string());
+                continue;
+            }
+        };
 
-        match timeout(connection_timeout, connect_handle).await {
-            Ok(join_result) => match join_result {
-                Ok(Ok(client)) => return Ok(client),
-                Ok(Err(err)) => last_details = Some(err.to_string()),
-                Err(err) => last_details = Some(err.to_string()),
-            },
+        if let Some(sink) = traffic_sink.clone() {
+            client.set_traffic_handler(move |event| {
+                let direction = format!("{:?}", event.direction).to_ascii_lowercase();
+                let bytes = format_hex_bytes(&event.frame);
+                let adu = describe_tcp_adu_human(&event.frame, direction.as_str());
+                let message = if let Some(err) = event.error {
+                    format!(
+                        "tcp.{direction} txn={} unit={} adu={} err={:?} bytes={bytes}",
+                        event.txn_id,
+                        event.unit_id_slave_addr.get(),
+                        adu,
+                        err
+                    )
+                } else {
+                    format!(
+                        "tcp.{direction} txn={} unit={} adu={} bytes={bytes}",
+                        event.txn_id,
+                        event.unit_id_slave_addr.get(),
+                        adu,
+                    )
+                };
+
+                sink(message);
+            });
+        }
+
+        match timeout(connection_timeout, client.connect()).await {
+            Ok(Ok(())) => return Ok(client),
+            Ok(Err(err)) => last_details = Some(err.to_string()),
             Err(_) => {
                 last_details = Some(format!(
                     "Connection timed out after {} ms.",
@@ -2585,6 +2675,254 @@ fn format_hex_bytes(bytes: &[u8]) -> String {
         .map(|byte| format!("{:02X}", byte))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn parse_hex_input(input: &str) -> Result<Vec<u8>, String> {
+    let mut cleaned = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_hexdigit() {
+            cleaned.push(ch);
+        }
+    }
+
+    if cleaned.len() % 2 != 0 {
+        return Err("Hex input must contain an even number of hex digits.".to_string());
+    }
+
+    let mut out = Vec::with_capacity(cleaned.len() / 2);
+    let bytes = cleaned.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let part = std::str::from_utf8(&bytes[i..i + 2])
+            .map_err(|_| "Invalid UTF-8 while parsing hex input.".to_string())?;
+        let value = u8::from_str_radix(part, 16)
+            .map_err(|_| format!("Invalid hex byte '{part}'."))?;
+        out.push(value);
+        i += 2;
+    }
+
+    Ok(out)
+}
+
+fn resolve_custom_frame_request(request: &CustomFrameRequest) -> ApiResult<(u8, Vec<u8>)> {
+    match request.mode {
+        CustomFrameMode::FunctionPayload => {
+            let function = request.function_code.ok_or_else(|| {
+                ApiError::invalid_request(
+                    "functionCode is required for function-payload mode.",
+                    request.analytics.clone(),
+                )
+            })?;
+            let payload_hex = request.payload_hex.clone().unwrap_or_default();
+            let payload = parse_hex_input(&payload_hex).map_err(|details| {
+                ApiError::backend_failure(
+                    "payloadHex is not valid hex.",
+                    Some(details),
+                    request.analytics.clone(),
+                )
+            })?;
+            Ok((function, payload))
+        }
+        CustomFrameMode::RawBytes => {
+            let raw_hex = request.raw_hex.clone().unwrap_or_default();
+            let raw = parse_hex_input(&raw_hex).map_err(|details| {
+                ApiError::backend_failure(
+                    "rawHex is not valid hex.",
+                    Some(details),
+                    request.analytics.clone(),
+                )
+            })?;
+
+            if raw.is_empty() {
+                return Err(ApiError::invalid_request(
+                    "rawHex must include at least one byte (function code).",
+                    request.analytics.clone(),
+                ));
+            }
+
+            Ok((raw[0], raw[1..].to_vec()))
+        }
+    }
+}
+
+fn describe_custom_pdu(mode: &str, function: u8, payload: &[u8]) -> String {
+    let details = decode_pdu_details(mode, function, false, payload);
+    format!(
+        "fc=0x{:02X}({}) kind={} {}",
+        function,
+        modbus_function_name(function),
+        mode,
+        details
+    )
+}
+
+fn describe_tcp_adu_human(frame: &[u8], direction: &str) -> String {
+    if frame.len() < 8 {
+        return format!("invalid_adu reason=short frame_len={}", frame.len());
+    }
+
+    let txn = u16::from_be_bytes([frame[0], frame[1]]);
+    let protocol = u16::from_be_bytes([frame[2], frame[3]]);
+    let declared_len = u16::from_be_bytes([frame[4], frame[5]]);
+    let unit = frame[6];
+
+    if protocol != 0 {
+        return format!(
+            "invalid_adu txn={} unit={} reason=protocol_id protocol={}",
+            txn, unit, protocol
+        );
+    }
+
+    let expected_total = 6 + usize::from(declared_len);
+    let pdu = &frame[7..];
+    if pdu.is_empty() {
+        return format!(
+            "invalid_adu txn={} unit={} reason=missing_pdu declared_len={}",
+            txn, unit, declared_len
+        );
+    }
+
+    let function_raw = pdu[0];
+    let is_exception = (function_raw & 0x80) != 0;
+    let function = function_raw & 0x7F;
+    let fc_name = modbus_function_name(function);
+    let mode = if direction.contains("tx") {
+        "request"
+    } else {
+        "response"
+    };
+    let pdu_details = decode_pdu_details(mode, function, is_exception, &pdu[1..]);
+
+    format!(
+        "txn={} unit={} fc=0x{:02X}({}) kind={} mbap_len={} frame_len={} expected_len={} {}",
+        txn,
+        unit,
+        function,
+        fc_name,
+        mode,
+        declared_len,
+        frame.len(),
+        expected_total,
+        pdu_details
+    )
+}
+
+fn decode_pdu_details(mode: &str, function: u8, is_exception: bool, data: &[u8]) -> String {
+    if is_exception {
+        let exception = data.first().copied().unwrap_or_default();
+        return format!(
+            "exception=0x{:02X}({})",
+            exception,
+            modbus_exception_name(exception)
+        );
+    }
+
+    match function {
+        0x01 | 0x02 | 0x03 | 0x04 => {
+            if mode == "request" && data.len() >= 4 {
+                let start = u16::from_be_bytes([data[0], data[1]]);
+                let qty = u16::from_be_bytes([data[2], data[3]]);
+                return format!("start={} qty={}", start, qty);
+            }
+
+            if mode == "response" && !data.is_empty() {
+                return format!("byte_count={}", data[0]);
+            }
+        }
+        0x05 => {
+            if data.len() >= 4 {
+                let addr = u16::from_be_bytes([data[0], data[1]]);
+                let raw = u16::from_be_bytes([data[2], data[3]]);
+                let value = match raw {
+                    0xFF00 => "on",
+                    0x0000 => "off",
+                    _ => "unknown",
+                };
+                return format!("addr={} value=0x{:04X}({})", addr, raw, value);
+            }
+        }
+        0x06 => {
+            if data.len() >= 4 {
+                let addr = u16::from_be_bytes([data[0], data[1]]);
+                let value = u16::from_be_bytes([data[2], data[3]]);
+                return format!("addr={} value={}", addr, value);
+            }
+        }
+        0x08 => {
+            if data.len() >= 2 {
+                let sub = u16::from_be_bytes([data[0], data[1]]);
+                let sub_name = DiagnosticSubFunction::try_from(sub)
+                    .map(|known| format!("{:?}", known))
+                    .unwrap_or_else(|_| "ReservedOrVendorSpecific".to_string());
+                return format!("sub=0x{:04X}({}) data_len={}", sub, sub_name, data.len().saturating_sub(2));
+            }
+        }
+        0x0F | 0x10 => {
+            if mode == "request" && data.len() >= 5 {
+                let start = u16::from_be_bytes([data[0], data[1]]);
+                let qty = u16::from_be_bytes([data[2], data[3]]);
+                let byte_count = data[4];
+                return format!("start={} qty={} byte_count={}", start, qty, byte_count);
+            }
+
+            if mode == "response" && data.len() >= 4 {
+                let start = u16::from_be_bytes([data[0], data[1]]);
+                let qty = u16::from_be_bytes([data[2], data[3]]);
+                return format!("start={} qty={}", start, qty);
+            }
+        }
+        0x2B => {
+            if let Some(mei_raw) = data.first().copied() {
+                let mei_name = EncapsulatedInterfaceType::try_from(mei_raw)
+                    .map(|known| format!("{:?}", known))
+                    .unwrap_or_else(|_| "Reserved".to_string());
+                return format!("mei=0x{:02X}({}) payload_len={}", mei_raw, mei_name, data.len().saturating_sub(1));
+            }
+        }
+        _ => {}
+    }
+
+    format!("pdu_len={}", data.len() + 1)
+}
+
+fn modbus_function_name(function: u8) -> &'static str {
+    match function {
+        0x01 => "ReadCoils",
+        0x02 => "ReadDiscreteInputs",
+        0x03 => "ReadHoldingRegisters",
+        0x04 => "ReadInputRegisters",
+        0x05 => "WriteSingleCoil",
+        0x06 => "WriteSingleRegister",
+        0x07 => "ReadExceptionStatus",
+        0x08 => "Diagnostics",
+        0x0B => "GetCommEventCounter",
+        0x0C => "GetCommEventLog",
+        0x0F => "WriteMultipleCoils",
+        0x10 => "WriteMultipleRegisters",
+        0x11 => "ReportServerId",
+        0x14 => "ReadFileRecord",
+        0x15 => "WriteFileRecord",
+        0x16 => "MaskWriteRegister",
+        0x17 => "ReadWriteMultipleRegisters",
+        0x18 => "ReadFifoQueue",
+        0x2B => "EncapsulatedInterfaceTransport",
+        _ => "Unknown",
+    }
+}
+
+fn modbus_exception_name(code: u8) -> &'static str {
+    match code {
+        0x01 => "IllegalFunction",
+        0x02 => "IllegalDataAddress",
+        0x03 => "IllegalDataValue",
+        0x04 => "ServerDeviceFailure",
+        0x05 => "Acknowledge",
+        0x06 => "ServerDeviceBusy",
+        0x08 => "MemoryParityError",
+        0x0A => "GatewayPathUnavailable",
+        0x0B => "GatewayTargetFailedToRespond",
+        _ => "UnknownException",
+    }
 }
 
 fn parse_bit_read_response(payload: &[u8], quantity: u16, function: u8) -> Result<Vec<bool>, String> {

@@ -127,6 +127,7 @@ export const discreteInputState = $state({
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollReadInFlight = false;
 
 export function initDiscreteInputState(): void {
   const settings = getSettingsSnapshot();
@@ -338,11 +339,12 @@ export function getFilteredDiscreteInputs(): DiscreteInputEntry[] {
   }
 }
 
-export async function readAllDiscreteInputs(options?: { trace?: boolean }): Promise<void> {
+export async function readAllDiscreteInputs(options?: { trace?: boolean; markPending?: boolean }): Promise<void> {
   if (discreteInputState.entries.length === 0) return;
 
   const sections = buildAddressSections(discreteInputState.entries.map((entry) => entry.address));
   const trace = options?.trace ?? true;
+  const markPending = options?.markPending ?? true;
   if (trace) {
     const singleSections = sections.filter((section) => section.quantity === 1).length;
     const adaptiveSections = sections.length - singleSections;
@@ -357,7 +359,9 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
   );
 
   for (const entry of discreteInputState.entries) {
-    entry.pending = true;
+    if (markPending) {
+      entry.pending = true;
+    }
   }
 
   try {
@@ -377,7 +381,9 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
               entry.readError = "Address not available";
               missingCount += 1;
             }
-            entry.pending = false;
+            if (markPending) {
+              entry.pending = false;
+            }
           }
           continue;
         }
@@ -394,14 +400,18 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
             entry.readError = "Address not available";
             missingCount += 1;
           }
-          entry.pending = false;
+          if (markPending) {
+            entry.pending = false;
+          }
         }
       } catch (sectionErr) {
         const end = section.start + section.quantity - 1;
         for (let address = section.start; address <= end; address += 1) {
           const entry = entryByAddress.get(address);
           if (entry) {
-            entry.pending = false;
+            if (markPending) {
+              entry.pending = false;
+            }
             entry.readError = "Address not available";
           }
         }
@@ -421,9 +431,21 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
     }
   } catch (err) {
     for (const entry of discreteInputState.entries) {
-      entry.pending = false;
+      if (markPending) {
+        entry.pending = false;
+      }
     }
     addLog("error", `fc02.read err msg=${parseInvokeError(err)}`);
+  }
+}
+
+async function runDiscreteInputPollTick(): Promise<void> {
+  if (pollReadInFlight) return;
+  pollReadInFlight = true;
+  try {
+    await readAllDiscreteInputs({ trace: false, markPending: false });
+  } finally {
+    pollReadInFlight = false;
   }
 }
 
@@ -472,9 +494,9 @@ export function setDiscreteInputPollActive(active: boolean): void {
   }
 
   if (active) {
-    void readAllDiscreteInputs({ trace: false });
+    void runDiscreteInputPollTick();
     pollTimer = setInterval(() => {
-      void readAllDiscreteInputs({ trace: false });
+      void runDiscreteInputPollTick();
     }, discreteInputState.pollInterval);
   }
 }

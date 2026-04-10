@@ -1,5 +1,6 @@
 <svelte:options runes={true} />
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     Table2,
     LayoutGrid,
@@ -57,7 +58,7 @@
 
   // ── Init & cleanup ──────────────────────────────────────────────────────────
   $effect(() => {
-    initCoilState();
+   untrack(() => initCoilState());
     return () => {
       stopAutoToggle();
       setPollActive(false);

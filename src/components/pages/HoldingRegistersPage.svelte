@@ -1,6 +1,7 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     Table2,
     LayoutGrid,
@@ -52,7 +53,7 @@
   import RegisterCard from "../shared/RegisterCard.svelte";
 
   $effect(() => {
-    initHoldingRegisterState();
+    untrack(() => initHoldingRegisterState());
     return () => {
       setHoldingRegisterPollActive(false);
     };

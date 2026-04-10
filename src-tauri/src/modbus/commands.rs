@@ -1,11 +1,15 @@
-use tauri::{AppHandle, State};
+use std::sync::Arc;
+
+use tauri::{AppHandle, Emitter, State};
 
 use super::events::emit_log;
 use super::service::AppState;
 use super::types::{
-    ApiError, ApiResult, BackendEventLevel, CommandAck, ConnectionStatusPayload, DisconnectRequest,
-    DiagnosticRequest, DiagnosticResponse, ReadExceptionStatusResponse, GetComEventCounterResponse,
-    GetComEventLogRequest, GetComEventLogResponse, ReportServerIdResponse, ReadDeviceIdentificationRequest,
+    ApiError, ApiResult, BackendEventLevel, CommandAck, ConnectionStatusPayload, CustomFrameMode,
+    CustomFrameRequest, CustomFrameResponse, DisconnectRequest, DiagnosticRequest,
+    DiagnosticResponse, ReadExceptionStatusResponse, GetComEventCounterResponse,
+    GetComEventLogRequest, GetComEventLogResponse, ReportServerIdResponse,
+    ReadDeviceIdentificationRequest,
     ReadCoilsRequest, ReadCoilsResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
     ReadHoldingRegistersRequest, ReadHoldingRegistersResponse, ReadInputRegistersRequest,
     ReadInputRegistersResponse, SerialConnectRequest, TcpConnectRequest, WriteCoilRequest,
@@ -41,6 +45,18 @@ pub async fn connect_modbus_tcp(
     state: State<'_, AppState>,
     request: TcpConnectRequest,
 ) -> ApiResult<CommandAck> {
+    let traffic_app = app.clone();
+    let traffic_sink = Arc::new(move |message: String| {
+        let event = super::types::BackendEvent {
+            level: BackendEventLevel::Traffic,
+            topic: "network".to_string(),
+            message,
+            status: None,
+            analytics: None,
+        };
+        let _ = traffic_app.emit("modbus://event", &event);
+    });
+
     emit_log(
         &app,
         BackendEventLevel::Info,
@@ -54,7 +70,7 @@ pub async fn connect_modbus_tcp(
     )
     .await;
 
-    let status = match state.connect_tcp(&request).await {
+    let status = match state.connect_tcp(&request, Some(traffic_sink)).await {
         Ok(status) => status,
         Err(err) => {
             emit_log(
@@ -464,6 +480,118 @@ pub async fn diagnostic(
                 BackendEventLevel::Error,
                 "diagnostics",
                 format!("fc08.run err sub={} msg={}", request.subfunction, err.message),
+                None,
+                err.analytics.clone(),
+            )
+            .await;
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn send_custom_frame(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: CustomFrameRequest,
+) -> ApiResult<CustomFrameResponse> {
+    let payload_bytes = match request.mode {
+        CustomFrameMode::FunctionPayload => request
+            .payload_hex
+            .as_ref()
+            .map(|v| v.chars().filter(|ch| ch.is_ascii_hexdigit()).count() / 2)
+            .unwrap_or(0),
+        CustomFrameMode::RawBytes => request
+            .raw_hex
+            .as_ref()
+            .map(|v| v.chars().filter(|ch| ch.is_ascii_hexdigit()).count() / 2)
+            .unwrap_or(0)
+            .saturating_sub(1),
+    };
+
+    let function_hint = request
+        .function_code
+        .or_else(|| {
+            request.raw_hex.as_ref().and_then(|raw| {
+                let cleaned: String = raw.chars().filter(|ch| ch.is_ascii_hexdigit()).collect();
+                if cleaned.len() >= 2 {
+                    u8::from_str_radix(&cleaned[..2], 16).ok()
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or(0);
+
+    if function_hint == 0 || function_hint >= 0x80 {
+        emit_log(
+            &app,
+            BackendEventLevel::Warn,
+            "custom-frame",
+            format!(
+                "custom.frame warn unusual_fc=0x{:02X} mode={:?}",
+                function_hint, request.mode
+            ),
+            None,
+            request.analytics.clone(),
+        )
+        .await;
+    }
+
+    if payload_bytes > 252 {
+        emit_log(
+            &app,
+            BackendEventLevel::Warn,
+            "custom-frame",
+            format!(
+                "custom.frame warn large_payload bytes={} max_pdu_payload=252",
+                payload_bytes
+            ),
+            None,
+            request.analytics.clone(),
+        )
+        .await;
+    }
+
+    emit_log(
+        &app,
+        BackendEventLevel::Info,
+        "custom-frame",
+        format!(
+            "custom.frame send mode={:?} fc=0x{:02X} payload_bytes={}",
+            request.mode, function_hint, payload_bytes
+        ),
+        None,
+        request.analytics.clone(),
+    )
+    .await;
+
+    match state.send_custom_frame(&request).await {
+        Ok(response) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Traffic,
+                "network",
+                format!(
+                    "custom.frame fc=0x{:02X}({}) req={} rsp={} summary={}",
+                    response.function_code,
+                    response.function_name,
+                    response.request_hex,
+                    response.response_hex,
+                    response.response_summary
+                ),
+                None,
+                request.analytics.clone(),
+            )
+            .await;
+            Ok(response)
+        }
+        Err(err) => {
+            emit_log(
+                &app,
+                BackendEventLevel::Error,
+                "custom-frame",
+                format!("custom.frame err msg={}", format_error_message(&err)),
                 None,
                 err.analytics.clone(),
             )

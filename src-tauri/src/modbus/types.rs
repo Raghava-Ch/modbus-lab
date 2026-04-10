@@ -394,6 +394,36 @@ pub struct WriteMassHoldingRegistersResponse {
     pub failures: Vec<RegisterWriteFailure>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CustomFrameMode {
+    FunctionPayload,
+    RawBytes,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFrameRequest {
+    pub mode: CustomFrameMode,
+    pub function_code: Option<u8>,
+    pub payload_hex: Option<String>,
+    pub raw_hex: Option<String>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFrameResponse {
+    pub mode: CustomFrameMode,
+    pub function_code: u8,
+    pub function_name: String,
+    pub request_hex: String,
+    pub response_hex: String,
+    pub response_ascii: Option<String>,
+    pub request_summary: String,
+    pub response_summary: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendEvent {

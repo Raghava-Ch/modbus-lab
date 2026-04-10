@@ -38,6 +38,7 @@
   import FileRecordsPage from "../pages/FileRecordsPage.svelte";
   import FifoPage from "../pages/FifoPage.svelte";
   import DiagnosticsPage from "../pages/DiagnosticsPage.svelte";
+  import CustomFramePage from "../pages/CustomFramePage.svelte";
   import SettingsPage from "../pages/SettingsPage.svelte";
 
   const filtered = $derived(getFilteredLogs(logState.filter));
@@ -155,6 +156,8 @@
       <FifoPage />
     {:else if navigationState.activeTab === "diagnostics"}
       <DiagnosticsPage />
+    {:else if navigationState.activeTab === "custom-frame"}
+      <CustomFramePage />
     {:else}
       <SettingsPage />
     {/if}

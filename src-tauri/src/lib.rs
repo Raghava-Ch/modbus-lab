@@ -3,7 +3,7 @@ mod modbus;
 use modbus::commands::{
     connect_modbus_serial_ascii, connect_modbus_serial_rtu, connect_modbus_tcp, disconnect_modbus,
     diagnostic, get_com_event_counter, get_com_event_log, get_modbus_connection_status,
-    list_serial_ports,
+    list_serial_ports, send_custom_frame,
     read_coils, read_device_identification, read_discrete_inputs, read_exception_status,
     read_holding_registers, read_input_registers, report_server_id, write_coil,
     write_coils_batch, write_holding_register, write_holding_registers_batch,
@@ -29,6 +29,7 @@ pub fn run() {
             read_input_registers,
             read_exception_status,
             diagnostic,
+            send_custom_frame,
             get_com_event_counter,
             get_com_event_log,
             report_server_id,

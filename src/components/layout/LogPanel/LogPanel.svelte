@@ -15,11 +15,14 @@
     setLogPanelView,
     toggleLogCollapsed,
   } from "../../../state/layout.svelte";
+  import type { LogEntry } from "../../../state/logs.svelte";
   import LogList from "./LogList.svelte";
   import LogToolbar from "./LogToolbar.svelte";
   import RegisterDetailsPanel from "./RegisterDetailsPanel.svelte";
+  import LogEntryDetailModal from "./LogEntryDetailModal.svelte";
 
   const filtered = $derived(getFilteredLogs(logState.filter));
+  let selectedEntry = $state<LogEntry | null>(null);
 
   async function handleSave(scope: LogExportScope): Promise<void> {
     await saveLogsToFile(scope === "all" ? logState.entries : filtered, scope, logState.filter);
@@ -85,11 +88,15 @@
   {#if !layoutState.logCollapsed}
     <div class="log-content" class:details-mode={layoutState.logPanelView === "details"}>
       {#if layoutState.logPanelView === "logs"}
-        <LogList entries={filtered} />
+        <LogList entries={filtered} onopen={(e) => (selectedEntry = e)} />
       {:else}
         <RegisterDetailsPanel inline={true} />
       {/if}
     </div>
+  {/if}
+
+  {#if selectedEntry}
+    <LogEntryDetailModal entry={selectedEntry} onclose={() => (selectedEntry = null)} />
   {/if}
 </section>
 
@@ -148,7 +155,8 @@
 
   .log-content {
     min-height: 0;
-    display: block;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
   }
 

@@ -4,7 +4,7 @@
   import type { LogEntry as Entry } from "../../../state/logs.svelte";
   import LogRow from "./LogRow.svelte";
 
-  let { entries } = $props<{ entries: Entry[] }>();
+  let { entries, onopen } = $props<{ entries: Entry[]; onopen?: (entry: Entry) => void }>();
   let listEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
@@ -20,15 +20,16 @@
     <p class="empty">No log events yet.</p>
   {:else}
     {#each entries as entry (entry.id)}
-      <LogRow {entry} />
+      <LogRow {entry} {onopen} />
     {/each}
   {/if}
 </div>
 
 <style>
   .log-list {
-    overflow: auto;
+    flex: 1;
     min-height: 0;
+    overflow: auto;
   }
 
   .empty {
