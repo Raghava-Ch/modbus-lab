@@ -15,8 +15,8 @@
     X,
   } from "lucide-svelte";
   import {
+    addHoldingRegisterRange,
     addExclusiveHoldingRegister,
-    applyHoldingRegisterRange,
     generateRandomExclusiveHoldingRegisterAddress,
     getFilteredHoldingRegisters,
     type HoldingRegisterAddressFilter,
@@ -286,7 +286,7 @@
     try {
       // Let users see local processing state before applying changes.
       await new Promise<void>((resolve) => setTimeout(resolve, RANGE_APPLY_MIN_SPINNER_MS));
-      applyHoldingRegisterRange(rangeStart, rangeCount);
+      addHoldingRegisterRange(rangeStart, rangeCount);
       rangeStart = holdingRegisterState.startAddress;
       rangeCount = holdingRegisterState.registerCount;
       addAddressInput = "";

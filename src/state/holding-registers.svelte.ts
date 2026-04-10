@@ -652,6 +652,51 @@ export function applyHoldingRegisterRange(startAddress: number, count: number): 
   enforcePracticalHoldingPollInterval();
 }
 
+export function addHoldingRegisterRange(startAddress: number, count: number): void {
+  const requestedStart = Math.floor(startAddress);
+  const requestedCount = Math.floor(count);
+
+  const start = Math.max(HOLDING_ADDRESS_MIN, Math.min(HOLDING_ADDRESS_MAX, requestedStart));
+  const maxCountFromStart = Math.min(HOLDING_MAX_COUNT, HOLDING_ADDRESS_MAX - start + 1);
+  const qty = Math.max(1, Math.min(maxCountFromStart, requestedCount));
+
+  if (!Number.isFinite(startAddress) || requestedStart !== start) {
+    warnLocal(`Address is invalid. Accepted start range is ${HOLDING_ADDRESS_MIN}-${HOLDING_ADDRESS_MAX}. Applied ${start}.`);
+  }
+  if (!Number.isFinite(count) || requestedCount !== qty) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${maxCountFromStart} for start ${start}. Applied ${qty}.`);
+  }
+
+  holdingRegisterState.startAddress = start;
+  holdingRegisterState.registerCount = qty;
+
+  const existingByAddress = new Map(holdingRegisterState.entries.map((entry) => [entry.address, entry]));
+
+  for (const rangeEntry of generateRegisters(start, qty)) {
+    if (existingByAddress.has(rangeEntry.address)) {
+      continue;
+    }
+
+    existingByAddress.set(rangeEntry.address, {
+      ...rangeEntry,
+      origin: "range",
+    });
+  }
+
+  holdingRegisterState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
+
+  const maxCount = getGlobalPollingMaxAddressCount();
+  if (holdingRegisterState.pollActive && holdingRegisterState.entries.length > maxCount) {
+    setHoldingRegisterPollActive(false);
+    warnLocal(
+      `Polling disabled for ranges larger than ${maxCount} holding registers. Use Read once for bulk refresh.`,
+    );
+  }
+
+  warnLargeDatasetConsequences(holdingRegisterState.entries.length);
+  enforcePracticalHoldingPollInterval();
+}
+
 export function addExclusiveHoldingRegister(address: number): boolean {
   // Modbus limit: max 65536 holding registers address space
   if (holdingRegisterState.entries.length >= HOLDING_MAX_COUNT) {
