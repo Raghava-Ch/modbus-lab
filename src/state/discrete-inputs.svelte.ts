@@ -332,6 +332,11 @@ async function readRange(startAddress: number, quantity: number): Promise<Backen
 async function readRangeAdaptive(startAddress: number, quantity: number): Promise<Map<number, boolean>> {
   const values = new Map<number, boolean>();
 
+  function isModbusException(err: unknown): boolean {
+    const msg = (typeof err === "string" ? err : (err as { message?: string })?.message ?? "").toLowerCase();
+    return msg.includes("exception") || msg.includes("illegal") || msg.includes("slave device failure");
+  }
+
   async function readChunk(start: number, qty: number): Promise<void> {
     try {
       const response = await readRange(start, qty);
@@ -340,6 +345,13 @@ async function readRangeAdaptive(startAddress: number, quantity: number): Promis
       }
       return;
     } catch (err) {
+      // A Modbus protocol exception is a definitive answer — don't bisect further.
+      if (isModbusException(err)) {
+        const reason = parseInvokeError(err);
+        addLog("warn", `fc02.read exception addr=${start} qty=${qty} msg=${reason}`);
+        return;
+      }
+
       if (qty === 1) {
         const reason = parseInvokeError(err);
         addLog("warn", `fc02.read miss addr=${start} msg=${reason}`);

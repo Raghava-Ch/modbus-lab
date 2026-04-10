@@ -1842,6 +1842,14 @@ async fn attempt_supervisor_reconnect(
     }
 }
 
+/// Returns true when an error string represents a Modbus protocol-level exception
+/// (e.g. Illegal Data Address, Illegal Function, Slave Device Failure).
+/// Such responses are definitive answers from the server and must NOT be retried.
+fn is_modbus_protocol_exception(err: &str) -> bool {
+    let t = err.to_ascii_lowercase();
+    t.contains("exception") || t.contains("illegal") || t.contains("slave device failure")
+}
+
 fn should_reconnect_from_heartbeat_error(error_text: &str) -> bool {
     let t = error_text.to_ascii_lowercase();
 
@@ -2018,7 +2026,11 @@ async fn read_multiple_coils_with_retry(
         .await
         {
             Ok(Ok(coils)) => return Ok(coils),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -2057,7 +2069,11 @@ async fn read_multiple_discrete_inputs_with_retry(
         .await
         {
             Ok(Ok(inputs)) => return Ok(inputs),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -2096,7 +2112,11 @@ async fn read_multiple_holding_registers_with_retry(
         .await
         {
             Ok(Ok(registers)) => return Ok(registers),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -2135,7 +2155,11 @@ async fn read_multiple_input_registers_with_retry(
         .await
         {
             Ok(Ok(registers)) => return Ok(registers),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -2174,7 +2198,11 @@ async fn write_single_coil_with_retry(
         .await
         {
             Ok(Ok(response)) => return Ok(response),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -2213,7 +2241,11 @@ async fn write_single_register_with_retry(
         .await
         {
             Ok(Ok(response)) => return Ok(response),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -2252,7 +2284,11 @@ async fn write_multiple_coils_with_retry(
         .await
         {
             Ok(Ok(_)) => return Ok(()),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -2291,7 +2327,11 @@ async fn write_multiple_registers_with_retry(
         .await
         {
             Ok(Ok(_)) => return Ok(()),
-            Ok(Err(err)) => last_details = Some(err.to_string()),
+            Ok(Err(err)) => {
+                let s = err.to_string();
+                last_details = Some(s.clone());
+                if is_modbus_protocol_exception(&s) { break; }
+            }
             Err(_) => {
                 last_details = Some(format!(
                     "Response timed out after {} ms.",
@@ -3307,7 +3347,12 @@ async fn send_raw_modbus_request_with_retry(
     for attempt in 0..=u32::from(config.retry_attempts) {
         match send_raw_modbus_request_once(host, port, slave_id, function, payload, config).await {
             Ok(response) => return Ok(response),
-            Err(err) => last_error = Some(err),
+            Err(err) => {
+                if is_modbus_protocol_exception(&err) {
+                    return Err(err);
+                }
+                last_error = Some(err);
+            }
         }
 
         if attempt < u32::from(config.retry_attempts) {
