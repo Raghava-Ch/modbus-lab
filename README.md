@@ -163,7 +163,6 @@ npm run dev
 
 ## ⚠ Limitations
 
-- RTU/ASCII not yet implemented in the tool, modbus-rs stack supports them but UI is pending.
 - Advanced functions (file record, FIFO) are placeholders, planned for future releases.
 
 Note: This tool is intended as both a **daily-use Modbus client** and a **reference implementation** for modbus-rs.
