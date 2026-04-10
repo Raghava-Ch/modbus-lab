@@ -216,6 +216,35 @@ export function applyDiscreteInputRange(startAddress: number, count: number): vo
   discreteInputState.entries = next;
 }
 
+export function addDiscreteInputRange(startAddress: number, count: number): void {
+  const requestedStart = Math.floor(startAddress);
+  const requestedCount = Math.floor(count);
+
+  const start = Math.max(MODBUS_ADDRESS_MIN, Math.min(MODBUS_ADDRESS_MAX, requestedStart));
+  const maxCountFromStart = Math.min(DISCRETE_INPUT_MAX_COUNT, MODBUS_ADDRESS_MAX - start + 1);
+  const qty = Math.max(1, Math.min(maxCountFromStart, requestedCount));
+
+  if (!Number.isFinite(startAddress) || requestedStart !== start) {
+    warnLocal(`Address is invalid. Accepted start range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}. Applied ${start}.`);
+  }
+  if (!Number.isFinite(count) || requestedCount !== qty) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${maxCountFromStart} for start ${start}. Applied ${qty}.`);
+  }
+
+  discreteInputState.startAddress = start;
+  discreteInputState.inputCount = qty;
+
+  // Merge: only add addresses not already present
+  const existingByAddress = new Map(discreteInputState.entries.map((e) => [e.address, e]));
+  for (const newEntry of generateInputs(start, qty)) {
+    if (!existingByAddress.has(newEntry.address)) {
+      existingByAddress.set(newEntry.address, newEntry);
+    }
+  }
+
+  discreteInputState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
+}
+
 export function addExclusiveDiscreteInput(address: number): boolean {
   // Modbus limit: max 2000 discrete inputs per read
   if (discreteInputState.entries.length >= DISCRETE_INPUT_MAX_COUNT) {

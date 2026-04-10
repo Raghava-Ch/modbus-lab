@@ -16,7 +16,7 @@
   } from "lucide-svelte";
   import {
     addExclusiveInputRegister,
-    applyInputRegisterRange,
+    addInputRegisterRange,
     generateRandomExclusiveInputRegisterAddress,
     getFilteredInputRegisters,
     type InputRegisterAddressFilter,
@@ -268,7 +268,7 @@
     rangeApplyPending = true;
     try {
       await new Promise<void>((resolve) => setTimeout(resolve, RANGE_APPLY_MIN_SPINNER_MS));
-      applyInputRegisterRange(rangeStart, rangeCount);
+      addInputRegisterRange(rangeStart, rangeCount);
       rangeStart = inputRegisterState.startAddress;
       rangeCount = inputRegisterState.registerCount;
       addAddressInput = "";

@@ -34,7 +34,7 @@
     setMassAutoInterval,
     setPollActive,
     setPollInterval,
-    applyAddressRange,
+    addCoilRange,
     addExclusiveCoil,
     generateRandomExclusiveCoilAddress,
     removeCoil,
@@ -264,7 +264,7 @@
     try {
       // Let users see local processing state before applying changes.
       await new Promise<void>((resolve) => setTimeout(resolve, RANGE_APPLY_MIN_SPINNER_MS));
-      applyAddressRange(rangeStart, rangeCount);
+      addCoilRange(rangeStart, rangeCount);
       rangeStart = coilState.startAddress;
       rangeCount = coilState.coilCount;
       addAddressInput = "";

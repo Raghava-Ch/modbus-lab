@@ -478,6 +478,44 @@ export function applyInputRegisterRange(startAddress: number, count: number): vo
   enforcePracticalInputPollInterval();
 }
 
+export function addInputRegisterRange(startAddress: number, count: number): void {
+  const requestedStart = Math.floor(startAddress);
+  const requestedCount = Math.floor(count);
+
+  const start = Math.max(INPUT_ADDRESS_MIN, Math.min(INPUT_ADDRESS_MAX, requestedStart));
+  const maxCountFromStart = Math.min(INPUT_MAX_COUNT, INPUT_ADDRESS_MAX - start + 1);
+  const qty = Math.max(1, Math.min(maxCountFromStart, requestedCount));
+
+  if (!Number.isFinite(startAddress) || requestedStart !== start) {
+    warnLocal(`Address is invalid. Accepted start range is ${INPUT_ADDRESS_MIN}-${INPUT_ADDRESS_MAX}. Applied ${start}.`);
+  }
+  if (!Number.isFinite(count) || requestedCount !== qty) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${maxCountFromStart} for start ${start}. Applied ${qty}.`);
+  }
+
+  inputRegisterState.startAddress = start;
+  inputRegisterState.registerCount = qty;
+
+  // Merge: only add addresses not already present
+  const existingByAddress = new Map(inputRegisterState.entries.map((e) => [e.address, e]));
+  for (const newEntry of generateRegisters(start, qty)) {
+    if (!existingByAddress.has(newEntry.address)) {
+      existingByAddress.set(newEntry.address, newEntry);
+    }
+  }
+
+  inputRegisterState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
+
+  const maxCount = getGlobalPollingMaxAddressCount();
+  if (inputRegisterState.pollActive && inputRegisterState.entries.length > maxCount) {
+    setInputRegisterPollActive(false);
+    warnLocal(`Polling disabled for ranges larger than ${maxCount} input registers. Use Read once for bulk refresh.`);
+  }
+
+  warnLargeDatasetConsequences(inputRegisterState.entries.length);
+  enforcePracticalInputPollInterval();
+}
+
 export function addExclusiveInputRegister(address: number): boolean {
   if (inputRegisterState.entries.length >= INPUT_MAX_COUNT) {
     warnLocal(`Address is invalid. Accepted count range is 1-${INPUT_MAX_COUNT}; already at ${INPUT_MAX_COUNT}.`);
