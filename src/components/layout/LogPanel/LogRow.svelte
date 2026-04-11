@@ -1,29 +1,38 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import { ArrowDownLeft, ArrowUpRight, CircleAlert } from "lucide-svelte";
   import type { LogEntry } from "../../../state/logs.svelte";
   import { formatLogTimestamp } from "../../../state/settings.svelte";
 
   let { entry, onopen } = $props<{ entry: LogEntry; onopen?: (entry: LogEntry) => void }>();
 
-  // For traffic rows, condense the verbose adu=... message down to a compact
-  // summary: direction + function name + raw frame bytes. The full message is
-  // still kept on the entry and shown in the detail modal on double-click.
-  function trafficCompact(message: string): string {
-    // Strip [TOPIC] prefix added by AppShell (e.g. "[NETWORK] "), then grab first token
+  interface TrafficMeta {
+    direction: "tx" | "rx" | "other";
+    functionName: string;
+    txn: string;
+    invalidReason: string;
+  }
+
+  // Keep traffic rows compact; full frame details are available on double-click.
+  function trafficMeta(message: string): TrafficMeta {
     const withoutTopic = message.replace(/^\[.*?\]\s*/, "");
     const dirLabel = withoutTopic.match(/^(\S+)/)?.[1] ?? "tcp";
-    // FC human name from e.g. fc=0x03(ReadHoldingRegisters)
+    const direction: TrafficMeta["direction"] = dirLabel.includes(".tx")
+      ? "tx"
+      : dirLabel.includes(".rx")
+        ? "rx"
+        : "other";
+    const txn = message.match(/\btxn=(\d+)/)?.[1] ?? "";
     const fcName = message.match(/\bfc=\S+\(([^)]+)\)/)?.[1] ?? "";
-    // Reason for invalid frames (e.g. reason=short)
     const reason = message.match(/\breason=(\S+)/)?.[1] ?? "";
-    // Raw bytes — use * so empty bytes= still gives "" instead of no-match
-    const bytesRaw = (message.match(/\bbytes=([0-9A-F ]*)$/i)?.[1] ?? "").trim();
-    const parts: string[] = [dirLabel];
-    if (fcName) parts.push(fcName);
-    else if (reason) parts.push(`invalid(${reason})`);
-    if (bytesRaw) parts.push(`[${bytesRaw}]`);
-    return parts.join("  ");
+
+    return {
+      direction,
+      functionName: fcName || "Traffic",
+      txn,
+      invalidReason: reason,
+    };
   }
 
   function openDetails(): void {
@@ -43,9 +52,7 @@
     }
   }
 
-  const displayMessage = $derived(
-    entry.level === "traffic" ? trafficCompact(entry.message) : entry.message,
-  );
+  const compactTraffic = $derived(entry.level === "traffic" ? trafficMeta(entry.message) : null);
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -62,7 +69,34 @@
 >
   <span class="time">{formatLogTimestamp(entry.timestamp)}</span>
   <span class={`level ${entry.level}`}>{entry.level.toUpperCase()}</span>
-  <span class="message">{displayMessage}</span>
+  {#if entry.level === "traffic" && compactTraffic}
+    <span class="message traffic-compact">
+      <span class={`traffic-chip dir ${compactTraffic.direction}`}>
+        {#if compactTraffic.direction === "tx"}
+          <ArrowUpRight size={12} />
+          <span>TX</span>
+        {:else if compactTraffic.direction === "rx"}
+          <ArrowDownLeft size={12} />
+          <span>RX</span>
+        {:else}
+          <CircleAlert size={12} />
+          <span>Traffic</span>
+        {/if}
+      </span>
+
+      <span class="traffic-chip fn">{compactTraffic.functionName}</span>
+
+      {#if compactTraffic.txn}
+        <span class="traffic-chip txn">#{compactTraffic.txn}</span>
+      {/if}
+
+      {#if compactTraffic.invalidReason}
+        <span class="traffic-chip warn">{compactTraffic.invalidReason}</span>
+      {/if}
+    </span>
+  {:else}
+    <span class="message">{entry.message}</span>
+  {/if}
 </div>
 
 <style>
@@ -124,5 +158,43 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     line-height: 1.45;
+  }
+
+  .traffic-compact {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    line-height: 1;
+    white-space: normal;
+  }
+
+  .traffic-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--c-border);
+    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
+    font-size: 0.68rem;
+    color: var(--c-text-1);
+  }
+
+  .traffic-chip.dir.tx {
+    border-color: color-mix(in srgb, var(--c-accent) 35%, var(--c-border));
+  }
+
+  .traffic-chip.dir.rx {
+    border-color: color-mix(in srgb, var(--c-ok) 35%, var(--c-border));
+  }
+
+  .traffic-chip.txn {
+    color: var(--c-text-2);
+  }
+
+  .traffic-chip.warn {
+    color: var(--c-warn);
+    border-color: color-mix(in srgb, var(--c-warn) 35%, var(--c-border));
   }
 </style>
