@@ -35,7 +35,7 @@
   {:else}
     <PanelFrame>
       {#snippet children()}
-        <EmptyState message={`The ${title} workspace is ready. Implementation comes in the next phase.`} />
+        <EmptyState message={`The ${title} workspace is ready. Implementation comes in the later phase.`} />
       {/snippet}
     </PanelFrame>
   {/if}

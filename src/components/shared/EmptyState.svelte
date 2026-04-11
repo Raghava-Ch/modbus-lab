@@ -3,7 +3,7 @@
 <script lang="ts">
   let {
     title = "Coming Soon",
-    message = "This tab is prepared for next phase implementation.",
+    message = "This tab is prepared for later phase implementation.",
   } = $props<{ title?: string; message?: string }>();
 </script>
 
