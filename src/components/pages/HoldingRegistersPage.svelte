@@ -286,7 +286,8 @@
       return;
     }
 
-    void readAllHoldingRegisters();
+    // Keep table/card visuals stable during manual refresh.
+    void readAllHoldingRegisters({ markPending: false });
   }
 
   async function handleApplyRange(): Promise<void> {

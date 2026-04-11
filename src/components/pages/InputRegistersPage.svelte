@@ -269,7 +269,8 @@
       return;
     }
 
-    void readAllInputRegisters();
+    // Keep table/card visuals stable during manual refresh.
+    void readAllInputRegisters({ markPending: false });
   }
 
   async function handleApplyRange(): Promise<void> {

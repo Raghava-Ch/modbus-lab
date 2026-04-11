@@ -242,7 +242,8 @@
       return;
     }
 
-    void readAllDiscreteInputs();
+    // Keep current visible states stable during manual refresh to avoid UI flicker.
+    void readAllDiscreteInputs({ markPending: false });
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
