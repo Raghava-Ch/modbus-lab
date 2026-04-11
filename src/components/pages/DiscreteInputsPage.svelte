@@ -38,6 +38,7 @@
     getGlobalPollingMaxAddressCount,
     isPollingAllowedForCount,
   } from "../../state/settings.svelte";
+  import { notifyWarning } from "../../state/notifications.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
   import ToggleSwitch from "../shared/ToggleSwitch.svelte";
@@ -235,6 +236,15 @@
     else if (e.key === "Escape") cancelEdit();
   }
 
+  function handleManualReadAllDiscreteInputs(): void {
+    if (discreteInputState.pollActive) {
+      notifyWarning("Polling is already in progress. Stop polling to use manual refresh.");
+      return;
+    }
+
+    void readAllDiscreteInputs();
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────────
   async function handleApplyRange(): Promise<void> {
     if (rangeApplyPending) return;
@@ -322,7 +332,7 @@
           {/if}
         </button>
         <button class="ctrl-btn icon-only has-tip" data-tip="Read once" type="button" disabled={!connected}
-          onclick={() => { void readAllDiscreteInputs(); }}>
+          onclick={handleManualReadAllDiscreteInputs}>
           <RefreshCw size={14} />
         </button>
         {#if pollDisabledByCount}

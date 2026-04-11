@@ -23,7 +23,6 @@
     inputRegisterState,
     initInputRegisterState,
     readAllInputRegisters,
-    cancelInputRegisterRead,
     readInputRegister,
     removeAllInputRegisters,
     removeInputRegister,
@@ -42,6 +41,7 @@
     formatWordValueWithSettings,
     getGlobalPollingMaxAddressCount,
   } from "../../state/settings.svelte";
+  import { notifyWarning } from "../../state/notifications.svelte";
   import { registerDetailsState, selectRegisterDetails } from "../../state/register-details.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
@@ -263,6 +263,15 @@
     else if (e.key === "Escape") cancelEdit();
   }
 
+  function handleManualReadAllInputRegisters(): void {
+    if (inputRegisterState.pollActive) {
+      notifyWarning("Polling is already in progress. Stop polling to use manual refresh.");
+      return;
+    }
+
+    void readAllInputRegisters();
+  }
+
   async function handleApplyRange(): Promise<void> {
     if (rangeApplyPending) return;
     rangeApplyPending = true;
@@ -402,21 +411,10 @@
             <span>Poll</span>
           {/if}
         </button>
-        <button class="ctrl-btn icon-only has-tip" data-tip="Read once" type="button" disabled={!connected || inputRegisterState.readInProgress}
-          onclick={() => { void readAllInputRegisters(); }}>
+        <button class="ctrl-btn icon-only has-tip" data-tip="Read once" type="button" disabled={!connected}
+          onclick={handleManualReadAllInputRegisters}>
           <RefreshCw size={14} />
         </button>
-        {#if inputRegisterState.readInProgress}
-          <button
-            class="ctrl-btn"
-            type="button"
-            onclick={cancelInputRegisterRead}
-            title="Cancel current read (also stops polling if active)"
-          >
-            <X size={14} />
-            <span>Cancel Read</span>
-          </button>
-        {/if}
       </div>
 
       <div class="divider-v"></div>
@@ -687,6 +685,13 @@
                 tabindex="0"
                 onclick={() => { selectRegisterDetails("input", entry.address); }}
                 onkeydown={(e) => {
+                  const target = e.target as HTMLElement | null;
+                  if (
+                    target &&
+                    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                  ) {
+                    return;
+                  }
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     selectRegisterDetails("input", entry.address);
@@ -738,6 +743,13 @@
                 tabindex="0"
                 onclick={() => { selectRegisterDetails("input", entry.address); }}
                 onkeydown={(e) => {
+                  const target = e.target as HTMLElement | null;
+                  if (
+                    target &&
+                    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                  ) {
+                    return;
+                  }
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     selectRegisterDetails("input", entry.address);
