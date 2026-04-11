@@ -1,14 +1,94 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" style="background: #121417; margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Modbus Lab</title>
+    <style>
+      /* Prevent white flash during initial load */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        background: #121417;
+        color: #f5f7fa;
+      }
+
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        font-family: "Inter", "SF Pro Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+      }
+
+      #app {
+        width: 100%;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* Initial loading spinner shown before Svelte mounts */
+      .initial-loader {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .initial-loader .spinner-ring {
+        display: inline-block;
+        position: relative;
+        width: 48px;
+        height: 48px;
+      }
+
+      .initial-loader .spinner-ring::after {
+        content: "";
+        position: absolute;
+        left: 7px;
+        top: 7px;
+        width: 34px;
+        height: 34px;
+        border: 3px solid #464f5f;
+        border-radius: 50%;
+        border-color: #7fc6de transparent transparent transparent;
+        animation: spinner-spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+      }
+
+      .initial-loader p {
+        margin: 20px 0 0 0;
+        font-size: 14px;
+        color: #c9cfda;
+        letter-spacing: 0.5px;
+      }
+
+      @keyframes spinner-spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
   </head>
 
-  <body>
-    <div id="app"></div>
+  <body style="background: #121417; margin: 0; padding: 0;">
+    <div id="app" style="background: #121417;">
+      <!-- Initial loading spinner shown before Svelte mounts -->
+      <div class="initial-loader">
+        <div class="spinner-ring"></div>
+        <p>Loading Modbus Lab...</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

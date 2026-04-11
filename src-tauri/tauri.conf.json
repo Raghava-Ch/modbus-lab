@@ -17,11 +17,16 @@
     },
     "windows": [
       {
+        "label": "main",
         "fullscreen": false,
         "resizable": true,
         "title": "Modbus Lab",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "visible": true,
+        "center": true,
+        "focus": true,
+        "backgroundColor": "#121417"
       }
     ]
   },

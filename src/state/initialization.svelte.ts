@@ -3,12 +3,13 @@
  * The app won't render its main UI until all initialization is complete.
  */
 
-export const initializationState = $state({
-  isInitialized: false,
-  isInitializing: true,
-});
+class InitializationManager {
+  isInitialized = $state(false);
 
-export function markInitializationComplete(): void {
-  initializationState.isInitialized = true;
-  initializationState.isInitializing = false;
+  markComplete(): void {
+    console.log("[init] Marking initialization as complete");
+    this.isInitialized = true;
+  }
 }
+
+export const initManager = new InitializationManager();

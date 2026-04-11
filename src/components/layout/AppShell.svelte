@@ -2,18 +2,15 @@
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
   import { X } from "lucide-svelte";
   import { applyBackendConnectionStatus } from "../../state/connection.svelte";
   import {
-    initLayoutState,
     layoutState,
     closeMobileLog,
     setLogPanelView,
     toggleLogCollapsed,
   } from "../../state/layout.svelte";
-  import { initSettingsState, settingsState } from "../../state/settings.svelte";
-  import { markInitializationComplete } from "../../state/initialization.svelte";
+  import { settingsState } from "../../state/settings.svelte";
   import {
     addLog,
     clearLogs,
@@ -80,62 +77,6 @@
   function handleSave(scope: LogExportScope): void {
     saveLogsToFile(scope === "all" ? logState.entries : filtered, scope, logState.filter);
   }
-
-  $effect(() => {
-    initSettingsState();
-    initLayoutState();
-
-    if (listenersReady) {
-      return;
-    }
-
-    listenersReady = true;
-    let unlisten: (() => void) | undefined;
-    let statusPollTimer: ReturnType<typeof setInterval> | undefined;
-
-    const setup = async (): Promise<void> => {
-      unlisten = await listen<BackendEventPayload>("modbus://event", (event) => {
-        const payload = event.payload;
-        addLog(toLogLevel(payload.level), formatBackendEventMessage(payload));
-
-        if (payload.status?.status) {
-          applyBackendConnectionStatus(payload.status.status, payload.status.details);
-        }
-      });
-
-      try {
-        const status = await invoke<{ status: string; details?: string }>("get_modbus_connection_status");
-        applyBackendConnectionStatus(status.status, status.details);
-      } catch {
-        addLog("warn", "Unable to fetch backend connection status.");
-      }
-
-      statusPollTimer = setInterval(() => {
-        void invoke<{ status: string; details?: string }>("get_modbus_connection_status")
-          .then((status) => {
-            applyBackendConnectionStatus(status.status, status.details);
-          })
-          .catch(() => {
-            // Keep polling silent to avoid log spam during transient reconnects.
-          });
-      }, 1000);
-
-      // Mark initialization as complete after setup
-      markInitializationComplete();
-    };
-
-    void setup();
-
-    return () => {
-      listenersReady = false;
-      if (unlisten) {
-        unlisten();
-      }
-      if (statusPollTimer) {
-        clearInterval(statusPollTimer);
-      }
-    };
-  });
 </script>
 
 <div class="app-shell" class:force-mobile={settingsState.forcedLayoutMode === "mobile"} class:force-desktop={settingsState.forcedLayoutMode === "desktop"}>
