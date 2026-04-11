@@ -13,6 +13,7 @@
     toggleLogCollapsed,
   } from "../../state/layout.svelte";
   import { initSettingsState, settingsState } from "../../state/settings.svelte";
+  import { markInitializationComplete } from "../../state/initialization.svelte";
   import {
     addLog,
     clearLogs,
@@ -118,6 +119,9 @@
             // Keep polling silent to avoid log spam during transient reconnects.
           });
       }, 1000);
+
+      // Mark initialization as complete after setup
+      markInitializationComplete();
     };
 
     void setup();
