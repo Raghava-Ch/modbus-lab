@@ -1,17 +1,19 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import { ListChecks, Logs } from "lucide-svelte";
+  import { ListChecks, Logs, HelpCircle } from "lucide-svelte";
   import IconButton from "../../shared/IconButton.svelte";
 
   let {
     statusCompact,
     onToggleStatus,
     onToggleMobileLog,
+    onShowAbout,
   } = $props<{
     statusCompact: boolean;
     onToggleStatus: () => void;
     onToggleMobileLog: () => void;
+    onShowAbout?: () => void;
   }>();
 </script>
 
@@ -25,6 +27,17 @@
   >
     {#snippet children()}
       <ListChecks size={13} />
+    {/snippet}
+  </IconButton>
+
+  <IconButton
+    label="About"
+    title="About Modbus Lab"
+    compact={true}
+    onclick={onShowAbout}
+  >
+    {#snippet children()}
+      <HelpCircle size={13} />
     {/snippet}
   </IconButton>
 
