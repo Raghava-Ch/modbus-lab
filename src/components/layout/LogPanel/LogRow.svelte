@@ -55,18 +55,7 @@
   const compactTraffic = $derived(entry.level === "traffic" ? trafficMeta(entry.message) : null);
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div
-  class="log-row"
-  class:clickable={!!onopen}
-  class:has-tip={!!onopen}
-  onclick={handleClick}
-  onkeydown={handleKeyDown}
-  role={onopen ? "button" : undefined}
-  tabindex={onopen ? 0 : undefined}
-  data-tip={onopen ? "Double-click to open details" : undefined}
-  aria-label={onopen ? "Double-click to open details" : undefined}
->
+{#snippet rowContent()}
   <span class="time">{formatLogTimestamp(entry.timestamp)}</span>
   <span class={`level ${entry.level}`}>{entry.level.toUpperCase()}</span>
   {#if entry.level === "traffic" && compactTraffic}
@@ -97,7 +86,26 @@
   {:else}
     <span class="message">{entry.message}</span>
   {/if}
-</div>
+{/snippet}
+
+{#if onopen}
+  <button
+    class="log-row"
+    class:clickable={true}
+    class:has-tip={true}
+    type="button"
+    onclick={handleClick}
+    onkeydown={handleKeyDown}
+    data-tip="Double-click to open details"
+    aria-label="Double-click to open details"
+  >
+    {@render rowContent()}
+  </button>
+{:else}
+  <div class="log-row" class:clickable={false} class:has-tip={false}>
+    {@render rowContent()}
+  </div>
+{/if}
 
 <style>
   .log-row {
@@ -105,11 +113,22 @@
     grid-template-columns: 86px 64px 1fr;
     gap: 8px;
     align-items: start;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    font: inherit;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     font-size: 0.75rem;
     color: var(--c-text-1);
     padding: 6px 8px;
     border-bottom: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent);
+  }
+
+  .log-row:focus-visible {
+    outline: 1px solid color-mix(in srgb, var(--c-accent) 60%, var(--c-border));
+    outline-offset: -1px;
   }
 
   .time {
