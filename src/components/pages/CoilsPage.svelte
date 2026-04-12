@@ -1,5 +1,6 @@
 <svelte:options runes={true} />
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     Table2,
     LayoutGrid,
@@ -33,7 +34,7 @@
     setMassAutoInterval,
     setPollActive,
     setPollInterval,
-    applyAddressRange,
+    addCoilRange,
     addExclusiveCoil,
     generateRandomExclusiveCoilAddress,
     removeCoil,
@@ -49,6 +50,7 @@
     getGlobalPollingMaxAddressCount,
     isPollingAllowedForCount,
   } from "../../state/settings.svelte";
+  import { notifyWarning } from "../../state/notifications.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
   import ToggleSwitch from "../shared/ToggleSwitch.svelte";
@@ -57,7 +59,7 @@
 
   // ── Init & cleanup ──────────────────────────────────────────────────────────
   $effect(() => {
-    initCoilState();
+   untrack(() => initCoilState());
     return () => {
       stopAutoToggle();
       setPollActive(false);
@@ -256,6 +258,15 @@
     else if (e.key === "Escape") cancelEdit();
   }
 
+  function handleManualReadAllCoils(): void {
+    if (coilState.pollActive) {
+      notifyWarning("Polling is already in progress. Stop polling to use manual refresh.");
+      return;
+    }
+
+    void readAllCoils();
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────────
   async function handleApplyRange(): Promise<void> {
     if (rangeApplyPending) return;
@@ -263,7 +274,7 @@
     try {
       // Let users see local processing state before applying changes.
       await new Promise<void>((resolve) => setTimeout(resolve, RANGE_APPLY_MIN_SPINNER_MS));
-      applyAddressRange(rangeStart, rangeCount);
+      addCoilRange(rangeStart, rangeCount);
       rangeStart = coilState.startAddress;
       rangeCount = coilState.coilCount;
       addAddressInput = "";
@@ -372,7 +383,7 @@
           {/if}
         </button>
         <button class="ctrl-btn icon-only has-tip" data-tip="Read once" type="button" disabled={!connected}
-          onclick={() => { void readAllCoils(); }}>
+          onclick={handleManualReadAllCoils}>
           <RefreshCw size={14} />
         </button>
         {#if pollDisabledByCount}

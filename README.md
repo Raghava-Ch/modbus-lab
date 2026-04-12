@@ -16,21 +16,22 @@ Designed for day-to-day Modbus operations, it features a highly responsive UI, r
 
 ## 🚀 Project Status: Alpha
 
-The application is currently in **alpha**. It is fully usable for core Modbus TCP workflows, with active, ongoing development to expand protocol support and features.
+The application is currently in **alpha**. It is fully usable for core Modbus TCP and Serial (RTU/ASCII) workflows, with active, ongoing development to expand advanced features.
 
 ### Currently Implemented
-* **Connection Management:** Modbus TCP UI with a protocol selector shell prepared for RTU/ASCII.
+* **Connection Management:** Modbus TCP, Serial RTU, and Serial ASCII connect/disconnect with backend status sync.
 * **Coils:** Read (FC01), Single Write (FC05), Batch Write (FC15).
 * **Discrete Inputs:** Read (FC02).
 * **Holding Registers:** Read (FC03), Single Write (FC06), Batch Write (FC16).
 * **Input Registers:** Read (FC04).
-* **Global Settings:** Configurable poll defaults, display formats, layout forcing, and log preferences.
+* **Diagnostics:** FC07, FC08, FC11, FC12, FC17, FC43 (with protocol-specific constraints surfaced in UI).
+* **Custom Frame Tooling:** Raw Modbus PDU builder with function+payload and raw-bytes modes.
+* **Global Settings:** Configurable poll defaults, TCP heartbeat behavior, display formats, layout forcing, and log preferences.
 * **App Logging:** Dedicated log panel with filtering capabilities and native save-to-file export.
 
 ### Planned Features (Placeholders)
 * File Records (FC20/FC21)
 * FIFO Queue (FC24)
-* Diagnostics (FC08)
 
 ---
 
@@ -45,9 +46,10 @@ The application is currently in **alpha**. It is fully usable for core Modbus TC
 ## ✨ Feature Summary
 
 ### 🔌 Connection
-* Dedicated connection page featuring protocol cards and detailed TCP settings.
+* Dedicated connection page featuring protocol cards plus detailed TCP and serial settings.
 * Persistent connected/disconnected state badges in the global header.
 * Device context chips displaying protocol, endpoint, and slave ID at a glance.
+* Configurable TCP heartbeat checks to detect idle server outages faster (or disable heartbeat checks). TCP-only.
 
 ### 🟢 Coils & Discrete Inputs (FC01, FC02, FC05, FC15)
 * **Flexible Views:** Toggle between dense table views and interactive switch-card views.
@@ -65,7 +67,11 @@ The application is currently in **alpha**. It is fully usable for core Modbus TC
 * **Live Traffic Logs:** Filter by `ALL`, `INFO`, `WARN`, and `ERROR`.
 * **Plan Logs:** Scheduling and plan logs for grouped read/write operations.
 * **Native Export:** Save logs directly to your local filesystem via a native desktop dialog.
-* **Customization:** Tailor the experience with display formats (Decimal/Hex), log time precision, forced UI layouts (Auto/Vertical/Horizontal), and per-feature default limits.
+* **Customization:** Tailor the experience with display formats (Decimal/Hex), log time precision, forced UI layouts (Auto/Vertical/Horizontal), TCP heartbeat timing, and per-feature default limits.
+
+### 🧪 Diagnostics & Raw Frames
+* **Diagnostics Suite:** Run FC07/08/11/12/17/43 workflows directly from the Diagnostics page.
+* **Custom Frame Builder:** Craft and send raw function+payload or full-byte requests for low-level testing.
 
 ---
 
@@ -120,7 +126,7 @@ This project bridges a cutting-edge web frontend with a high-performance native 
 - Industrial automation engineers
 - Embedded developers working with Modbus devices
 - PLC / SCADA developers
-- Anyone testing or debugging Modbus TCP devices
+- Anyone testing or debugging Modbus TCP/RTU/ASCII devices
 
 ## 📦 Installation
 
@@ -134,7 +140,8 @@ It is recommended to build from source yourself. See the [Local Development](#-l
 ### Run
 
 - Launch the application
-- Enter Modbus TCP host and port
+- Choose protocol (TCP / Serial RTU / Serial ASCII)
+- Enter endpoint details (TCP host/port or serial port settings)
 - Start reading/writing registers
 
 ## ⚡ Quick Start
@@ -154,7 +161,6 @@ It is recommended to build from source yourself. See the [Local Development](#-l
 * Node.js 20+
 * Rust toolchain + Cargo
 * [Tauri v2 Prerequisites](https://v2.tauri.app/start/prerequisites/) for your specific OS (Windows, macOS, or Linux).
-```
 
 ### Run web dev server
 ```bash
@@ -163,9 +169,11 @@ npm run dev
 
 ## ⚠ Limitations
 
+- TCP heartbeat/reconnect supervision is TCP-only.
+- Diagnostics UI intentionally enforces serial-only for functions traditionally defined for serial line devices.
 - Advanced functions (file record, FIFO) are placeholders, planned for future releases.
 
-Note: This tool is intended as both a **daily-use Modbus client** and a **reference implementation** for modbus-rs.
+Note: This tool is intended as both a **daily-use industrial Modbus client** and a **reference implementation** for modbus-rs.
 
 ### Run desktop app (Tauri)
 ```bash

@@ -7,6 +7,7 @@ export type TabId =
   | "file-records"
   | "fifo-queue"
   | "diagnostics"
+  | "custom-frame"
   | "settings";
 
 export type TabIcon =
@@ -37,6 +38,7 @@ export const tabDefs: TabDef[] = [
   { id: "file-records", label: "File Records", icon: "file-text", group: "main", feature: "FC 20/21" },
   { id: "fifo-queue", label: "FIFO Queue", icon: "layers", group: "main", feature: "FC 24" },
   { id: "diagnostics", label: "Diagnostics", icon: "stethoscope", group: "main", feature: "FC 08" },
+  { id: "custom-frame", label: "Custom Frame", icon: "file-text", group: "main", feature: "Raw PDU builder" },
   { id: "settings", label: "Settings", icon: "settings", group: "settings", feature: "App preferences" },
 ];
 

@@ -139,6 +139,9 @@ export interface DiagnosticsParsed {
   parsed?: Record<string, unknown> | Array<Record<string, unknown>>;
 }
 
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollReadInFlight = false;
+
 export const diagnosticsState = $state({
   readInProgress: false,
   cancelRequested: false,
@@ -325,13 +328,40 @@ export async function readDeviceIdentification(level: number, objectId?: number)
 export function cancelDiagnosticsRead(): void {
   if (!diagnosticsState.readInProgress) return;
   diagnosticsState.cancelRequested = true;
-  if (diagnosticsState.pollActive) diagnosticsState.pollActive = false;
+  if (diagnosticsState.pollActive) {
+    setDiagnosticsPollActive(false);
+  }
+}
+
+async function runDiagnosticsPollTick(): Promise<void> {
+  if (pollReadInFlight) return;
+  pollReadInFlight = true;
+  try {
+    await readExceptionStatus();
+  } finally {
+    pollReadInFlight = false;
+  }
 }
 
 export function setDiagnosticsPollInterval(ms: number): void {
   diagnosticsState.pollInterval = Math.max(100, Math.floor(ms));
+  if (diagnosticsState.pollActive) {
+    setDiagnosticsPollActive(true); // restart with new interval
+  }
 }
 
 export function setDiagnosticsPollActive(active: boolean): void {
   diagnosticsState.pollActive = active;
+
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  if (active) {
+    void runDiagnosticsPollTick();
+    pollTimer = setInterval(() => {
+      void runDiagnosticsPollTick();
+    }, diagnosticsState.pollInterval);
+  }
 }

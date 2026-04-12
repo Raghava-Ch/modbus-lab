@@ -1876,9 +1876,9 @@ checksum = "2532096657941c2fea9c289d370a250971c689d4f143798ff67113ec042024a5"
 
 [[package]]
 name = "mbus-async"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0ab4c408966e6f5feb7a66187107af51589cacc65e4c0d0cadd22b7f84d324d"
+checksum = "55560cc35b663cc581ac4a2001fb807cd0d2cb63b0940347900eaa1d31b23cea"
 dependencies = [
  "mbus-client",
  "mbus-core",
@@ -1889,9 +1889,9 @@ dependencies = [
 
 [[package]]
 name = "mbus-client"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff1b40e9e93df72c3c3b08cbe4727258dd1e95e57b3538a1ee45ac6efccc59ad"
+checksum = "4722883c19b998dc8314a7092986449696b71477ed118bcd6df09975efe0700f"
 dependencies = [
  "heapless",
  "mbus-core",
@@ -1899,9 +1899,9 @@ dependencies = [
 
 [[package]]
 name = "mbus-core"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02cab0bbbe1a341bfa8cd87a1e4e71b768784daca001d1881df9d6ae02fd5d1a"
+checksum = "bed11b38e4d066a103dee2323a8414fde2d6764eb41c098c72580d190c01f409"
 dependencies = [
  "bitfields",
  "heapless",
@@ -1909,9 +1909,9 @@ dependencies = [
 
 [[package]]
 name = "mbus-network"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a19fb43ee98bd30ab49aef34e6077b36f5d56cf3768f226bb954f1bbf321dce3"
+checksum = "6632121c711123b2fb949121460558fc53d3070b1724c518b7334256e642568d"
 dependencies = [
  "heapless",
  "mbus-core",
@@ -1919,9 +1919,9 @@ dependencies = [
 
 [[package]]
 name = "mbus-serial"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c53a662799a96e19fd1998de318ea8254a253c330384ca693b36855780ef433d"
+checksum = "8d9f0dd0aa8a0c17432bb59fdfbe5f4c9999725597ce52cb72482220f38da4d0"
 dependencies = [
  "heapless",
  "mbus-core",
@@ -1988,11 +1988,10 @@ dependencies = [
 
 [[package]]
 name = "modbus-rs"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27ada432ee1c0020e5e3e58e490bd9c6db1bfd63863af6d3e8d963f794dc07fa"
+checksum = "3c9e86cdb31a8738aa2937934f259922d951f0887ecd7633bfd068800fce4fa4"
 dependencies = [
- "anyhow",
  "heapless",
  "mbus-async",
  "mbus-client",

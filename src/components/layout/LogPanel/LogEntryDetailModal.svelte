@@ -1,0 +1,491 @@
+<svelte:options runes={true} />
+
+<script lang="ts">
+  import { X } from "lucide-svelte";
+  import type { LogEntry } from "../../../state/logs.svelte";
+  import { formatLogTimestamp } from "../../../state/settings.svelte";
+
+  let { entry, onclose } = $props<{ entry: LogEntry; onclose: () => void }>();
+
+  interface ParsedField {
+    key: string;
+    value: string;
+    label: string;
+  }
+
+  // Labels for well-known key= tokens that appear in traffic and other messages.
+  const FIELD_LABELS: Record<string, string> = {
+    txn: "Transaction ID",
+    unit: "Unit / Slave ID",
+    fc: "Function Code",
+    kind: "Direction",
+    mbap_len: "MBAP Declared Length",
+    frame_len: "Frame Length",
+    expected_len: "Expected Frame Length",
+    start: "Start Address",
+    qty: "Quantity",
+    addr: "Address",
+    val: "Value",
+    value: "Value",
+    byte_count: "Byte Count",
+    sub: "Diagnostic Sub-function",
+    mei: "MEI Type",
+    exception: "Exception",
+    reason: "Rejection Reason",
+    frame_len_actual: "Actual Frame Length",
+    protocol: "Protocol ID",
+    declared_len: "Declared Length",
+    pdu_len: "PDU Length",
+    data_len: "Data Length",
+    payload_len: "Payload Length",
+    status: "Connection Status",
+    details: "Details",
+    host: "Host",
+    port: "Port",
+    baud: "Baud Rate",
+    slave: "Slave ID",
+    msg: "Error Message",
+    err: "Error",
+    start_address: "Start Address",
+    end: "End Address",
+    ok: "Successful Items",
+    fail: "Failed Items",
+    req: "Requested Count",
+    total: "Total Items",
+    sections: "Sections",
+    miss: "Missing Count",
+    cancel: "Cancelled",
+  };
+
+  // Direction-related strings embedded in the "adu=" segment.
+  const ADU_TOKEN_LABELS: Record<string, string> = {
+    txn: "Transaction ID",
+    unit: "Unit / Slave ID",
+    fc: "Function Code",
+    kind: "Direction",
+    mbap_len: "MBAP Declared Length",
+    frame_len: "Frame Length",
+    expected_len: "Expected Frame Length",
+    start: "Start Address",
+    qty: "Quantity",
+    addr: "Address",
+    value: "Value",
+    byte_count: "Byte Count",
+    sub: "Diagnostic Sub-function",
+    mei: "MEI Type",
+    exception: "Exception",
+    reason: "Reason",
+    pdu_len: "PDU Length",
+    data_len: "Data Length",
+    payload_len: "Payload Length",
+  };
+
+  // Parses "key=value" token pairs from a message string.
+  // Returns them in encounter order.  Handles values that contain
+  // parenthesised suffixes (e.g. "0x03(ReadHoldingRegisters)").
+  function parseKeyValues(text: string): ParsedField[] {
+    const result: ParsedField[] = [];
+    // Split on whitespace boundaries where the next token looks like key=...
+    const tokens = text.split(/\s+(?=\S+=)/);
+    for (const token of tokens) {
+      const eq = token.indexOf("=");
+      if (eq <= 0) continue;
+      const key = token.slice(0, eq);
+      const value = token.slice(eq + 1);
+      if (!key || value === "") continue;
+      const labelMap = { ...FIELD_LABELS, ...ADU_TOKEN_LABELS };
+      const label = labelMap[key] ?? key;
+      result.push({ key, value, label });
+    }
+    return result;
+  }
+
+  // For traffic messages the "adu=" segment is itself a nested key=value block.
+  // We extract it and its inner fields as a group instead of treating the whole
+  // message as a flat list.
+  interface ParsedMessage {
+    prefix: string; // e.g. "tcp.tx" before the first key
+    topFields: ParsedField[]; // top-level key=value pairs except "adu"
+    aduFields: ParsedField[]; // key=value pairs decoded from inside "adu=..."
+    bytes: string | null; // value of "bytes=" if present
+    isTraffic: boolean;
+  }
+
+  function parseTrafficMessage(msg: string): ParsedMessage {
+    // Strip topic prefix added by AppShell, e.g. "[NETWORK] ".
+    msg = msg.replace(/^\[.*?\]\s*/, "");
+
+    // Extract the "bytes=" value which usually sits at the end.
+    let bytes: string | null = null;
+    const bytesMatch = msg.match(/\bbytes=([0-9A-F ]*)$/i);
+    if (bytesMatch) {
+      bytes = bytesMatch[1].trim() || null;
+      msg = msg.slice(0, bytesMatch.index).trim();
+    }
+
+    // Extract prefix word (before first key=).
+    const prefixMatch = msg.match(/^(\S+)\s+/);
+    const prefix = prefixMatch ? prefixMatch[1] : "";
+    const rest = prefixMatch ? msg.slice(prefixMatch[0].length) : msg;
+
+    // Split out adu=... which is itself a nested key=value blob.
+    // The backend formats traffic as:
+    // tcp.tx txn=... unit=... adu=txn=... unit=... fc=... kind=... ...
+    // so everything after adu= belongs to the nested ADU segment.
+    const aduMarker = rest.indexOf("adu=");
+    let outer = rest;
+    let aduFields: ParsedField[] = [];
+    if (aduMarker >= 0) {
+      outer = rest.slice(0, aduMarker).trim();
+      const aduText = rest.slice(aduMarker + 4).trim();
+      aduFields = parseKeyValues(aduText);
+    }
+
+    const topFields = parseKeyValues(outer);
+
+    return {
+      prefix,
+      topFields,
+      aduFields,
+      bytes,
+      isTraffic: true,
+    };
+  }
+
+  function parseGenericMessage(msg: string): ParsedField[] {
+    return parseKeyValues(msg);
+  }
+
+  const isTraffic = $derived(entry.level === "traffic");
+  const parsed = $derived(
+    isTraffic
+      ? parseTrafficMessage(entry.message)
+      : null,
+  );
+  const genericFields = $derived(
+    !isTraffic ? parseGenericMessage(entry.message) : [],
+  );
+
+  function closeOnBackdrop(e: MouseEvent) {
+    if (e.target === e.currentTarget) {
+      onclose();
+    }
+  }
+
+  function closeOnEscape(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      onclose();
+    }
+  }
+
+  function levelColor(level: string): string {
+    switch (level) {
+      case "error": return "var(--c-error)";
+      case "warn": return "var(--c-warn)";
+      case "traffic": return "var(--c-accent)";
+      default: return "var(--c-accent)";
+    }
+  }
+</script>
+
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div
+  class="backdrop"
+  role="dialog"
+  aria-modal="true"
+  aria-label="Log entry details"
+  onclick={closeOnBackdrop}
+  onkeydown={closeOnEscape}
+>
+  <div class="modal">
+    <header class="modal-header">
+      <div class="header-left">
+        <span class="badge" class:info={entry.level === "info"} class:warn={entry.level === "warn"} class:error={entry.level === "error"} class:traffic={entry.level === "traffic"}>
+          {entry.level.toUpperCase()}
+        </span>
+        <span class="timestamp">{formatLogTimestamp(entry.timestamp)}</span>
+        <span class="entry-id">#{entry.id}</span>
+      </div>
+      <button class="close-btn" type="button" aria-label="Close" onclick={onclose}>
+        <X size={15} />
+      </button>
+    </header>
+
+    <div class="modal-body">
+      {#if isTraffic && parsed}
+        <!-- Traffic entries: structured ADU view -->
+        <section class="section">
+          <h3 class="section-title">Frame</h3>
+          <div class="field-grid">
+            <div class="field">
+              <span class="field-key">Direction</span>
+              <span class="field-value mono">{parsed.prefix}</span>
+            </div>
+            {#each parsed.topFields as f, i (`${f.key}-${i}`)}
+              <div class="field">
+                <span class="field-key">{f.label}</span>
+                <span class="field-value mono">{f.value}</span>
+              </div>
+            {/each}
+          </div>
+        </section>
+
+        {#if parsed.aduFields.length > 0}
+          <section class="section">
+            <h3 class="section-title">ADU Decode</h3>
+            <div class="field-grid">
+              {#each parsed.aduFields as f, i (`${f.key}-${i}`)}
+                <div class="field">
+                  <span class="field-key">{f.label}</span>
+                  <span class="field-value mono">{f.value}</span>
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        {#if parsed.bytes}
+          <section class="section">
+            <h3 class="section-title">Raw Bytes</h3>
+            <div class="bytes-grid">
+              {#each parsed.bytes.split(" ") as byte, i (i)}
+                <span class="byte">{byte}</span>
+              {/each}
+            </div>
+          </section>
+        {/if}
+      {:else}
+        <!-- Non-traffic entries: raw message + any key=value fields found -->
+        <section class="section">
+          <h3 class="section-title">Message</h3>
+          <pre class="raw-message">{entry.message}</pre>
+        </section>
+
+        {#if genericFields.length > 1}
+          <section class="section">
+            <h3 class="section-title">Fields</h3>
+            <div class="field-grid">
+              {#each genericFields as f, i (`${f.key}-${i}`)}
+                <div class="field">
+                  <span class="field-key">{f.label}</span>
+                  <span class="field-value mono">{f.value}</span>
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
+      {/if}
+    </div>
+  </div>
+</div>
+
+<style>
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 24px;
+  }
+
+  .modal {
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 720px;
+    max-height: min(82dvh, 680px);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 56px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--c-border);
+    flex-shrink: 0;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .badge {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--c-border);
+    background: color-mix(in srgb, var(--c-surface-3) 72%, var(--c-surface-2));
+    flex-shrink: 0;
+  }
+
+  .badge.info {
+    color: var(--c-accent);
+    border-color: color-mix(in srgb, var(--c-accent) 32%, var(--c-border));
+  }
+
+  .badge.warn {
+    color: var(--c-warn);
+    border-color: color-mix(in srgb, var(--c-warn) 32%, var(--c-border));
+  }
+
+  .badge.error {
+    color: var(--c-error);
+    border-color: color-mix(in srgb, var(--c-error) 32%, var(--c-border));
+  }
+
+  .badge.traffic {
+    color: var(--c-text-1);
+    border-color: color-mix(in srgb, var(--c-accent) 34%, var(--c-border));
+    background: color-mix(in srgb, var(--c-accent) 10%, var(--c-surface-3));
+  }
+
+  .timestamp {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    color: var(--c-text-2);
+  }
+
+  .entry-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.7rem;
+    color: var(--c-text-2);
+    opacity: 0.55;
+  }
+
+  .close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--c-text-2);
+    flex-shrink: 0;
+    transition: background 120ms, color 120ms;
+  }
+
+  .close-btn:hover {
+    background: var(--c-surface-3);
+    color: var(--c-text-1);
+  }
+
+  .modal-body {
+    overflow-y: auto;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-height: 0;
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .section-title {
+    margin: 0;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--c-text-2);
+    padding-bottom: 6px;
+    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent);
+  }
+
+  .field-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .field {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
+  }
+
+  .field:last-child {
+    border-bottom: none;
+  }
+
+  .field-key {
+    font-size: 0.73rem;
+    color: var(--c-text-2);
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--c-surface-2) 60%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
+    display: flex;
+    align-items: center;
+  }
+
+  .field-value {
+    font-size: 0.73rem;
+    color: var(--c-text-1);
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+  }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  .bytes-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 10px;
+    background: var(--c-surface-2);
+    border: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent);
+    border-radius: 6px;
+  }
+
+  .byte {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.73rem;
+    padding: 3px 6px;
+    background: var(--c-surface-3);
+    border: 1px solid color-mix(in srgb, var(--c-border) 70%, transparent);
+    border-radius: 4px;
+    color: var(--c-accent);
+    letter-spacing: 0.04em;
+  }
+
+  .raw-message {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.73rem;
+    color: var(--c-text-1);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--c-surface-2);
+    border: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent);
+    border-radius: 6px;
+    padding: 10px;
+    line-height: 1.5;
+  }
+</style>

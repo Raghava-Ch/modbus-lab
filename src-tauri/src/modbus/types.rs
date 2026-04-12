@@ -6,6 +6,7 @@ pub const DEFAULT_TCP_CONNECTION_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RESPONSE_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RETRY_ATTEMPTS: u8 = 2;
 pub const DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 30_000;
+pub const MIN_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 1_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -91,10 +92,12 @@ impl TcpConnectRequest {
         self.retry_jitter_strategy.clone().unwrap_or_default()
     }
 
-    pub fn resolved_heartbeat_idle_after_ms(&self) -> u64 {
-        self.heartbeat_idle_after_ms
-            .unwrap_or(DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS)
-            .max(1_000)
+    pub fn resolved_heartbeat_idle_after_ms(&self) -> Option<u64> {
+        match self.heartbeat_idle_after_ms {
+            Some(0) => None,
+            Some(value) => Some(value.max(MIN_TCP_HEARTBEAT_IDLE_AFTER_MS)),
+            None => Some(DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS),
+        }
     }
 }
 
@@ -392,6 +395,36 @@ pub struct WriteMassHoldingRegistersResponse {
     pub written_count: usize,
     pub total_count: usize,
     pub failures: Vec<RegisterWriteFailure>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CustomFrameMode {
+    FunctionPayload,
+    RawBytes,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFrameRequest {
+    pub mode: CustomFrameMode,
+    pub function_code: Option<u8>,
+    pub payload_hex: Option<String>,
+    pub raw_hex: Option<String>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFrameResponse {
+    pub mode: CustomFrameMode,
+    pub function_code: u8,
+    pub function_name: String,
+    pub request_hex: String,
+    pub response_hex: String,
+    pub response_ascii: Option<String>,
+    pub request_summary: String,
+    pub response_summary: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

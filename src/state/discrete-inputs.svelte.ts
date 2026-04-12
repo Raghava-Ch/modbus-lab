@@ -127,6 +127,7 @@ export const discreteInputState = $state({
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollReadInFlight = false;
 
 export function initDiscreteInputState(): void {
   const settings = getSettingsSnapshot();
@@ -213,6 +214,35 @@ export function applyDiscreteInputRange(startAddress: number, count: number): vo
 
   next.sort((a, b) => a.address - b.address);
   discreteInputState.entries = next;
+}
+
+export function addDiscreteInputRange(startAddress: number, count: number): void {
+  const requestedStart = Math.floor(startAddress);
+  const requestedCount = Math.floor(count);
+
+  const start = Math.max(MODBUS_ADDRESS_MIN, Math.min(MODBUS_ADDRESS_MAX, requestedStart));
+  const maxCountFromStart = Math.min(DISCRETE_INPUT_MAX_COUNT, MODBUS_ADDRESS_MAX - start + 1);
+  const qty = Math.max(1, Math.min(maxCountFromStart, requestedCount));
+
+  if (!Number.isFinite(startAddress) || requestedStart !== start) {
+    warnLocal(`Address is invalid. Accepted start range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}. Applied ${start}.`);
+  }
+  if (!Number.isFinite(count) || requestedCount !== qty) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${maxCountFromStart} for start ${start}. Applied ${qty}.`);
+  }
+
+  discreteInputState.startAddress = start;
+  discreteInputState.inputCount = qty;
+
+  // Merge: only add addresses not already present
+  const existingByAddress = new Map(discreteInputState.entries.map((e) => [e.address, e]));
+  for (const newEntry of generateInputs(start, qty)) {
+    if (!existingByAddress.has(newEntry.address)) {
+      existingByAddress.set(newEntry.address, newEntry);
+    }
+  }
+
+  discreteInputState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
 }
 
 export function addExclusiveDiscreteInput(address: number): boolean {
@@ -302,6 +332,11 @@ async function readRange(startAddress: number, quantity: number): Promise<Backen
 async function readRangeAdaptive(startAddress: number, quantity: number): Promise<Map<number, boolean>> {
   const values = new Map<number, boolean>();
 
+  function isModbusException(err: unknown): boolean {
+    const msg = (typeof err === "string" ? err : (err as { message?: string })?.message ?? "").toLowerCase();
+    return msg.includes("exception") || msg.includes("illegal") || msg.includes("slave device failure");
+  }
+
   async function readChunk(start: number, qty: number): Promise<void> {
     try {
       const response = await readRange(start, qty);
@@ -310,6 +345,13 @@ async function readRangeAdaptive(startAddress: number, quantity: number): Promis
       }
       return;
     } catch (err) {
+      // A Modbus protocol exception is a definitive answer — don't bisect further.
+      if (isModbusException(err)) {
+        const reason = parseInvokeError(err);
+        addLog("warn", `fc02.read exception addr=${start} qty=${qty} msg=${reason}`);
+        return;
+      }
+
       if (qty === 1) {
         const reason = parseInvokeError(err);
         addLog("warn", `fc02.read miss addr=${start} msg=${reason}`);
@@ -338,11 +380,12 @@ export function getFilteredDiscreteInputs(): DiscreteInputEntry[] {
   }
 }
 
-export async function readAllDiscreteInputs(options?: { trace?: boolean }): Promise<void> {
+export async function readAllDiscreteInputs(options?: { trace?: boolean; markPending?: boolean }): Promise<void> {
   if (discreteInputState.entries.length === 0) return;
 
   const sections = buildAddressSections(discreteInputState.entries.map((entry) => entry.address));
   const trace = options?.trace ?? true;
+  const markPending = options?.markPending ?? true;
   if (trace) {
     const singleSections = sections.filter((section) => section.quantity === 1).length;
     const adaptiveSections = sections.length - singleSections;
@@ -357,7 +400,9 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
   );
 
   for (const entry of discreteInputState.entries) {
-    entry.pending = true;
+    if (markPending) {
+      entry.pending = true;
+    }
   }
 
   try {
@@ -377,7 +422,9 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
               entry.readError = "Address not available";
               missingCount += 1;
             }
-            entry.pending = false;
+            if (markPending) {
+              entry.pending = false;
+            }
           }
           continue;
         }
@@ -394,14 +441,18 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
             entry.readError = "Address not available";
             missingCount += 1;
           }
-          entry.pending = false;
+          if (markPending) {
+            entry.pending = false;
+          }
         }
       } catch (sectionErr) {
         const end = section.start + section.quantity - 1;
         for (let address = section.start; address <= end; address += 1) {
           const entry = entryByAddress.get(address);
           if (entry) {
-            entry.pending = false;
+            if (markPending) {
+              entry.pending = false;
+            }
             entry.readError = "Address not available";
           }
         }
@@ -421,9 +472,21 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean }): Prom
     }
   } catch (err) {
     for (const entry of discreteInputState.entries) {
-      entry.pending = false;
+      if (markPending) {
+        entry.pending = false;
+      }
     }
     addLog("error", `fc02.read err msg=${parseInvokeError(err)}`);
+  }
+}
+
+async function runDiscreteInputPollTick(): Promise<void> {
+  if (pollReadInFlight) return;
+  pollReadInFlight = true;
+  try {
+    await readAllDiscreteInputs({ trace: false, markPending: false });
+  } finally {
+    pollReadInFlight = false;
   }
 }
 
@@ -472,9 +535,9 @@ export function setDiscreteInputPollActive(active: boolean): void {
   }
 
   if (active) {
-    void readAllDiscreteInputs({ trace: false });
+    void runDiscreteInputPollTick();
     pollTimer = setInterval(() => {
-      void readAllDiscreteInputs({ trace: false });
+      void runDiscreteInputPollTick();
     }, discreteInputState.pollInterval);
   }
 }

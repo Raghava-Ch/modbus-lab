@@ -735,6 +735,37 @@ export function applyAddressRange(startAddress: number, count: number): void {
   coilState.massTo = start + qty - 1;
 }
 
+export function addCoilRange(startAddress: number, count: number): void {
+  if (coilState.massAutoActive) stopAutoToggle();
+
+  const requestedStart = Math.floor(startAddress);
+  const requestedCount = Math.floor(count);
+
+  const start = Math.max(MODBUS_ADDRESS_MIN, Math.min(MODBUS_ADDRESS_MAX, requestedStart));
+  const maxCountFromStart = Math.min(COIL_MAX_COUNT, MODBUS_ADDRESS_MAX - start + 1);
+  const qty = Math.max(1, Math.min(maxCountFromStart, requestedCount));
+
+  if (!Number.isFinite(startAddress) || requestedStart !== start) {
+    warnLocal(`Address is invalid. Accepted start range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}. Applied ${start}.`);
+  }
+  if (!Number.isFinite(count) || requestedCount !== qty) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${maxCountFromStart} for start ${start}. Applied ${qty}.`);
+  }
+
+  coilState.startAddress = start;
+  coilState.coilCount = qty;
+
+  // Merge: only add addresses not already present
+  const existingByAddress = new Map(coilState.entries.map((e) => [e.address, e]));
+  for (const newEntry of generateCoils(start, qty)) {
+    if (!existingByAddress.has(newEntry.address)) {
+      existingByAddress.set(newEntry.address, newEntry);
+    }
+  }
+
+  upsertAndSortEntries([...existingByAddress.values()]);
+}
+
 // ── Filtered view ─────────────────────────────────────────────────────────────
 
 export function getFilteredCoils(): CoilEntry[] {
