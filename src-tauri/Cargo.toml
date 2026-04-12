@@ -2,7 +2,7 @@
 name = "modbus-lab"
 version = "0.0.3"
 description = "A Tauri App"
-authors = ["you"]
+authors = ["Raghav"]
 license = ""
 repository = ""
 edition = "2021"
