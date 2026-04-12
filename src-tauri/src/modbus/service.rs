@@ -82,7 +82,7 @@ struct TcpSession {
     slave_id: u8,
     config: TcpRuntimeConfig,
     connection_timeout: Duration,
-    heartbeat_idle_after: Duration,
+    heartbeat_idle_after: Option<Duration>,
     last_communication_at: Instant,
     reconnect_attempt: u32,
     last_reconnect_error_code: Option<String>,
@@ -180,7 +180,7 @@ impl AppState {
         let config = TcpRuntimeConfig::from_request(request);
         let connection_timeout = Duration::from_millis(request.resolved_connection_timeout_ms());
         let heartbeat_idle_after =
-            Duration::from_millis(request.resolved_heartbeat_idle_after_ms());
+            request.resolved_heartbeat_idle_after_ms().map(Duration::from_millis);
 
         {
             let mut rt = self.runtime.lock().await;
@@ -1719,22 +1719,20 @@ async fn run_tcp_supervisor(runtime: Arc<Mutex<RuntimeState>>, session_id: u64) 
                 return;
             }
 
-            if session.last_communication_at.elapsed() < session.heartbeat_idle_after {
-                None
-            } else {
-                Some((
+            match session.heartbeat_idle_after {
+                Some(idle_after) if session.last_communication_at.elapsed() >= idle_after => Some((
                     Arc::clone(&session.client),
                     session.host.clone(),
                     session.port,
                     session.slave_id,
                     session.config,
                     session.connection_timeout,
-                    session.heartbeat_idle_after,
-                ))
+                )),
+                _ => None,
             }
         };
 
-        let Some((client, host, port, slave_id, config, connection_timeout, _heartbeat_idle_after)) =
+        let Some((client, host, port, slave_id, config, connection_timeout)) =
             snapshot
         else {
             continue;

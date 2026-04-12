@@ -13,6 +13,10 @@ export interface AppSettings {
   rememberLastFeatureState: boolean;
   valueViewFormat: ValueViewFormat;
   forcedLayoutMode: ForcedLayoutMode;
+  tcpHealth: {
+    heartbeatEnabled: boolean;
+    heartbeatIdleAfterMs: number;
+  };
   polling: {
     defaultIntervalMs: number;
     maxAddressCountForPolling: number;
@@ -36,6 +40,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rememberLastFeatureState: true,
   valueViewFormat: "dec",
   forcedLayoutMode: "auto",
+  tcpHealth: {
+    heartbeatEnabled: true,
+    heartbeatIdleAfterMs: 30000,
+  },
   polling: {
     defaultIntervalMs: 1000,
     maxAddressCountForPolling: 125,
@@ -78,6 +86,15 @@ function normalizeSettings(raw: unknown): AppSettings {
     incoming.forcedLayoutMode === "auto" || incoming.forcedLayoutMode === "desktop" || incoming.forcedLayoutMode === "mobile"
       ? incoming.forcedLayoutMode
       : base.forcedLayoutMode;
+
+  const tcpHealth: Partial<AppSettings["tcpHealth"]> = incoming.tcpHealth ?? {};
+  base.tcpHealth.heartbeatEnabled =
+    typeof tcpHealth.heartbeatEnabled === "boolean"
+      ? tcpHealth.heartbeatEnabled
+      : base.tcpHealth.heartbeatEnabled;
+  base.tcpHealth.heartbeatIdleAfterMs = Number.isFinite(tcpHealth.heartbeatIdleAfterMs)
+    ? Math.max(1000, Math.floor(tcpHealth.heartbeatIdleAfterMs as number))
+    : base.tcpHealth.heartbeatIdleAfterMs;
 
   const polling: Partial<AppSettings["polling"]> = incoming.polling ?? {};
   base.polling.defaultIntervalMs = Number.isFinite(polling.defaultIntervalMs)
@@ -166,6 +183,16 @@ export function setForcedLayoutMode(mode: ForcedLayoutMode): void {
 
 export function setGlobalPollingDefaultInterval(ms: number): void {
   settingsState.polling.defaultIntervalMs = Math.max(250, Math.floor(ms));
+  persist();
+}
+
+export function setTcpHeartbeatEnabled(enabled: boolean): void {
+  settingsState.tcpHealth.heartbeatEnabled = enabled;
+  persist();
+}
+
+export function setTcpHeartbeatIdleAfterMs(ms: number): void {
+  settingsState.tcpHealth.heartbeatIdleAfterMs = Math.max(1000, Math.floor(ms));
   persist();
 }
 

@@ -37,7 +37,8 @@
   {#snippet children()}
     {#if !connected}
       <div class="disconnected-banner" role="alert">
-        Connect to a device first. Custom frame send is disabled while disconnected.
+        <span class="banner-icon">⚠</span>
+        <span class="banner-text">Not connected — go to <strong>Connection</strong> and connect to a device before using custom-frame operations.</span>
       </div>
     {/if}
 
@@ -174,13 +175,26 @@
 
 <style>
   .disconnected-banner {
-    margin-bottom: 12px;
-    padding: 10px 12px;
-    border: 1px solid color-mix(in srgb, var(--c-warn) 35%, var(--c-border));
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border: 1px solid color-mix(in srgb, var(--c-warn, #f0a500) 35%, var(--c-border));
     border-radius: 8px;
-    background: color-mix(in srgb, var(--c-warn) 10%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-warn, #f0a500) 8%, var(--c-surface-2));
     color: var(--c-text-1);
-    font-size: 0.82rem;
+    font-size: 0.8rem;
+    margin-bottom: 12px;
+  }
+
+  .banner-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .banner-text strong {
+    color: var(--c-accent);
   }
 
   .controls {

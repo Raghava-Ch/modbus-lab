@@ -14,6 +14,8 @@
     setLogTimePrecision,
     setMaxRetainedLogEntries,
     setRememberLastFeatureState,
+    setTcpHeartbeatEnabled,
+    setTcpHeartbeatIdleAfterMs,
     setValueViewFormat,
     settingsState,
   } from "../../state/settings.svelte";
@@ -55,6 +57,34 @@
               oninput={(e) => setGlobalPollingMaxAddressCount(onNumberInput(e.currentTarget.value, settingsState.polling.maxAddressCountForPolling))}
             />
           </label>
+        </section>
+
+        <section class="group">
+          <h3>TCP Health Check</h3>
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              checked={settingsState.tcpHealth.heartbeatEnabled}
+              onchange={(e) => setTcpHeartbeatEnabled(e.currentTarget.checked)}
+            />
+            <span>
+              Enable idle heartbeat check. When enabled, the app probes the server after no traffic and can mark connection down faster.
+            </span>
+          </label>
+          <label>
+            <span>Heartbeat idle time (ms) before probe</span>
+            <input
+              type="number"
+              min="1000"
+              step="500"
+              value={settingsState.tcpHealth.heartbeatIdleAfterMs}
+              disabled={!settingsState.tcpHealth.heartbeatEnabled}
+              oninput={(e) => setTcpHeartbeatIdleAfterMs(onNumberInput(e.currentTarget.value, settingsState.tcpHealth.heartbeatIdleAfterMs))}
+            />
+          </label>
+          <p class="note">
+            Lower values detect outages sooner but increase background traffic. Higher values reduce probes but can delay "server down" updates.
+          </p>
         </section>
 
         <section class="group">
@@ -233,7 +263,9 @@
     {#snippet footer()}
       <div class="footer-actions">
         <button class="reset-btn" type="button" onclick={resetSettingsToDefaults}>Reset All To Defaults</button>
-        <span class="hint">Default poll: {DEFAULT_SETTINGS.polling.defaultIntervalMs} ms, max polling count: {DEFAULT_SETTINGS.polling.maxAddressCountForPolling}</span>
+        <span class="hint">
+          Default poll: {DEFAULT_SETTINGS.polling.defaultIntervalMs} ms, max polling count: {DEFAULT_SETTINGS.polling.maxAddressCountForPolling}, heartbeat idle: {DEFAULT_SETTINGS.tcpHealth.heartbeatIdleAfterMs} ms
+        </span>
       </div>
     {/snippet}
   </PanelFrame>
@@ -348,6 +380,13 @@
   .hint {
     font-size: 0.7rem;
     color: var(--c-text-2);
+  }
+
+  .note {
+    margin: 0;
+    font-size: 0.72rem;
+    color: var(--c-text-2);
+    line-height: 1.4;
   }
 
   @media (max-width: 860px) {

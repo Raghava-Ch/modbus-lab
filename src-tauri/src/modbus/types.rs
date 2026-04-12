@@ -6,6 +6,7 @@ pub const DEFAULT_TCP_CONNECTION_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RESPONSE_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RETRY_ATTEMPTS: u8 = 2;
 pub const DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 30_000;
+pub const MIN_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 1_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -91,10 +92,12 @@ impl TcpConnectRequest {
         self.retry_jitter_strategy.clone().unwrap_or_default()
     }
 
-    pub fn resolved_heartbeat_idle_after_ms(&self) -> u64 {
-        self.heartbeat_idle_after_ms
-            .unwrap_or(DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS)
-            .max(1_000)
+    pub fn resolved_heartbeat_idle_after_ms(&self) -> Option<u64> {
+        match self.heartbeat_idle_after_ms {
+            Some(0) => None,
+            Some(value) => Some(value.max(MIN_TCP_HEARTBEAT_IDLE_AFTER_MS)),
+            None => Some(DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS),
+        }
     }
 }
 

@@ -18,6 +18,7 @@
     type SerialParity,
   } from "../../state/connection.svelte";
   import { addLog } from "../../state/logs.svelte";
+  import { settingsState } from "../../state/settings.svelte";
   import IconButton from "../shared/IconButton.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
   import SectionHeader from "../shared/SectionHeader.svelte";
@@ -110,6 +111,7 @@
     retryAttempts?: number;
     retryBackoffStrategy?: RetryBackoffStrategy;
     retryJitterStrategy?: RetryJitterStrategy;
+    heartbeatIdleAfterMs?: number;
     analytics?: AnalyticsContext;
   }
 
@@ -177,6 +179,9 @@
           retryAttempts: connectionState.tcp.retryAttempts,
           retryBackoffStrategy: connectionState.tcp.retryBackoffStrategy,
           retryJitterStrategy: connectionState.tcp.retryJitterStrategy,
+          heartbeatIdleAfterMs: settingsState.tcpHealth.heartbeatEnabled
+            ? settingsState.tcpHealth.heartbeatIdleAfterMs
+            : 0,
         };
 
         response = await invoke<CommandAck>("connect_modbus_tcp", { request });
