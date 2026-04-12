@@ -162,8 +162,12 @@
         <div class="about-section">
           <h3>About</h3>
           <p>
-            Modbus Lab is a fast, practical desktop Modbus master client built with Svelte 5 and Tauri v2.
-            It serves as both a daily-use tool and reference implementation for the modbus-rs stack.
+            Modbus Lab is a professional-grade desktop Modbus master client purpose-built for industrial automation engineers and system integrators.
+            It demonstrates a modern, production-ready approach to factory floor operations, IoT device management, and SCADA system testing.
+          </p>
+          <p style="margin-top: 8px; font-size: 0.95em; opacity: 0.9;">
+            Built on deterministic, embedded-grade Rust with a responsive TypeScript frontend and native desktop runtime.
+            Validated across desktop, embedded (no_std), RTOS, and Linux deployments.
           </p>
         </div>
 
@@ -180,9 +184,12 @@
           <h3>Tech Stack</h3>
           <ul>
             <li>Frontend: Svelte 5 + TypeScript + Vite</li>
-            <li>Backend: Tauri v2 + Rust</li>
-            <li>Modbus Engine: modbus-rs</li>
+            <li>Desktop Runtime: Tauri v2 (cross-platform native)</li>
+            <li>Backend: Rust + modbus-rs engine</li>
           </ul>
+          <p style="margin-top: 8px; font-size: 0.9em; opacity: 0.85;">
+            The <strong>modbus-rs</strong> stack delivers deterministic, embedded-grade Modbus protocol handling with zero-copy operations and no dependency bloat.
+          </p>
         </div>
 
         <div class="about-section">
