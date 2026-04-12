@@ -188,7 +188,7 @@
             <li>Backend: Rust + modbus-rs engine</li>
           </ul>
           <p style="margin-top: 8px; font-size: 0.9em; opacity: 0.85;">
-            The <strong>modbus-rs</strong> stack delivers deterministic, embedded-grade Modbus protocol handling with zero-copy operations and no dependency bloat.
+            The <strong>modbus-rs</strong> stack delivers deterministic, embedded-grade Modbus protocol handling with efficient memory usage and minimal dependencies.
           </p>
         </div>
 
