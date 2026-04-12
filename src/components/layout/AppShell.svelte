@@ -40,6 +40,9 @@
   import SettingsPage from "../pages/SettingsPage.svelte";
 
   const filtered = $derived(getFilteredLogs(logState.filter));
+  let showAbout = $state(false);
+  const appVersion = "0.0.2";
+  const buildDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
   interface BackendEventPayload {
     level?: "info" | "warn" | "error";
@@ -80,7 +83,7 @@
 </script>
 
 <div class="app-shell" class:force-mobile={settingsState.forcedLayoutMode === "mobile"} class:force-desktop={settingsState.forcedLayoutMode === "desktop"}>
-  <StatusBar />
+  <StatusBar onShowAbout={() => (showAbout = true)} />
   <AppNotifications />
   <NavPanel />
 
@@ -138,6 +141,62 @@
         <LogList entries={filtered} />
       {/if}
     </section>
+  </div>
+{/if}
+
+{#if showAbout}
+  <div class="about-backdrop" role="dialog" aria-modal="true" aria-label="About Modbus Lab" onclick={(e) => e.target === e.currentTarget && (showAbout = false)}>
+    <div class="about-modal">
+      <header class="about-header">
+        <h2>About Modbus Lab</h2>
+        <button class="close-btn" type="button" aria-label="Close" onclick={() => (showAbout = false)}>
+          <X size={18} />
+        </button>
+      </header>
+      <div class="about-body">
+        <div class="about-section">
+          <p><strong>Version:</strong> {appVersion} (Alpha)</p>
+          <p><strong>Build Date:</strong> {buildDate}</p>
+        </div>
+
+        <div class="about-section">
+          <h3>About</h3>
+          <p>
+            Modbus Lab is a fast, practical desktop Modbus master client built with Svelte 5 and Tauri v2.
+            It serves as both a daily-use tool and reference implementation for the modbus-rs stack.
+          </p>
+        </div>
+
+        <div class="about-section">
+          <h3>Supported Protocols</h3>
+          <ul>
+            <li>Modbus TCP</li>
+            <li>Modbus RTU</li>
+            <li>Modbus ASCII</li>
+          </ul>
+        </div>
+
+        <div class="about-section">
+          <h3>Tech Stack</h3>
+          <ul>
+            <li>Frontend: Svelte 5 + TypeScript + Vite</li>
+            <li>Backend: Tauri v2 + Rust</li>
+            <li>Modbus Engine: modbus-rs</li>
+          </ul>
+        </div>
+
+        <div class="about-section">
+          <h3>License</h3>
+          <p>GPL v3 for open-source use</p>
+        </div>
+
+        <div class="about-section">
+          <h3>Creator</h3>
+          <p><strong>Raghava Ch</strong></p>
+          <p><a href="mailto:ch.raghava44@gmail.com">ch.raghava44@gmail.com</a></p>
+        </div>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -278,11 +337,141 @@
   .app-shell.force-mobile :global(.nav-panel)::after {
     content: "";
     position: absolute;
+    width: 100%;
+    height: 100%;
     top: 0;
-    bottom: 0;
-    width: 18px;
     pointer-events: none;
-    z-index: 1;
+    z-index: 10;
+  }
+
+  .app-shell.force-mobile :global(.nav-panel)::before {
+    left: 0;
+    background: linear-gradient(to right, var(--c-surface-1), transparent);
+  }
+
+  .app-shell.force-mobile :global(.nav-panel)::after {
+    right: 0;
+    background: linear-gradient(to left, var(--c-surface-1), transparent);
+  }
+
+  .about-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    animation: fade-in 150ms ease;
+  }
+
+  .about-modal {
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border);
+    border-radius: 12px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80dvh;
+    overflow-y: auto;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    animation: scale-in 150ms ease;
+  }
+
+  .about-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px;
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .about-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--c-text-1);
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: var(--c-text-2);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: background 120ms ease;
+  }
+
+  .close-btn:hover {
+    background: var(--c-surface-2);
+    color: var(--c-text-1);
+  }
+
+  .about-body {
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+    font-size: 0.9rem;
+    color: var(--c-text-1);
+    line-height: 1.5;
+  }
+
+  .about-section {
+    display: grid;
+    gap: 6px;
+  }
+
+  .about-section h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--c-accent);
+    font-weight: 600;
+  }
+
+  .about-section p {
+    margin: 0;
+  }
+
+  .about-section ul {
+    margin: 0;
+    padding-left: 20px;
+  }
+
+  .about-section li {
+    margin: 4px 0;
+  }
+
+  .about-section a {
+    color: var(--c-accent);
+    text-decoration: none;
+  }
+
+  .about-section a:hover {
+    text-decoration: underline;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 
   .app-shell.force-mobile :global(.nav-panel)::before {

@@ -9,6 +9,10 @@
   import ConnectionBadge from "./ConnectionBadge.svelte";
   import DeviceInfo from "./DeviceInfo.svelte";
   import StatusBarActions from "./StatusBarActions.svelte";
+
+  let { onShowAbout } = $props<{
+    onShowAbout?: () => void;
+  }>();
 </script>
 
 <header class="status-bar">
@@ -25,6 +29,7 @@
     statusCompact={layoutState.statusCompact}
     onToggleStatus={toggleStatusCompact}
     onToggleMobileLog={toggleMobileLog}
+    onShowAbout={onShowAbout}
   />
 </header>
 
