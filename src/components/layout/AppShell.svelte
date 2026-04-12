@@ -145,8 +145,15 @@
 {/if}
 
 {#if showAbout}
-  <div class="about-backdrop" role="dialog" aria-modal="true" aria-label="About Modbus Lab" onclick={(e) => e.target === e.currentTarget && (showAbout = false)}>
-    <div class="about-modal">
+  <div
+    class="about-backdrop"
+    role="button"
+    aria-label="Close about dialog"
+    tabindex="-1"
+    onclick={(e) => e.target === e.currentTarget && (showAbout = false)}
+    onkeydown={(e) => e.key === "Escape" && (showAbout = false)}
+  >
+    <div class="about-modal" role="dialog" aria-modal="true" aria-label="About Modbus Lab">
       <header class="about-header">
         <h2>About Modbus Lab</h2>
         <button class="close-btn" type="button" aria-label="Close" onclick={() => (showAbout = false)}>

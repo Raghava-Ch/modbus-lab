@@ -194,6 +194,7 @@
   role="dialog"
   aria-modal="true"
   aria-label="Log entry details"
+  tabindex="-1"
   onclick={closeOnBackdrop}
   onkeydown={closeOnEscape}
 >
