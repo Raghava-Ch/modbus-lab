@@ -6,7 +6,7 @@
 
 This application showcases an enterprise-grade architecture for factory floor operations, IoT device management, and SCADA system testing:
 
-- **Built on [modbus-rs](https://github.com/Raghava-Ch/modbus-rs)**: A deterministic, embedded-grade Rust implementation validated for both desktop and embedded (no_std, RTOS, Baremetal, Linux) deployments
+- **Built on [modbus-rs](https://github.com/Raghava-Ch/modbus-rs)**: A deterministic, embedded-grade Rust implementation validated for both desktop and embedded (no_std, RTOS, Baremetal, Linux) deployments. [View the modbus-rs project →](https://github.com/Raghava-Ch/modbus-rs)
 - **Svelte 5 + TypeScript Frontend**: Delivers a responsive, accessible user interface optimized for technical workflows
 - **Tauri v2 Runtime**: Provides secure, native desktop integration with minimal resource footprint across Windows, macOS, and Linux
 

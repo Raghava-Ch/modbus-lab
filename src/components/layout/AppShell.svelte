@@ -41,7 +41,7 @@
 
   const filtered = $derived(getFilteredLogs(logState.filter));
   let showAbout = $state(false);
-  const appVersion = "0.0.2";
+  const appVersion = "0.0.3-alpha.3";
   const buildDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
   interface BackendEventPayload {
@@ -185,16 +185,24 @@
           <ul>
             <li>Frontend: Svelte 5 + TypeScript + Vite</li>
             <li>Desktop Runtime: Tauri v2 (cross-platform native)</li>
-            <li>Backend: Rust + modbus-rs engine</li>
+            <li>Backend: Rust + <a href="https://github.com/Raghava-Ch/modbus-rs" target="_blank" style="color: inherit; text-decoration: underline;">modbus-rs</a> engine</li>
           </ul>
           <p style="margin-top: 8px; font-size: 0.9em; opacity: 0.85;">
-            The <strong>modbus-rs</strong> stack delivers deterministic, embedded-grade Modbus protocol handling with efficient memory usage and minimal dependencies.
+            The <a href="https://github.com/Raghava-Ch/modbus-rs" target="_blank" style="color: inherit; text-decoration: underline;"><strong>modbus-rs</strong></a> stack delivers deterministic, embedded-grade Modbus protocol handling with efficient memory usage and minimal dependencies.
           </p>
         </div>
 
         <div class="about-section">
           <h3>License</h3>
           <p>GPL v3 for open-source use</p>
+        </div>
+
+        <div class="about-section">
+          <h3>Resources</h3>
+          <ul>
+            <li><a href="https://github.com/Raghava-Ch/modbus-rs" target="_blank" style="color: inherit; text-decoration: underline;">modbus-rs GitHub</a> – Core Modbus protocol engine</li>
+            <li><a href="https://github.com/Raghava-Ch/modbus-lab" target="_blank" style="color: inherit; text-decoration: underline;">modbus-lab GitHub</a> – This application</li>
+          </ul>
         </div>
 
         <div class="about-section">
