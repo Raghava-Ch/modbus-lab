@@ -173,7 +173,7 @@ npm run dev
 - Diagnostics UI intentionally enforces serial-only for functions traditionally defined for serial line devices.
 - Advanced functions (file record, FIFO) are placeholders, planned for future releases.
 
-Note: This tool is intended as both a **daily-use Modbus client** and a **reference implementation** for modbus-rs.
+Note: This tool is intended as both a **daily-use industrial Modbus client** and a **reference implementation** for modbus-rs.
 
 ### Run desktop app (Tauri)
 ```bash
