@@ -77,9 +77,9 @@ function warnLocal(message: string): void {
 
 
 const COIL_VIEW_KEY = "Modbus-Lab.coilView";
-const COIL_MAX_COUNT = 2000;
+const COIL_MAX_COUNT = 65536; // Modbus spec: 16-bit address space
 const MODBUS_ADDRESS_MIN = 0;
-const MODBUS_ADDRESS_MAX = COIL_MAX_COUNT - 1;
+const MODBUS_ADDRESS_MAX = COIL_MAX_COUNT - 1; // 0x0000-0xFFFF
 
 interface AddressSection {
   start: number;
