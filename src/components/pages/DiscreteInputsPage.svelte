@@ -70,9 +70,49 @@
   let rangeCount = $state(discreteInputState.inputCount);
   let rangeApplyPending = $state(false);
   const RANGE_APPLY_MIN_SPINNER_MS = 250;
+  const DISCRETE_READ_CHUNK_MAX = 2000;
+  const FRAME_ESTIMATE_MS = 22;
+
+  interface AddressSection {
+    start: number;
+    quantity: number;
+  }
+
+  function buildAddressSections(addresses: number[]): AddressSection[] {
+    if (addresses.length === 0) return [];
+
+    const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
+    const sections: AddressSection[] = [];
+    let sectionStart = uniqueSorted[0];
+    let prev = uniqueSorted[0];
+
+    for (let i = 1; i < uniqueSorted.length; i += 1) {
+      const current = uniqueSorted[i];
+      if (current === prev + 1) {
+        prev = current;
+        continue;
+      }
+
+      sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+      sectionStart = current;
+      prev = current;
+    }
+
+    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+    return sections;
+  }
+
+  function buildRequestPlan(addresses: number[], chunkMax: number): { frames: number; cycleMs: number } {
+    const sections = buildAddressSections(addresses);
+    const frames = sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
+    return { frames, cycleMs: frames * FRAME_ESTIMATE_MS };
+  }
 
   // ── Filtered coil list ──────────────────────────────────────────────────────
   const filtered = $derived(getFilteredDiscreteInputs());
+  const readPlan = $derived(
+    buildRequestPlan(discreteInputState.entries.map((entry) => entry.address), DISCRETE_READ_CHUNK_MAX),
+  );
   const VIRTUAL_TABLE_THRESHOLD = 300;
   const VIRTUAL_SWITCH_THRESHOLD = 200;
   const TABLE_ROW_HEIGHT = 34;
@@ -363,6 +403,9 @@
           onclick={handleManualReadAllDiscreteInputs}>
           <RefreshCw size={14} />
         </button>
+        <span class="pending-chip has-tip" data-tip="Estimated FC02 frames and cycle time per read-all run">
+          Read plan: {readPlan.frames}f ~{readPlan.cycleMs}ms
+        </span>
         {#if pollDisabledByCount}
           <span class="pending-chip has-tip" data-tip="Global polling max reached">
             Poll disabled: list &gt; {pollMaxCount}

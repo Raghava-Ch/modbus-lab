@@ -72,8 +72,49 @@
   let rangeCount = $state(holdingRegisterState.registerCount);
   let rangeApplyPending = $state(false);
   const RANGE_APPLY_MIN_SPINNER_MS = 250;
+  const HOLDING_READ_CHUNK_MAX = 125;
+  const HOLDING_WRITE_CHUNK_MAX = 120;
+  const FRAME_ESTIMATE_MS = 22;
+
+  interface AddressSection {
+    start: number;
+    quantity: number;
+  }
+
+  function buildAddressSections(addresses: number[]): AddressSection[] {
+    if (addresses.length === 0) return [];
+
+    const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
+    const sections: AddressSection[] = [];
+    let sectionStart = uniqueSorted[0];
+    let prev = uniqueSorted[0];
+
+    for (let i = 1; i < uniqueSorted.length; i += 1) {
+      const current = uniqueSorted[i];
+      if (current === prev + 1) {
+        prev = current;
+        continue;
+      }
+
+      sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+      sectionStart = current;
+      prev = current;
+    }
+
+    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+    return sections;
+  }
+
+  function buildRequestPlan(addresses: number[], chunkMax: number): { frames: number; cycleMs: number } {
+    const sections = buildAddressSections(addresses);
+    const frames = sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
+    return { frames, cycleMs: frames * FRAME_ESTIMATE_MS };
+  }
 
   const filtered = $derived(getFilteredHoldingRegisters());
+  const readPlan = $derived(
+    buildRequestPlan(holdingRegisterState.entries.map((entry) => entry.address), HOLDING_READ_CHUNK_MAX),
+  );
   const LARGE_DATASET_THRESHOLD = 5000;
   const VIRTUAL_ROW_HEIGHT = 34;
   const VIRTUAL_OVERSCAN = 10;
@@ -218,6 +259,14 @@
   const zeroCount = $derived(holdingRegisterState.entries.filter((e) => e.slaveValue === 0).length);
   const pendingWriteCount = $derived(
     holdingRegisterState.entries.filter((e) => e.desiredValue !== e.slaveValue).length,
+  );
+  const writePlan = $derived(
+    buildRequestPlan(
+      holdingRegisterState.entries
+        .filter((entry) => entry.desiredValue !== entry.slaveValue)
+        .map((entry) => entry.address),
+      HOLDING_WRITE_CHUNK_MAX,
+    ),
   );
   const anyAddressFilterActive = $derived(holdingRegisterState.addressFilter !== "all");
   const anyFilterActive = $derived(
@@ -443,6 +492,9 @@
             Poll disabled: list &gt; {pollMaxCount}
           </span>
         {/if}
+        <span class="pending-chip" title="Estimated FC03 frames and cycle time per read-all run">
+          Read plan: {readPlan.frames}f ~{readPlan.cycleMs}ms
+        </span>
         <button
           class="ctrl-btn"
           class:active={holdingRegisterState.pollActive}
@@ -536,6 +588,9 @@
         </span>
       {/if}
       {#if pendingWriteCount > 0}
+        <span class="pending-chip" title="Estimated FC16 frames and cycle time for pending writes">
+          Write plan: {writePlan.frames}f ~{writePlan.cycleMs}ms
+        </span>
         <button
           class="pending-chip pending-chip-action"
           type="button"

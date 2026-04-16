@@ -84,9 +84,50 @@
   let rangeCount = $state(coilState.coilCount);
   let rangeApplyPending = $state(false);
   const RANGE_APPLY_MIN_SPINNER_MS = 250;
+  const COIL_READ_CHUNK_MAX = 2000;
+  const COIL_WRITE_CHUNK_MAX = 1968;
+  const FRAME_ESTIMATE_MS = 22;
+
+  interface AddressSection {
+    start: number;
+    quantity: number;
+  }
+
+  function buildAddressSections(addresses: number[]): AddressSection[] {
+    if (addresses.length === 0) return [];
+
+    const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
+    const sections: AddressSection[] = [];
+    let sectionStart = uniqueSorted[0];
+    let prev = uniqueSorted[0];
+
+    for (let i = 1; i < uniqueSorted.length; i += 1) {
+      const current = uniqueSorted[i];
+      if (current === prev + 1) {
+        prev = current;
+        continue;
+      }
+
+      sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+      sectionStart = current;
+      prev = current;
+    }
+
+    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+    return sections;
+  }
+
+  function buildRequestPlan(addresses: number[], chunkMax: number): { frames: number; cycleMs: number } {
+    const sections = buildAddressSections(addresses);
+    const frames = sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
+    return { frames, cycleMs: frames * FRAME_ESTIMATE_MS };
+  }
 
   // ── Filtered coil list ──────────────────────────────────────────────────────
   const filtered = $derived(getFilteredCoils());
+  const readPlan = $derived(
+    buildRequestPlan(coilState.entries.map((entry) => entry.address), COIL_READ_CHUNK_MAX),
+  );
   const VIRTUAL_TABLE_THRESHOLD = 300;
   const VIRTUAL_SWITCH_THRESHOLD = 200;
   const TABLE_ROW_HEIGHT = 34;
@@ -221,6 +262,18 @@
   );
 
   const massPreview = $derived(buildMassPreview());
+  const massWritePlan = $derived(
+    buildRequestPlan(
+      coilState.entries
+        .filter((entry) => {
+          const start = Math.min(coilState.massFrom, coilState.massTo);
+          const end = Math.max(coilState.massFrom, coilState.massTo);
+          return entry.address >= start && entry.address <= end;
+        })
+        .map((entry) => entry.address),
+      COIL_WRITE_CHUNK_MAX,
+    ),
+  );
   const onCount = $derived(coilState.entries.filter((e) => e.slaveValue).length);
   const offCount = $derived(coilState.entries.filter((e) => !e.slaveValue).length);
   const pendingWriteCount = $derived(
@@ -418,6 +471,9 @@
             Poll disabled: list &gt; {pollMaxCount}
           </span>
         {/if}
+        <span class="pending-chip has-tip" data-tip="Estimated FC01 frames and cycle time per read-all run">
+          Read plan: {readPlan.frames}f ~{readPlan.cycleMs}ms
+        </span>
       </div>
 
       <div class="divider-v"></div>
@@ -708,6 +764,11 @@
           <div class="preview-line">
             <span class="preview-label">Preview:</span>
             <span class="preview-text">{massPreview}</span>
+          </div>
+
+          <div class="preview-line">
+            <span class="preview-label">Planner:</span>
+            <span class="preview-text">{massWritePlan.frames} frame{massWritePlan.frames === 1 ? "" : "s"} ~{massWritePlan.cycleMs}ms</span>
           </div>
 
           <!-- Mode selector -->
