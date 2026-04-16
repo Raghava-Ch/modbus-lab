@@ -22,6 +22,7 @@ export interface HoldingRegisterEntry {
   slaveValue: number;
   desiredValue: number;
   pending: boolean;
+  readError: string | null;
   writeError: string | null;
   lastReadAt: number | null;
   lastWriteAt: number | null;
@@ -163,6 +164,7 @@ function generateRegisters(startAddress: number, count: number): HoldingRegister
     slaveValue: 0,
     desiredValue: 0,
     pending: false,
+    readError: null,
     writeError: null,
     lastReadAt: null,
     lastWriteAt: null,
@@ -284,10 +286,14 @@ export async function readHoldingRegister(address: number): Promise<void> {
     if (reg) {
       entry.slaveValue = reg.value;
       // Successful read means address is available; clear stale availability error.
+      entry.readError = null;
       entry.writeError = null;
       entry.lastReadAt = Date.now();
+    } else {
+      entry.readError = "Address not available";
     }
   } catch (err) {
+    entry.readError = "Address not available";
     addLog("error", `fc03.read err addr=${address} msg=${parseInvokeError(err)}`);
   } finally {
     entry.pending = false;
@@ -719,6 +725,7 @@ export function addExclusiveHoldingRegister(address: number): boolean {
     slaveValue: 0,
     desiredValue: 0,
     pending: false,
+    readError: null,
     writeError: null,
     lastReadAt: null,
     lastWriteAt: null,

@@ -102,7 +102,9 @@
     const bodyRect = targetEl.getBoundingClientRect();
     const containerBottom = mainContent?.getBoundingClientRect().bottom ?? window.innerHeight;
     const reservedBottomGap = 28;
-    const next = Math.max(180, Math.floor(containerBottom - bodyRect.top - reservedBottomGap));
+    const availableHeight = Math.floor(containerBottom - bodyRect.top - reservedBottomGap);
+    const viewportCap = Math.min(680, Math.floor(window.innerHeight * 0.62));
+    const next = Math.max(180, Math.min(viewportCap, availableHeight));
     tableBodyMaxHeight = next;
   }
 
@@ -318,6 +320,31 @@
     const picked = generateRandomExclusiveHoldingRegisterAddress();
     if (picked !== null) {
       addAddressInput = String(picked);
+    }
+  }
+
+  function handleScrollChain(e: WheelEvent): void {
+    const target = e.currentTarget as HTMLElement;
+    const delta = e.deltaY;
+    if (delta === 0) return;
+
+    const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1;
+    const atTop = target.scrollTop <= 1;
+
+    // If at boundary and trying to scroll past it, scroll parent instead
+    if ((delta > 0 && atBottom) || (delta < 0 && atTop)) {
+      const parent = document.querySelector(".main-content") as HTMLElement | null;
+      if (parent) {
+        const canScrollDown = parent.scrollTop + parent.clientHeight < parent.scrollHeight - 1;
+        const canScrollUp = parent.scrollTop > 1;
+        const shouldDelegate = (delta > 0 && canScrollDown) || (delta < 0 && canScrollUp);
+
+        if (!shouldDelegate) return;
+
+        const delegatedDelta = Math.sign(delta) * Math.min(48, Math.abs(delta) * 0.3);
+        parent.scrollBy({ top: delegatedDelta, left: 0, behavior: "auto" });
+        e.preventDefault();
+      }
     }
   }
 
@@ -713,6 +740,7 @@
           <div
             class="rt-body"
             onscroll={(e) => { tableScrollTop = e.currentTarget.scrollTop; }}
+            onwheel={handleScrollChain}
             bind:clientHeight={tableViewportHeight}
             bind:this={tableBodyEl}
             style:max-height={`${tableBodyMaxHeight}px`}
@@ -772,6 +800,7 @@
         <div
           class="switch-virtual-scroll"
           onscroll={(e) => { cardScrollTop = e.currentTarget.scrollTop; }}
+          onwheel={handleScrollChain}
           bind:clientHeight={cardViewportHeight}
           bind:clientWidth={cardViewportWidth}
           bind:this={cardBodyEl}
@@ -811,7 +840,7 @@
                   {valueFmt}
                   desiredValue={entry.desiredValue}
                   {connected}
-                  cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
+                  cardDirty={entry.desiredValue !== entry.slaveValue || entry.readError !== null || entry.writeError !== null}
                   {editingAddress}
                   {editLabelVal}
                   {addrFmt}
@@ -824,9 +853,9 @@
                   onRead={(address: number) => { void readHoldingRegister(address); }}
                   onWrite={(address: number) => { void writeHoldingRegister(address); }}
                   onDelete={(address: number) => removeHoldingRegister(address)}
-                  statusBadgeText={entry.writeError ? "Not avail" : (entry.desiredValue !== entry.slaveValue ? "Unsynced" : null)}
-                  statusBadgeTitle={entry.writeError ?? "Local value differs from device"}
-                  statusBadgeVariant={entry.writeError ? "failed" : "pending"}
+                  statusBadgeText={entry.readError ? "Not avail" : (entry.writeError ? "Not avail" : (entry.desiredValue !== entry.slaveValue ? "Unsynced" : null))}
+                  statusBadgeTitle={entry.readError ?? entry.writeError ?? "Local value differs from device"}
+                  statusBadgeVariant={entry.readError || entry.writeError ? "failed" : "pending"}
                 />
               </div>
             {/each}

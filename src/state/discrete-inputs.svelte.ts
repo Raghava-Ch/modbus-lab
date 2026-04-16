@@ -10,9 +10,9 @@ import {
 export type DiscreteInputView = "table" | "switch";
 export type DiscreteInputFilter = "all" | "on" | "off";
 export type DiscreteInputOrigin = "range" | "custom";
-const DISCRETE_INPUT_MAX_COUNT = 2000;
+const DISCRETE_INPUT_MAX_COUNT = 65536; // Modbus spec: 16-bit address space
 const MODBUS_ADDRESS_MIN = 0;
-const MODBUS_ADDRESS_MAX = DISCRETE_INPUT_MAX_COUNT - 1;
+const MODBUS_ADDRESS_MAX = DISCRETE_INPUT_MAX_COUNT - 1; // 0x0000-0xFFFF
 
 export interface DiscreteInputEntry {
   address: number;

@@ -8,6 +8,7 @@
     slaveValue: number;
     desiredValue: number;
     pending: boolean;
+    readError: string | null;
     writeError: string | null;
     label: string;
   };
@@ -88,8 +89,10 @@
   </span>
 
   <span class="pending-cell">
-    {#if entry.writeError || entry.desiredValue !== entry.slaveValue}
-      {#if entry.writeError}
+    {#if entry.readError || entry.writeError || entry.desiredValue !== entry.slaveValue}
+      {#if entry.readError}
+        <span class="dirty-indicator failed-indicator has-tip" data-tip={entry.readError}>Not avail</span>
+      {:else if entry.writeError}
         <span class="dirty-indicator failed-indicator has-tip" data-tip={entry.writeError}>Not avail</span>
       {:else}
         <span class="dirty-indicator has-tip" data-tip="Local value differs from device">Unsynced</span>
