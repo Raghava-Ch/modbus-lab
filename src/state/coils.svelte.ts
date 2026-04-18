@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
+import { connectionState } from "./connection.svelte";
 import {
   getGlobalPollingMaxAddressCount,
   getSettingsSnapshot,
@@ -68,6 +69,24 @@ function parseInvokeError(err: unknown): string {
     return String(maybe.message);
   }
   return "Unknown error";
+}
+
+function isTransientTransportError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("too many requests")
+    || lower.includes("expected responses buffer is full")
+    || lower.includes("timeout")
+    || lower.includes("timed out")
+    || lower.includes("not connected")
+    || lower.includes("reconnecting")
+    || lower.includes("broken pipe")
+    || lower.includes("connection reset")
+    || lower.includes("transport")
+    || lower.includes("send failed")
+    || lower.includes("io error")
+    || lower.includes("connection closed")
+  );
 }
 
 function warnLocal(message: string): void {
@@ -157,6 +176,10 @@ export const coilState = $state({
 // Timer handles — not reactive, managed manually
 let autoToggleTimer: ReturnType<typeof setInterval> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let readAllInFlight = false;
+let readAllQueuedRuns = 0;
+const READ_ALL_QUEUE_DEPTH_MAX = 6;
+let autoToggleWriteInFlight = false;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -426,16 +449,40 @@ export function startAutoToggle(): void {
   // First pass: apply the selected pattern immediately
   const initialTargets = getTargetAddresses();
   const initialMap = computePatternValues(coilState.massPattern, initialTargets);
-  void writeAddressMap(initialMap);
+  void (async () => {
+    if (autoToggleWriteInFlight) return;
+    autoToggleWriteInFlight = true;
+    try {
+      await writeAddressMap(initialMap);
+    } finally {
+      autoToggleWriteInFlight = false;
+    }
+  })();
 
   autoToggleTimer = setInterval(() => {
+    if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") {
+      // Server is down — skip this tick; supervisor will restore the session.
+      return;
+    }
+    if (autoToggleWriteInFlight) {
+      return;
+    }
+
     const targets = getTargetAddresses();
     invertAddresses(targets);
     const invertMap = new Map(targets.map((addr) => {
       const entry = coilState.entries.find((e) => e.address === addr);
       return [addr, entry?.desiredValue ?? false] as [number, boolean];
     }));
-    void writeAddressMap(invertMap);
+
+    void (async () => {
+      autoToggleWriteInFlight = true;
+      try {
+        await writeAddressMap(invertMap);
+      } finally {
+        autoToggleWriteInFlight = false;
+      }
+    })();
   }, coilState.massAutoInterval);
 }
 
@@ -445,6 +492,7 @@ export function stopAutoToggle(): void {
     autoToggleTimer = null;
   }
   coilState.massAutoActive = false;
+  autoToggleWriteInFlight = false;
 }
 
 export function setMassAutoInterval(ms: number): void {
@@ -569,11 +617,10 @@ export function removeAllCoils(): void {
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
-export async function readAllCoils(options?: { trace?: boolean }): Promise<void> {
+async function readAllCoilsOnce(trace: boolean): Promise<void> {
   if (coilState.entries.length === 0) return;
 
   const sections = buildAddressSections(coilState.entries.map((e) => e.address));
-  const trace = options?.trace ?? true;
   if (trace) {
     addLog(
       "info",
@@ -630,6 +677,15 @@ export async function readAllCoils(options?: { trace?: boolean }): Promise<void>
         }
       }
     } catch (err) {
+      const reason = parseInvokeError(err);
+      if (isTransientTransportError(reason)) {
+        addLog(
+          "warn",
+          `fc01.read transient start=${section.start} qty=${section.quantity} msg=${reason}`,
+        );
+        continue;
+      }
+
       const sectionEnd = section.start + section.quantity - 1;
       for (let address = section.start; address <= sectionEnd; address += 1) {
         const entry = entryByAddress.get(address);
@@ -638,13 +694,48 @@ export async function readAllCoils(options?: { trace?: boolean }): Promise<void>
       }
       addLog(
         "error",
-        `fc01.read err start=${section.start} qty=${section.quantity} end=${sectionEnd} msg=${parseInvokeError(err)}`,
+        `fc01.read err start=${section.start} qty=${section.quantity} end=${sectionEnd} msg=${reason}`,
       );
     }
   }
 
   if (okCount > 0) {
     addLog("info", `fc01.read ok total=${coilState.entries.length} ok=${okCount} sections=${sections.length}`);
+  }
+}
+
+export async function readAllCoils(options?: { trace?: boolean; queueIfBusy?: boolean }): Promise<void> {
+  // Do not issue reads while the transport layer is recovering — avoids
+  // flooding the queue with requests that will all fail.
+  if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") return;
+  const trace = options?.trace ?? true;
+  const queueIfBusy = options?.queueIfBusy ?? true;
+
+  if (readAllInFlight) {
+    if (queueIfBusy && readAllQueuedRuns < READ_ALL_QUEUE_DEPTH_MAX) {
+      readAllQueuedRuns += 1;
+    }
+    return;
+  }
+
+  while (true) {
+    readAllInFlight = true;
+    try {
+      await readAllCoilsOnce(trace);
+    } finally {
+      readAllInFlight = false;
+    }
+
+    if (readAllQueuedRuns === 0) {
+      break;
+    }
+
+    readAllQueuedRuns -= 1;
+    // Clear any pending queue runs if connectivity was lost during the run.
+    if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") {
+      readAllQueuedRuns = 0;
+      break;
+    }
   }
 }
 
@@ -663,8 +754,8 @@ export function setPollActive(active: boolean): void {
     pollTimer = null;
   }
   if (active) {
-    void readAllCoils({ trace: false });
-    pollTimer = setInterval(() => { void readAllCoils({ trace: false }); }, coilState.pollInterval);
+    void readAllCoils({ trace: false, queueIfBusy: true });
+    pollTimer = setInterval(() => { void readAllCoils({ trace: false, queueIfBusy: true }); }, coilState.pollInterval);
   }
 }
 

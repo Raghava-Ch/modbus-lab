@@ -20,6 +20,7 @@
     setDiagnosticsPollInterval,
   } from "../../state/diagnostics.svelte";
   import { connectionState } from "../../state/connection.svelte";
+  import { getCurrentDeviceHealthSnapshot } from "../../state/connection-health.svelte";
 
   const isTcp = $derived(connectionState.protocol === "tcp");
 
@@ -32,6 +33,7 @@
   let deviceIdObject = $state<number | null>(null);
 
   const connected = $derived(connectionState.status === "connected");
+  const health = $derived(getCurrentDeviceHealthSnapshot());
 
   onMount(() => {
     initDiagnosticsState();
@@ -40,7 +42,7 @@
 
 <PageShell title="Diagnostics" feature="FC 08" icon="stethoscope">
   {#snippet children()}
-    {#if !connected}
+    {#if connectionState.status === "disconnected"}
       <div class="disconnected-banner" role="alert">
         <span class="banner-icon">⚠</span>
         <span class="banner-text">Not connected — go to <strong>Connection</strong> and connect to a device before using diagnostics operations.</span>
@@ -48,6 +50,65 @@
     {/if}
 
     <section>
+      <SectionHeader title="Connection Health" subtitle="RTT, timeout/retry pressure, exception histogram, and quality hints" />
+      <PanelFrame>
+        {#snippet children()}
+          <div class="health-grid">
+            <div class="health-card">
+              <div class="health-label">Device</div>
+              <div class="health-value health-key">{health.key}</div>
+            </div>
+
+            <div class="health-card">
+              <div class="health-label">Quality</div>
+              <div class={`health-value health-score ${health.qualityBand}`}>{health.qualityScore}/100 ({health.qualityBand})</div>
+            </div>
+
+            <div class="health-card">
+              <div class="health-label">RTT</div>
+              <div class="health-value">
+                latest {health.latestRttMs ?? "-"} ms | median {health.medianRttMs ?? "-"} ms | p95 {health.p95RttMs ?? "-"} ms
+              </div>
+            </div>
+
+            <div class="health-card">
+              <div class="health-label">Rates</div>
+              <div class="health-value">
+                timeout {(health.timeoutRate * 100).toFixed(1)}% | retry {(health.retryRate * 100).toFixed(1)}% | reconnects {health.reconnectCount}
+              </div>
+            </div>
+
+            <div class="health-card health-wide">
+              <div class="health-label">Exception Histogram</div>
+              {#if health.exceptionHistogram.length === 0}
+                <div class="health-value">No exception codes observed.</div>
+              {:else}
+                <div class="histogram-list">
+                  {#each health.exceptionHistogram as item}
+                    <div class="histogram-row">
+                      <span class="histogram-code">{item.code}</span>
+                      <span class="histogram-bar" style={`--w:${Math.max(8, item.count * 10)}px`}></span>
+                      <span class="histogram-count">{item.count}</span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="health-card health-wide">
+              <div class="health-label">Tuning Hints</div>
+              <ul class="hint-list">
+                {#each health.tuningHints as hint}
+                  <li>{hint}</li>
+                {/each}
+              </ul>
+            </div>
+          </div>
+        {/snippet}
+      </PanelFrame>
+    </section>
+
+    <section style="margin-top:18px;">
       <SectionHeader title="Exception Status (FC07)" subtitle="Read single-byte device exception status" />
       {#if isTcp}
         <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
@@ -272,5 +333,83 @@
     flex-shrink: 0;
     font-size: 0.9rem;
     color: var(--c-border-strong);
+  }
+
+  .health-grid {
+    display: grid;
+    gap: 8px;
+  }
+
+  .health-card {
+    border: 1px solid color-mix(in srgb, var(--c-border) 72%, transparent);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+  }
+
+  .health-card.health-wide {
+    grid-column: 1 / -1;
+  }
+
+  .health-label {
+    font-size: 0.68rem;
+    color: var(--c-text-2);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .health-value {
+    font-size: 0.82rem;
+    color: var(--c-text-1);
+  }
+
+  .health-key {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.74rem;
+    word-break: break-all;
+  }
+
+  .health-score.good { color: var(--c-ok); }
+  .health-score.fair { color: var(--c-warn); }
+  .health-score.poor { color: var(--c-error); }
+
+  .histogram-list {
+    display: grid;
+    gap: 5px;
+  }
+
+  .histogram-row {
+    display: grid;
+    grid-template-columns: 52px 1fr 36px;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+  }
+
+  .histogram-code {
+    color: var(--c-text-2);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+
+  .histogram-bar {
+    height: 7px;
+    width: var(--w);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--c-accent) 62%, var(--c-surface-2));
+  }
+
+  .histogram-count {
+    text-align: right;
+    color: var(--c-text-2);
+  }
+
+  .hint-list {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: var(--c-text-2);
   }
 </style>

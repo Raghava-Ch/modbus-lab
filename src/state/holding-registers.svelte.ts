@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
+import { connectionState } from "./connection.svelte";
 import {
   getGlobalPollingMaxAddressCount,
   getSettingsSnapshot,
@@ -55,18 +56,41 @@ interface AddressSection {
 function parseInvokeError(err: unknown): string {
   if (typeof err === "string") {
     try {
-      const parsed = JSON.parse(err) as { message?: string };
+      const parsed = JSON.parse(err) as { message?: string; details?: string };
+      if (typeof parsed.details === "string" && parsed.details.trim().length > 0) {
+        return `${parsed.message ?? "Unknown error"} (${parsed.details})`;
+      }
       return parsed.message ?? err;
     } catch {
       return err;
     }
   }
-
   if (typeof err === "object" && err !== null && "message" in err) {
-    return String((err as { message: unknown }).message);
+    const maybe = err as { message: unknown; details?: unknown };
+    if (typeof maybe.details === "string" && maybe.details.trim().length > 0) {
+      return `${String(maybe.message)} (${maybe.details})`;
+    }
+    return String(maybe.message);
   }
-
   return "Unknown error";
+}
+
+function isTransientTransportError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("too many requests")
+    || lower.includes("expected responses buffer is full")
+    || lower.includes("timeout")
+    || lower.includes("timed out")
+    || lower.includes("not connected")
+    || lower.includes("reconnecting")
+    || lower.includes("broken pipe")
+    || lower.includes("connection reset")
+    || lower.includes("transport")
+    || lower.includes("send failed")
+    || lower.includes("io error")
+    || lower.includes("connection closed")
+  );
 }
 
 function warnLocal(message: string): void {
@@ -190,7 +214,8 @@ export const holdingRegisterState = $state({
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let pollReadInFlight = false;
+let readAllQueuedRuns = 0;
+const READ_ALL_QUEUE_DEPTH_MAX = 6;
 
 export function initHoldingRegisterState(): void {
   const settings = getSettingsSnapshot();
@@ -309,9 +334,18 @@ async function readHoldingRange(
   });
 }
 
-export async function readAllHoldingRegisters(options?: { markPending?: boolean }): Promise<void> {
+export async function readAllHoldingRegisters(options?: { markPending?: boolean; queueIfBusy?: boolean }): Promise<void> {
   if (holdingRegisterState.entries.length === 0) return;
-  if (holdingRegisterState.readInProgress) return;
+  // Do not issue reads while the transport layer is recovering.
+  if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") return;
+
+  const queueIfBusy = options?.queueIfBusy ?? true;
+  if (holdingRegisterState.readInProgress) {
+    if (queueIfBusy && readAllQueuedRuns < READ_ALL_QUEUE_DEPTH_MAX) {
+      readAllQueuedRuns += 1;
+    }
+    return;
+  }
 
   holdingRegisterState.readInProgress = true;
   holdingRegisterState.cancelReadRequested = false;
@@ -320,6 +354,8 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean 
 
   const sections = buildAddressSections(holdingRegisterState.entries.map((entry) => entry.address));
   if (sections.length === 0) {
+    holdingRegisterState.readInProgress = false;
+    holdingRegisterState.cancelReadRequested = false;
     return;
   }
 
@@ -373,7 +409,17 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean 
               entry.pending = false;
             }
           }
-        } catch {
+        } catch (singleErr) {
+          const reason = parseInvokeError(singleErr);
+          if (isTransientTransportError(reason)) {
+            const entry = entryByAddress.get(section.start);
+            if (entry && markPending) {
+              entry.pending = false;
+            }
+            addLog("warn", `fc03.read transient start=${section.start} qty=1 msg=${reason}`);
+            continue;
+          }
+
           const entry = entryByAddress.get(section.start);
           if (entry) {
             entry.writeError = "Address not available";
@@ -417,7 +463,19 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean 
               entry.pending = false;
             }
           }
-        } catch {
+        } catch (chunkErr) {
+          const reason = parseInvokeError(chunkErr);
+          if (isTransientTransportError(reason)) {
+            for (let address = chunkStart; address <= chunkEnd; address += 1) {
+              const entry = entryByAddress.get(address);
+              if (entry && markPending) {
+                entry.pending = false;
+              }
+            }
+            addLog("warn", `fc03.read transient start=${chunkStart} qty=${chunkQty} msg=${reason}`);
+            continue;
+          }
+
           failedRanges.push({ start: chunkStart, end: chunkEnd, quantity: chunkQty });
 
           for (let address = chunkStart; address <= chunkEnd; address += 1) {
@@ -476,6 +534,10 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean 
   } finally {
     holdingRegisterState.readInProgress = false;
     holdingRegisterState.cancelReadRequested = false;
+    if (readAllQueuedRuns > 0) {
+      readAllQueuedRuns -= 1;
+      void readAllHoldingRegisters({ markPending: false, queueIfBusy: false });
+    }
   }
 }
 
@@ -489,13 +551,7 @@ export function cancelHoldingRegisterRead(): void {
 }
 
 async function runHoldingRegisterPollTick(): Promise<void> {
-  if (pollReadInFlight) return;
-  pollReadInFlight = true;
-  try {
-    await readAllHoldingRegisters({ markPending: false });
-  } finally {
-    pollReadInFlight = false;
-  }
+  await readAllHoldingRegisters({ markPending: false, queueIfBusy: true });
 }
 
 export async function writeHoldingRegister(address: number): Promise<void> {

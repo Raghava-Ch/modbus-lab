@@ -16,6 +16,18 @@ use modbus_rs::mbus_async::AsyncTcpClient;
 use modbus_rs::{Coils, DiagnosticSubFunction, DiscreteInputs, EncapsulatedInterfaceType, Registers};
 use serialport::{ClearBuffer, DataBits, Parity, SerialPort, StopBits};
 
+use tauri::AppHandle;
+use super::events::emit_log as emit_supervisor_log;
+
+const TCP_EXPECTED_RESPONSES_DEPTH: usize = 32;
+type TcpClient = AsyncTcpClient<TCP_EXPECTED_RESPONSES_DEPTH>;
+
+/// How many consecutive transport failures on live requests before the supervisor
+/// is triggered immediately — without waiting for the idle-heartbeat window.
+pub const CONSECUTIVE_TRANSPORT_FAILURE_THRESHOLD: u32 = 1;
+/// Maximum back-off between supervisor reconnect attempts (seconds).
+const SUPERVISOR_RECONNECT_MAX_BACKOFF_SECS: u64 = 30;
+
 use super::types::{
     AnalyticsContext, ApiError, ApiResult, CoilEntry, CoilWriteFailure, ConnectionStatus,
     ConnectionStatusPayload, CustomFrameMode, CustomFrameRequest, CustomFrameResponse,
@@ -87,11 +99,19 @@ struct TcpSession {
     reconnect_attempt: u32,
     last_reconnect_error_code: Option<String>,
     last_reconnect_error_message: Option<String>,
+    /// Counts transport-level errors since last success; triggers immediate reconnect at threshold.
+    consecutive_transport_failures: u32,
+    /// Supervisor waits until this instant before retrying a failed reconnect (exponential back-off).
+    reconnect_backoff_until: Option<Instant>,
+    /// Tauri app handle — used by the supervisor to emit status events without a command context.
+    app: AppHandle,
     traffic_sink: Option<TcpTrafficSink>,
-    client: Arc<AsyncTcpClient<9>>,
+    request_gate: TcpRequestGate,
+    client: Arc<TcpClient>,
 }
 
 type TcpTrafficSink = Arc<dyn Fn(String) + Send + Sync + 'static>;
+type TcpRequestGate = Arc<Mutex<()>>;
 
 struct SerialSession {
     frame_mode: SerialFrameMode,
@@ -153,6 +173,7 @@ impl AppState {
 
     pub async fn connect_tcp(
         &self,
+        app: AppHandle,
         request: &TcpConnectRequest,
         traffic_sink: Option<TcpTrafficSink>,
     ) -> ApiResult<ConnectionStatusPayload> {
@@ -235,7 +256,11 @@ impl AppState {
             reconnect_attempt: 0,
             last_reconnect_error_code: None,
             last_reconnect_error_message: None,
+            consecutive_transport_failures: 0,
+            reconnect_backoff_until: None,
+            app: app.clone(),
             traffic_sink,
+            request_gate: Arc::new(Mutex::new(())),
             client: Arc::new(client),
         }));
         rt.status = ConnectionStatus::ConnectedTcp;
@@ -363,8 +388,9 @@ impl AppState {
 
         let entries = match self.active_connection_kind(request.analytics.clone()).await? {
             ActiveConnectionKind::Tcp => {
-                let (client, slave_id, config) =
+                let (client, slave_id, config, request_gate) =
                     self.active_tcp_session(request.analytics.clone()).await?;
+                let _request_lock = request_gate.lock().await;
 
                 let coils = read_multiple_coils_with_retry(
                     &client,
@@ -428,8 +454,9 @@ impl AppState {
 
         let (addr, value) = match self.active_connection_kind(request.analytics.clone()).await? {
             ActiveConnectionKind::Tcp => {
-                let (client, slave_id, config) =
+                let (client, slave_id, config, request_gate) =
                     self.active_tcp_session(request.analytics.clone()).await?;
+                let _request_lock = request_gate.lock().await;
 
                 write_single_coil_with_retry(
                     &client,
@@ -483,8 +510,9 @@ impl AppState {
 
         let entries = match self.active_connection_kind(request.analytics.clone()).await? {
             ActiveConnectionKind::Tcp => {
-                let (client, slave_id, config) =
+                let (client, slave_id, config, request_gate) =
                     self.active_tcp_session(request.analytics.clone()).await?;
+                let _request_lock = request_gate.lock().await;
 
                 let inputs = read_multiple_discrete_inputs_with_retry(
                     &client,
@@ -558,8 +586,9 @@ impl AppState {
 
         let entries = match self.active_connection_kind(request.analytics.clone()).await? {
             ActiveConnectionKind::Tcp => {
-                let (client, slave_id, config) =
+                let (client, slave_id, config, request_gate) =
                     self.active_tcp_session(request.analytics.clone()).await?;
+                let _request_lock = request_gate.lock().await;
 
                 let registers = read_multiple_holding_registers_with_retry(
                     &client,
@@ -633,8 +662,9 @@ impl AppState {
 
         let entries = match self.active_connection_kind(request.analytics.clone()).await? {
             ActiveConnectionKind::Tcp => {
-                let (client, slave_id, config) =
+                let (client, slave_id, config, request_gate) =
                     self.active_tcp_session(request.analytics.clone()).await?;
+                let _request_lock = request_gate.lock().await;
 
                 let registers = read_multiple_input_registers_with_retry(
                     &client,
@@ -701,8 +731,9 @@ impl AppState {
 
         let (addr, value) = match self.active_connection_kind(request.analytics.clone()).await? {
             ActiveConnectionKind::Tcp => {
-                let (client, slave_id, config) =
+                let (client, slave_id, config, request_gate) =
                     self.active_tcp_session(request.analytics.clone()).await?;
+                let _request_lock = request_gate.lock().await;
 
                 write_single_register_with_retry(
                     &client,
@@ -798,7 +829,9 @@ impl AppState {
             });
         }
 
-        let (client, slave_id, config) = self.active_tcp_session(request.analytics.clone()).await?;
+        let (client, slave_id, config, request_gate) =
+            self.active_tcp_session(request.analytics.clone()).await?;
+        let _request_lock = request_gate.lock().await;
 
         let total = request.coils.len();
         let mut written = 0;
@@ -853,7 +886,19 @@ impl AppState {
                             }
                             Err(fc15_err) => {
                                 // Fall back to single writes for this range on error
+                                let mut transport_bail = false;
                                 for coil in &range {
+                                    if transport_bail {
+                                        failures.push(CoilWriteFailure {
+                                            address: coil.address,
+                                            code: "TRANSPORT_DOWN".to_string(),
+                                            message: format!(
+                                                "FC15 failed ({}) and FC05 fallback skipped (transport down).",
+                                                describe_api_error(&fc15_err)
+                                            ),
+                                        });
+                                        continue;
+                                    }
                                     match write_single_coil_with_retry(
                                         &client,
                                         slave_id,
@@ -865,15 +910,20 @@ impl AppState {
                                     .await
                                     {
                                         Ok(_) => written += 1,
-                                        Err(single_err) => failures.push(CoilWriteFailure {
-                                            address: coil.address,
-                                            code: api_error_code(&single_err).to_string(),
-                                            message: format!(
-                                                "FC15 failed ({}) and FC05 fallback failed ({}).",
-                                                describe_api_error(&fc15_err),
-                                                describe_api_error(&single_err)
-                                            ),
-                                        }),
+                                        Err(single_err) => {
+                                            if is_immediate_transport_failure(&describe_api_error(&single_err)) {
+                                                transport_bail = true;
+                                            }
+                                            failures.push(CoilWriteFailure {
+                                                address: coil.address,
+                                                code: api_error_code(&single_err).to_string(),
+                                                message: format!(
+                                                    "FC15 failed ({}) and FC05 fallback failed ({}).",
+                                                    describe_api_error(&fc15_err),
+                                                    describe_api_error(&single_err)
+                                                ),
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -881,7 +931,19 @@ impl AppState {
                     }
                     Err(err) => {
                         // Invalid range; fall back to single writes
+                        let mut transport_bail = false;
                         for coil in &range {
+                            if transport_bail {
+                                failures.push(CoilWriteFailure {
+                                    address: coil.address,
+                                    code: "TRANSPORT_DOWN".to_string(),
+                                    message: format!(
+                                        "FC15 range build failed ({}) and FC05 fallback skipped (transport down).",
+                                        err
+                                    ),
+                                });
+                                continue;
+                            }
                             match write_single_coil_with_retry(
                                 &client,
                                 slave_id,
@@ -893,15 +955,20 @@ impl AppState {
                             .await
                             {
                                 Ok(_) => written += 1,
-                                Err(single_err) => failures.push(CoilWriteFailure {
-                                    address: coil.address,
-                                    code: api_error_code(&single_err).to_string(),
-                                    message: format!(
-                                        "FC15 range build failed ({}) and FC05 fallback failed ({}).",
-                                        err,
-                                        describe_api_error(&single_err)
-                                    ),
-                                }),
+                                Err(single_err) => {
+                                    if is_immediate_transport_failure(&describe_api_error(&single_err)) {
+                                        transport_bail = true;
+                                    }
+                                    failures.push(CoilWriteFailure {
+                                        address: coil.address,
+                                        code: api_error_code(&single_err).to_string(),
+                                        message: format!(
+                                            "FC15 range build failed ({}) and FC05 fallback failed ({}).",
+                                            err,
+                                            describe_api_error(&single_err)
+                                        ),
+                                    });
+                                }
                             }
                         }
                     }
@@ -993,7 +1060,9 @@ impl AppState {
             });
         }
 
-        let (client, slave_id, config) = self.active_tcp_session(request.analytics.clone()).await?;
+        let (client, slave_id, config, request_gate) =
+            self.active_tcp_session(request.analytics.clone()).await?;
+        let _request_lock = request_gate.lock().await;
 
         let total = request.registers.len();
         let mut written = 0;
@@ -1034,7 +1103,19 @@ impl AppState {
                         written += range.len();
                     }
                     Err(fc16_err) => {
+                        let mut transport_bail = false;
                         for reg in &range {
+                            if transport_bail {
+                                failures.push(RegisterWriteFailure {
+                                    address: reg.address,
+                                    code: "TRANSPORT_DOWN".to_string(),
+                                    message: format!(
+                                        "FC16 failed ({}) and FC06 fallback skipped (transport down).",
+                                        describe_api_error(&fc16_err)
+                                    ),
+                                });
+                                continue;
+                            }
                             match write_single_register_with_retry(
                                 &client,
                                 slave_id,
@@ -1046,15 +1127,20 @@ impl AppState {
                             .await
                             {
                                 Ok(_) => written += 1,
-                                Err(single_err) => failures.push(RegisterWriteFailure {
-                                    address: reg.address,
-                                    code: api_error_code(&single_err).to_string(),
-                                    message: format!(
-                                        "FC16 failed ({}) and FC06 fallback failed ({}).",
-                                        describe_api_error(&fc16_err),
-                                        describe_api_error(&single_err)
-                                    ),
-                                }),
+                                Err(single_err) => {
+                                    if is_immediate_transport_failure(&describe_api_error(&single_err)) {
+                                        transport_bail = true;
+                                    }
+                                    failures.push(RegisterWriteFailure {
+                                        address: reg.address,
+                                        code: api_error_code(&single_err).to_string(),
+                                        message: format!(
+                                            "FC16 failed ({}) and FC06 fallback failed ({}).",
+                                            describe_api_error(&fc16_err),
+                                            describe_api_error(&single_err)
+                                        ),
+                                    });
+                                }
                             }
                         }
                     }
@@ -1585,13 +1671,14 @@ impl AppState {
     async fn active_tcp_session(
         &self,
         analytics: Option<AnalyticsContext>,
-    ) -> ApiResult<(Arc<AsyncTcpClient<9>>, u8, TcpRuntimeConfig)> {
+    ) -> ApiResult<(Arc<TcpClient>, u8, TcpRuntimeConfig, TcpRequestGate)> {
         let rt = self.runtime.lock().await;
         match &rt.active {
             Some(ActiveConnection::Tcp(session)) => Ok((
                 Arc::clone(&session.client),
                 session.slave_id,
                 session.config,
+                Arc::clone(&session.request_gate),
             )),
             Some(ActiveConnection::SerialRtu(_)) => Err(ApiError::backend_failure(
                 "Operation not available on Serial RTU yet.",
@@ -1701,6 +1788,99 @@ impl AppState {
             session.last_communication_at = Instant::now();
         }
     }
+
+    /// Called from every command handler on request success.
+    /// Resets the consecutive-failure counter and refreshes the activity timestamp.
+    pub async fn record_request_success(&self) {
+        let mut rt = self.runtime.lock().await;
+        if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
+            session.consecutive_transport_failures = 0;
+            session.last_communication_at = Instant::now();
+        }
+    }
+
+    /// Called from every command handler when a transport-level error is returned.
+    /// Returns `true` the **first** time the failure threshold is crossed, which
+    /// transitions the session from `ConnectedTcp` → `Reconnecting` so the
+    /// supervisor and frontend both react immediately.
+    pub async fn record_request_transport_failure(&self) -> bool {
+        let mut rt = self.runtime.lock().await;
+        if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
+            session.consecutive_transport_failures =
+                session.consecutive_transport_failures.saturating_add(1);
+            if session.consecutive_transport_failures >= CONSECUTIVE_TRANSPORT_FAILURE_THRESHOLD
+                && matches!(rt.status, ConnectionStatus::ConnectedTcp)
+            {
+                rt.status = ConnectionStatus::Reconnecting;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub async fn recover_tcp_client_pipeline(
+        &self,
+        analytics: Option<AnalyticsContext>,
+    ) -> ApiResult<()> {
+        let (session_id, host, port, connection_timeout, config, traffic_sink) = {
+            let mut rt = self.runtime.lock().await;
+            rt.status = ConnectionStatus::Reconnecting;
+            match rt.active.as_mut() {
+                Some(ActiveConnection::Tcp(session)) => {
+                    (
+                        session.session_id,
+                        session.host.clone(),
+                        session.port,
+                        session.connection_timeout,
+                        session.config,
+                        session.traffic_sink.clone(),
+                    )
+                }
+                Some(ActiveConnection::SerialRtu(_)) | Some(ActiveConnection::SerialAscii(_)) => {
+                    return Err(ApiError::backend_failure(
+                        "TCP recovery requested while active connection is serial.",
+                        Some("Switch protocol to TCP and reconnect.".to_string()),
+                        analytics,
+                    ));
+                }
+                None => {
+                    return Err(ApiError::not_connected(
+                        "No active Modbus TCP connection.",
+                        analytics,
+                    ));
+                }
+            }
+        };
+
+        let new_client = connect_tcp_client(
+            host,
+            port,
+            connection_timeout,
+            config,
+            analytics.clone(),
+            traffic_sink,
+        )
+        .await?;
+
+        let mut rt = self.runtime.lock().await;
+        if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
+            if session.session_id != session_id {
+                return Ok(());
+            }
+
+            session.client = Arc::new(new_client);
+            session.last_communication_at = Instant::now();
+            session.reconnect_attempt = 0;
+            session.consecutive_transport_failures = 0;
+            session.reconnect_backoff_until = None;
+            session.last_reconnect_error_code = None;
+            session.last_reconnect_error_message = None;
+            rt.status = ConnectionStatus::ConnectedTcp;
+            return Ok(());
+        }
+
+        Ok(())
+    }
 }
 
 const HEARTBEAT_TICK: Duration = Duration::from_secs(1);
@@ -1709,6 +1889,39 @@ async fn run_tcp_supervisor(runtime: Arc<Mutex<RuntimeState>>, session_id: u64) 
     loop {
         sleep(HEARTBEAT_TICK).await;
 
+        // ── Phase 1: Active reconnect when the session is already Reconnecting ────────
+        // This runs regardless of idle time so the supervisor reacts the moment
+        // request handlers mark the session as Reconnecting.
+        let needs_active_reconnect = {
+            let rt = runtime.lock().await;
+            let Some(ActiveConnection::Tcp(session)) = &rt.active else { return; };
+            if session.session_id != session_id { return; }
+            matches!(rt.status, ConnectionStatus::Reconnecting)
+                && session
+                    .reconnect_backoff_until
+                    .map_or(true, |until| Instant::now() >= until)
+        };
+
+        if needs_active_reconnect {
+            let (host, port, connection_timeout, config) = {
+                let rt = runtime.lock().await;
+                let Some(ActiveConnection::Tcp(session)) = &rt.active else { return; };
+                if session.session_id != session_id { return; }
+                (session.host.clone(), session.port, session.connection_timeout, session.config)
+            };
+            attempt_supervisor_reconnect(
+                Arc::clone(&runtime),
+                session_id,
+                host,
+                port,
+                connection_timeout,
+                config,
+            )
+            .await;
+            continue;
+        }
+
+        // ── Phase 2: Idle heartbeat probe when Connected ────────────────────────────
         let snapshot = {
             let rt = runtime.lock().await;
             let Some(ActiveConnection::Tcp(session)) = &rt.active else {
@@ -1722,6 +1935,7 @@ async fn run_tcp_supervisor(runtime: Arc<Mutex<RuntimeState>>, session_id: u64) 
             match session.heartbeat_idle_after {
                 Some(idle_after) if session.last_communication_at.elapsed() >= idle_after => Some((
                     Arc::clone(&session.client),
+                    Arc::clone(&session.request_gate),
                     session.host.clone(),
                     session.port,
                     session.slave_id,
@@ -1732,11 +1946,13 @@ async fn run_tcp_supervisor(runtime: Arc<Mutex<RuntimeState>>, session_id: u64) 
             }
         };
 
-        let Some((client, host, port, slave_id, config, connection_timeout)) =
+        let Some((client, request_gate, host, port, slave_id, config, connection_timeout)) =
             snapshot
         else {
             continue;
         };
+
+        let _request_lock = request_gate.lock().await;
 
         let heartbeat = timeout(
             config.response_timeout,
@@ -1798,17 +2014,18 @@ async fn attempt_supervisor_reconnect(
     connection_timeout: Duration,
     config: TcpRuntimeConfig,
 ) {
-    let traffic_sink = {
+    let (app, traffic_sink) = {
         let mut rt = runtime.lock().await;
         if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
             if session.session_id != session_id {
                 return;
             }
 
+            let app = session.app.clone();
             let sink = session.traffic_sink.clone();
             session.reconnect_attempt = session.reconnect_attempt.saturating_add(1);
             rt.status = ConnectionStatus::Reconnecting;
-            sink
+            (app, sink)
         } else {
             return;
         }
@@ -1816,27 +2033,55 @@ async fn attempt_supervisor_reconnect(
 
     let reconnect = connect_tcp_client(host, port, connection_timeout, config, None, traffic_sink).await;
 
-    let mut rt = runtime.lock().await;
-    if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
-        if session.session_id != session_id {
-            return;
-        }
+    let mut reconnected_label: Option<String> = None;
 
-        match reconnect {
-            Ok(new_client) => {
-                session.client = Arc::new(new_client);
-                session.last_communication_at = Instant::now();
-                session.reconnect_attempt = 0;
-                session.last_reconnect_error_code = None;
-                session.last_reconnect_error_message = None;
-                rt.status = ConnectionStatus::ConnectedTcp;
+    {
+        let mut rt = runtime.lock().await;
+        if let Some(ActiveConnection::Tcp(session)) = rt.active.as_mut() {
+            if session.session_id != session_id {
+                return;
             }
-            Err(err) => {
-                session.last_reconnect_error_code = Some(api_error_code(&err).to_string());
-                session.last_reconnect_error_message = Some(describe_api_error(&err));
-                rt.status = ConnectionStatus::Reconnecting;
+
+            match reconnect {
+                Ok(new_client) => {
+                    reconnected_label = Some(format!("TCP {}:{}", session.host, session.port));
+                    session.client = Arc::new(new_client);
+                    session.last_communication_at = Instant::now();
+                    session.reconnect_attempt = 0;
+                    session.consecutive_transport_failures = 0;
+                    session.reconnect_backoff_until = None;
+                    session.last_reconnect_error_code = None;
+                    session.last_reconnect_error_message = None;
+                    rt.status = ConnectionStatus::ConnectedTcp;
+                }
+                Err(err) => {
+                    session.last_reconnect_error_code = Some(api_error_code(&err).to_string());
+                    session.last_reconnect_error_message = Some(describe_api_error(&err));
+                    // Exponential back-off: 2 s → 4 s → 8 s → 16 s → 30 s (capped)
+                    let backoff_secs = 2_u64
+                        .saturating_pow(session.reconnect_attempt.min(4))
+                        .min(SUPERVISOR_RECONNECT_MAX_BACKOFF_SECS);
+                    session.reconnect_backoff_until =
+                        Some(Instant::now() + Duration::from_secs(backoff_secs));
+                    rt.status = ConnectionStatus::Reconnecting;
+                }
             }
         }
+    }
+
+    if let Some(label) = reconnected_label {
+        emit_supervisor_log(
+            &app,
+            super::types::BackendEventLevel::Info,
+            "connection",
+            format!("reconnect.tcp ok"),
+            Some(ConnectionStatusPayload {
+                status: ConnectionStatus::ConnectedTcp,
+                details: Some(label),
+            }),
+            None,
+        )
+        .await;
     }
 }
 
@@ -1846,6 +2091,23 @@ async fn attempt_supervisor_reconnect(
 fn is_modbus_protocol_exception(err: &str) -> bool {
     let t = err.to_ascii_lowercase();
     t.contains("exception") || t.contains("illegal") || t.contains("slave device failure")
+}
+
+/// Returns true for errors that indicate the TCP pipe is immediately broken
+/// (send failure, broken pipe, connection reset, EOF). Retrying after sleeping
+/// is pointless and only delays down-detection — break the retry loop immediately.
+fn is_immediate_transport_failure(err: &str) -> bool {
+    let t = err.to_ascii_lowercase();
+    t.contains("sendfailed")
+        || t.contains("send failed")
+        || t.contains("failed to send")
+        || t.contains("broken pipe")
+        || t.contains("connection reset")
+        || t.contains("connection closed")
+        || t.contains("connection aborted")
+        || t.contains("unexpected eof")
+        || t.contains("early eof")
+        || t.contains("not connected")
 }
 
 fn should_reconnect_from_heartbeat_error(error_text: &str) -> bool {
@@ -1884,11 +2146,11 @@ async fn connect_tcp_client(
     config: TcpRuntimeConfig,
     analytics: Option<AnalyticsContext>,
     traffic_sink: Option<TcpTrafficSink>,
-) -> ApiResult<AsyncTcpClient<9>> {
+) -> ApiResult<TcpClient> {
     let mut last_details = None;
 
     for attempt in 0..=u32::from(config.retry_attempts) {
-        let client = match AsyncTcpClient::<9>::new(host.as_str(), port) {
+        let client = match TcpClient::new_with_pipeline(host.as_str(), port) {
             Ok(client) => client,
             Err(err) => {
                 last_details = Some(err.to_string());
@@ -2014,7 +2276,7 @@ async fn open_serial_port(
 }
 
 async fn read_multiple_coils_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     start_address: u16,
     quantity: u16,
@@ -2034,7 +2296,7 @@ async fn read_multiple_coils_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(
@@ -2057,7 +2319,7 @@ async fn read_multiple_coils_with_retry(
 }
 
 async fn read_multiple_discrete_inputs_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     start_address: u16,
     quantity: u16,
@@ -2077,7 +2339,7 @@ async fn read_multiple_discrete_inputs_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(
@@ -2100,7 +2362,7 @@ async fn read_multiple_discrete_inputs_with_retry(
 }
 
 async fn read_multiple_holding_registers_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     start_address: u16,
     quantity: u16,
@@ -2120,7 +2382,7 @@ async fn read_multiple_holding_registers_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(
@@ -2143,7 +2405,7 @@ async fn read_multiple_holding_registers_with_retry(
 }
 
 async fn read_multiple_input_registers_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     start_address: u16,
     quantity: u16,
@@ -2163,7 +2425,7 @@ async fn read_multiple_input_registers_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(
@@ -2186,7 +2448,7 @@ async fn read_multiple_input_registers_with_retry(
 }
 
 async fn write_single_coil_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     address: u16,
     value: bool,
@@ -2206,7 +2468,7 @@ async fn write_single_coil_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(
@@ -2229,7 +2491,7 @@ async fn write_single_coil_with_retry(
 }
 
 async fn write_single_register_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     address: u16,
     value: u16,
@@ -2249,7 +2511,7 @@ async fn write_single_register_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(
@@ -2272,7 +2534,7 @@ async fn write_single_register_with_retry(
 }
 
 async fn write_multiple_coils_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     start_address: u16,
     coils: &Coils,
@@ -2292,7 +2554,7 @@ async fn write_multiple_coils_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(
@@ -2315,7 +2577,7 @@ async fn write_multiple_coils_with_retry(
 }
 
 async fn write_multiple_registers_with_retry(
-    client: &AsyncTcpClient<9>,
+    client: &TcpClient,
     slave_id: u8,
     start_address: u16,
     values: &[u16],
@@ -2335,7 +2597,7 @@ async fn write_multiple_registers_with_retry(
             Ok(Err(err)) => {
                 let s = err.to_string();
                 last_details = Some(s.clone());
-                if is_modbus_protocol_exception(&s) { break; }
+                if is_modbus_protocol_exception(&s) || is_immediate_transport_failure(&s) { break; }
             }
             Err(_) => {
                 last_details = Some(format!(

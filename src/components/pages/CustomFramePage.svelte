@@ -35,7 +35,7 @@
 
 <PageShell title="Custom Frame" feature="Raw Modbus PDU builder" icon="file-text">
   {#snippet children()}
-    {#if !connected}
+    {#if connectionState.status === "disconnected"}
       <div class="disconnected-banner" role="alert">
         <span class="banner-icon">⚠</span>
         <span class="banner-text">Not connected — go to <strong>Connection</strong> and connect to a device before using custom-frame operations.</span>

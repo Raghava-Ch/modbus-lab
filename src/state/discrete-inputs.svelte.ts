@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
+import { connectionState } from "./connection.svelte";
 import {
   getGlobalPollingMaxAddressCount,
   getSettingsSnapshot,
@@ -71,18 +72,41 @@ function formatSectionPreview(sections: AddressSection[], max = 4): string {
 function parseInvokeError(err: unknown): string {
   if (typeof err === "string") {
     try {
-      const parsed = JSON.parse(err) as { message?: string };
+      const parsed = JSON.parse(err) as { message?: string; details?: string };
+      if (typeof parsed.details === "string" && parsed.details.trim().length > 0) {
+        return `${parsed.message ?? "Unknown error"} (${parsed.details})`;
+      }
       return parsed.message ?? err;
     } catch {
       return err;
     }
   }
-
   if (typeof err === "object" && err !== null && "message" in err) {
-    return String((err as { message: unknown }).message);
+    const maybe = err as { message: unknown; details?: unknown };
+    if (typeof maybe.details === "string" && maybe.details.trim().length > 0) {
+      return `${String(maybe.message)} (${maybe.details})`;
+    }
+    return String(maybe.message);
   }
-
   return "Unknown error";
+}
+
+function isTransientTransportError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("too many requests")
+    || lower.includes("expected responses buffer is full")
+    || lower.includes("timeout")
+    || lower.includes("timed out")
+    || lower.includes("not connected")
+    || lower.includes("reconnecting")
+    || lower.includes("broken pipe")
+    || lower.includes("connection reset")
+    || lower.includes("transport")
+    || lower.includes("send failed")
+    || lower.includes("io error")
+    || lower.includes("connection closed")
+  );
 }
 
 function warnLocal(message: string): void {
@@ -127,7 +151,9 @@ export const discreteInputState = $state({
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let pollReadInFlight = false;
+let readAllInFlight = false;
+let readAllQueuedRuns = 0;
+const READ_ALL_QUEUE_DEPTH_MAX = 6;
 
 export function initDiscreteInputState(): void {
   const settings = getSettingsSnapshot();
@@ -352,8 +378,14 @@ async function readRangeAdaptive(startAddress: number, quantity: number): Promis
         return;
       }
 
+      // Transport failure: re-throw so the outer section handler logs once and continues.
+      // Bisecting here would only produce O(n) redundant failures for every address.
+      const reason = parseInvokeError(err);
+      if (isTransientTransportError(reason)) {
+        throw err;
+      }
+
       if (qty === 1) {
-        const reason = parseInvokeError(err);
         addLog("warn", `fc02.read miss addr=${start} msg=${reason}`);
         return;
       }
@@ -380,8 +412,20 @@ export function getFilteredDiscreteInputs(): DiscreteInputEntry[] {
   }
 }
 
-export async function readAllDiscreteInputs(options?: { trace?: boolean; markPending?: boolean }): Promise<void> {
+export async function readAllDiscreteInputs(options?: { trace?: boolean; markPending?: boolean; queueIfBusy?: boolean }): Promise<void> {
   if (discreteInputState.entries.length === 0) return;
+  // Do not issue reads while the transport layer is recovering.
+  if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") return;
+
+  const queueIfBusy = options?.queueIfBusy ?? true;
+  if (readAllInFlight) {
+    if (queueIfBusy && readAllQueuedRuns < READ_ALL_QUEUE_DEPTH_MAX) {
+      readAllQueuedRuns += 1;
+    }
+    return;
+  }
+
+  readAllInFlight = true;
 
   const sections = buildAddressSections(discreteInputState.entries.map((entry) => entry.address));
   const trace = options?.trace ?? true;
@@ -447,6 +491,21 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean; markPen
         }
       } catch (sectionErr) {
         const end = section.start + section.quantity - 1;
+        const reason = parseInvokeError(sectionErr);
+        if (isTransientTransportError(reason)) {
+          for (let address = section.start; address <= end; address += 1) {
+            const entry = entryByAddress.get(address);
+            if (entry && markPending) {
+              entry.pending = false;
+            }
+          }
+          addLog(
+            "warn",
+            `fc02.read transient start=${section.start} qty=${section.quantity} end=${end} msg=${reason}`,
+          );
+          continue;
+        }
+
         for (let address = section.start; address <= end; address += 1) {
           const entry = entryByAddress.get(address);
           if (entry) {
@@ -458,7 +517,7 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean; markPen
         }
         addLog(
           "error",
-          `fc02.read err start=${section.start} qty=${section.quantity} end=${end} msg=${parseInvokeError(sectionErr)}`,
+          `fc02.read err start=${section.start} qty=${section.quantity} end=${end} msg=${reason}`,
         );
       }
     }
@@ -477,17 +536,17 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean; markPen
       }
     }
     addLog("error", `fc02.read err msg=${parseInvokeError(err)}`);
+  } finally {
+    readAllInFlight = false;
+    if (readAllQueuedRuns > 0) {
+      readAllQueuedRuns -= 1;
+      void readAllDiscreteInputs({ trace: false, markPending: false, queueIfBusy: false });
+    }
   }
 }
 
 async function runDiscreteInputPollTick(): Promise<void> {
-  if (pollReadInFlight) return;
-  pollReadInFlight = true;
-  try {
-    await readAllDiscreteInputs({ trace: false, markPending: false });
-  } finally {
-    pollReadInFlight = false;
-  }
+  await readAllDiscreteInputs({ trace: false, markPending: false, queueIfBusy: true });
 }
 
 export async function readDiscreteInput(address: number): Promise<void> {

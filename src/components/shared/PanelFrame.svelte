@@ -18,7 +18,7 @@
     border: 1px solid var(--c-border);
     background: var(--c-surface-1);
     border-radius: 12px;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .body {

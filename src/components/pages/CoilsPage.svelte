@@ -45,6 +45,7 @@
     type WriteMode,
   } from "../../state/coils.svelte";
   import { connectionState } from "../../state/connection.svelte";
+  import { estimateFrameMs } from "../../lib/frame-timing";
   import {
     formatAddressWithSettings,
     getGlobalPollingMaxAddressCount,
@@ -86,7 +87,6 @@
   const RANGE_APPLY_MIN_SPINNER_MS = 250;
   const COIL_READ_CHUNK_MAX = 2000;
   const COIL_WRITE_CHUNK_MAX = 1968;
-  const FRAME_ESTIMATE_MS = 22;
 
   interface AddressSection {
     start: number;
@@ -117,16 +117,30 @@
     return sections;
   }
 
-  function buildRequestPlan(addresses: number[], chunkMax: number): { frames: number; cycleMs: number } {
+  function buildRequestPlan(
+    addresses: number[],
+    chunkMax: number,
+    responsePayloadBytes: number,
+  ): { frames: number; cycleMs: number } {
     const sections = buildAddressSections(addresses);
     const frames = sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
-    return { frames, cycleMs: frames * FRAME_ESTIMATE_MS };
+    const { protocol, serial, tcp } = connectionState;
+    const frameMs = estimateFrameMs(
+      responsePayloadBytes,
+      protocol,
+      serial.baudRate,
+      serial.dataBits,
+      serial.parity,
+      serial.stopBits,
+      tcp.responseTimeoutMs,
+    );
+    return { frames, cycleMs: frames * frameMs };
   }
 
   // ── Filtered coil list ──────────────────────────────────────────────────────
   const filtered = $derived(getFilteredCoils());
   const readPlan = $derived(
-    buildRequestPlan(coilState.entries.map((entry) => entry.address), COIL_READ_CHUNK_MAX),
+    buildRequestPlan(coilState.entries.map((entry) => entry.address), COIL_READ_CHUNK_MAX, 250),
   );
   const VIRTUAL_TABLE_THRESHOLD = 300;
   const VIRTUAL_SWITCH_THRESHOLD = 200;
@@ -272,6 +286,7 @@
         })
         .map((entry) => entry.address),
       COIL_WRITE_CHUNK_MAX,
+      4,
     ),
   );
   const onCount = $derived(coilState.entries.filter((e) => e.slaveValue).length);
@@ -421,7 +436,7 @@
 </script>
 
 <div class="coils-page">
-  {#if !connected}
+  {#if connectionState.status === "disconnected"}
     <div class="disconnected-banner" role="alert">
       <span class="banner-icon">⚠</span>
       <span class="banner-text">Not connected — go to <strong>Connection</strong> and connect to a device before using coil operations.</span>
@@ -447,7 +462,7 @@
           {/each}
         </select>
         <button
-          class="ctrl-btn has-tip"
+          class="ctrl-btn poll-btn has-tip"
           class:active={coilState.pollActive}
           data-tip={pollDisabledByCount ? "Polling disabled for large lists" : coilState.pollActive ? "Stop polling" : "Start polling"}
           type="button"
@@ -471,9 +486,11 @@
             Poll disabled: list &gt; {pollMaxCount}
           </span>
         {/if}
-        <span class="pending-chip has-tip" data-tip="Estimated FC01 frames and cycle time per read-all run">
-          Read plan: {readPlan.frames}f ~{readPlan.cycleMs}ms
-        </span>
+        {#if coilState.entries.length > 0}
+          <span class="plan-chip has-tip" data-tip="Estimated FC01 frames and cycle time per read-all run">
+            Read {readPlan.frames}f ~{readPlan.cycleMs}ms
+          </span>
+        {/if}
       </div>
 
       <div class="divider-v"></div>
@@ -971,13 +988,13 @@
   .divider-v {
     width: 1px;
     height: 20px;
-    background: var(--c-border);
+    background: color-mix(in srgb, var(--c-border) 55%, transparent);
   }
 
   .ctrl-select {
     height: 24px;
     padding: 0 20px 0 7px;
-    border: 1px solid var(--c-border);
+    border: 1px solid color-mix(in srgb, var(--c-border) 78%, var(--c-surface-3));
     border-radius: 4px;
     background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23c9cfda' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
@@ -996,7 +1013,7 @@
     gap: 3px;
     height: 24px;
     padding: 0 8px;
-    border: 1px solid var(--c-border);
+    border: 1px solid color-mix(in srgb, var(--c-border) 78%, var(--c-surface-3));
     border-radius: 4px;
     background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
     color: var(--c-text-2);
@@ -1011,13 +1028,18 @@
     padding: 0 6px;
   }
 
+  .ctrl-btn.poll-btn {
+    min-width: 78px;
+    justify-content: center;
+  }
+
   .ctrl-btn:hover {
-    border-color: var(--c-border-strong);
+    border-color: color-mix(in srgb, var(--c-border-strong) 68%, var(--c-surface-3));
     color: var(--c-text-1);
   }
 
   .ctrl-btn.active {
-    border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
+    border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
     background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
     color: var(--c-text-1);
     box-shadow: inset 0 -1px 0 0 var(--c-accent);
@@ -1118,6 +1140,21 @@
     font-size: 0.66rem;
     font-weight: 600;
     letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .plan-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 2px 0 6px;
+    border: none;
+    background: transparent;
+    color: var(--c-text-3);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
 
@@ -1446,7 +1483,9 @@
   .ct-body {
     max-height: min(62vh, 680px);
     overflow-y: auto;
+    overflow-y: overlay;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     overscroll-behavior: contain;
   }
 
@@ -1490,7 +1529,9 @@
   .switch-virtual-scroll {
     max-height: min(62vh, 680px);
     overflow-y: auto;
+    overflow-y: overlay;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     overscroll-behavior: contain;
   }
 

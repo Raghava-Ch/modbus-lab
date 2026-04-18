@@ -243,7 +243,9 @@
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
+    overflow-y: overlay;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     padding: 12px 12px 18px;
     background:
       radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--c-accent) 18%, transparent) 0%, transparent 42%),
@@ -549,6 +551,8 @@
   .app-shell.force-mobile :global(.main-content) {
     overflow-x: auto;
     overflow-y: auto;
+    overflow-y: overlay;
+    scrollbar-gutter: stable;
     -webkit-overflow-scrolling: touch;
   }
 
