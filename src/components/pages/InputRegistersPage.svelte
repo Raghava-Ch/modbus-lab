@@ -894,26 +894,43 @@
   .view-toggle {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
   }
 
   .selectable-item {
-    border-radius: 8px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  }
+
+  .selectable-item:hover {
+    border-color: color-mix(in srgb, var(--c-border-strong) 68%, var(--c-border));
+    background: color-mix(in srgb, var(--c-surface-3) 45%, transparent);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--c-border-strong) 26%, transparent);
   }
 
   .selectable-item.zebra-row :global(.rt-row) {
     background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+    border-radius: 10px;
   }
 
   .selected-item {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 62%, transparent);
-    background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+    border: 1px solid var(--c-accent);
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    border-radius: 10px;
+  }
+
+  .selected-item:hover {
+    border-color: var(--c-accent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--c-accent) 48%, transparent);
   }
 
   .divider-v {
     width: 1px;
     height: 20px;
-    background: color-mix(in srgb, var(--c-border) 55%, transparent);
+    background: color-mix(in srgb, var(--c-border) 5%, transparent);
   }
 
   .ctrl-select {
@@ -964,10 +981,19 @@
   }
 
   .ctrl-btn.active {
+    border: 2px solid;
     border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
-    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
     color: var(--c-text-1);
-    box-shadow: inset 0 -1px 0 0 var(--c-accent);
+  }
+
+  .ctrl-btn:active {
+    border: 1px solid;
+    border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    color: var(--c-text-1);
   }
 
   .ctrl-btn.active :global(svg) {

@@ -266,6 +266,7 @@
 
   // ── Inline label editing ────────────────────────────────────────────────────
   let editingAddress: number | null = $state(null);
+  let selectedInputAddress: number | null = $state(null);
   let editLabelVal = $state("");
   let addAddressInput = $state("");
   let singleWriteAddressInput = $state("");
@@ -615,31 +616,53 @@
               <div class="ct-spacer" style={`height: ${tableTopSpacerHeight}px;`}></div>
             {/if}
 
-            {#each visibleTableEntries as entry (entry.address)}
-              <TableRow
-                entry={{
-                  address: entry.address,
-                  slaveValue: entry.value,
-                  desiredValue: entry.value,
-                  pending: entry.pending,
-                  writeError: entry.readError,
-                  label: entry.label,
+            {#each visibleTableEntries as entry, rowIndex (entry.address)}
+              <div
+                class="selectable-item"
+                class:zebra-row={(tableStartRow + rowIndex) % 2 === 1}
+                class:selected-item={selectedInputAddress === entry.address}
+                role="button"
+                tabindex="0"
+                onclick={() => { selectedInputAddress = entry.address; }}
+                onkeydown={(e) => {
+                  const target = e.target as HTMLElement | null;
+                  if (
+                    target &&
+                    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                  ) {
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectedInputAddress = entry.address;
+                  }
                 }}
-                {connected}
-                {editingAddress}
-                {editLabelVal}
-                {addrFmt}
-                {beginEdit}
-                {commitEdit}
-                {cancelEdit}
-                {onLabelKeydown}
-                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                onToggle={undefined}
-                onRead={(address: number) => { void readDiscreteInput(address); }}
-                onWrite={undefined}
-                onDelete={(address: number) => removeDiscreteInput(address)}
-                showStatusColumn={true}
-              />
+              >
+                <TableRow
+                  entry={{
+                    address: entry.address,
+                    slaveValue: entry.value,
+                    desiredValue: entry.value,
+                    pending: entry.pending,
+                    writeError: entry.readError,
+                    label: entry.label,
+                  }}
+                  {connected}
+                  {editingAddress}
+                  {editLabelVal}
+                  {addrFmt}
+                  {beginEdit}
+                  {commitEdit}
+                  {cancelEdit}
+                  {onLabelKeydown}
+                  onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                  onToggle={undefined}
+                  onRead={(address: number) => { void readDiscreteInput(address); }}
+                  onWrite={undefined}
+                  onDelete={(address: number) => removeDiscreteInput(address)}
+                  showStatusColumn={true}
+                />
+              </div>
             {/each}
 
             {#if tableBottomSpacerHeight > 0}
@@ -665,32 +688,53 @@
 
           <div class="switch-grid">
             {#each visibleSwitchEntries as entry (entry.address)}
-              <SwitchCard
-                address={entry.address}
-                label={entry.label}
-                pending={entry.pending}
-                readValue={entry.value}
-                toggleValue={entry.value}
-                {connected}
-                cardDirty={entry.readError !== null}
-                {editingAddress}
-                {editLabelVal}
-                {addrFmt}
-                onBeginEdit={beginEdit}
-                onCommitEdit={commitEdit}
-                onCancelEdit={cancelEdit}
-                {onLabelKeydown}
-                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                onToggle={undefined}
-                onRead={(address: number) => { void readDiscreteInput(address); }}
-                onWrite={undefined}
-                onDelete={(address: number) => removeDiscreteInput(address)}
-                statusBadgeText={entry.readError ? "Not avail" : (entry.pending ? "Reading" : null)}
-                statusBadgeTitle={entry.readError ?? "Reading from device"}
-                statusBadgeVariant={entry.readError ? "failed" : "pending"}
-                writeButtonTitle={connected ? "Read only" : "Connect to device first"}
-                deleteButtonTitle="Delete coil"
-              />
+              <div
+                class="selectable-item"
+                class:selected-item={selectedInputAddress === entry.address}
+                role="button"
+                tabindex="0"
+                onclick={() => { selectedInputAddress = entry.address; }}
+                onkeydown={(e) => {
+                  const target = e.target as HTMLElement | null;
+                  if (
+                    target &&
+                    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                  ) {
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectedInputAddress = entry.address;
+                  }
+                }}
+              >
+                <SwitchCard
+                  address={entry.address}
+                  label={entry.label}
+                  pending={entry.pending}
+                  readValue={entry.value}
+                  toggleValue={entry.value}
+                  {connected}
+                  cardDirty={entry.readError !== null}
+                  {editingAddress}
+                  {editLabelVal}
+                  {addrFmt}
+                  onBeginEdit={beginEdit}
+                  onCommitEdit={commitEdit}
+                  onCancelEdit={cancelEdit}
+                  {onLabelKeydown}
+                  onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                  onToggle={undefined}
+                  onRead={(address: number) => { void readDiscreteInput(address); }}
+                  onWrite={undefined}
+                  onDelete={(address: number) => removeDiscreteInput(address)}
+                  statusBadgeText={entry.readError ? "Not avail" : (entry.pending ? "Reading" : null)}
+                  statusBadgeTitle={entry.readError ?? "Reading from device"}
+                  statusBadgeVariant={entry.readError ? "failed" : "pending"}
+                  writeButtonTitle={connected ? "Read only" : "Connect to device first"}
+                  deleteButtonTitle="Delete coil"
+                />
+              </div>
             {/each}
           </div>
 
@@ -715,48 +759,48 @@
     display: flex;
     align-items: center;
     gap: 4px;
-
-    .pending-chip {
-      display: inline-flex;
-      align-items: center;
-      height: 24px;
-      padding: 0 8px;
-      border-radius: 999px;
-      border: 1px solid color-mix(in srgb, var(--c-warn) 32%, var(--c-border));
-      background: color-mix(in srgb, var(--c-warn) 10%, var(--c-surface-2));
-      color: var(--c-warn);
-      font-size: 0.66rem;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      white-space: nowrap;
-    }
-
-    .plan-chip {
-      display: inline-flex;
-      align-items: center;
-      height: 24px;
-      padding: 0 2px 0 6px;
-      border: none;
-      background: transparent;
-      color: var(--c-text-3);
-      font-size: 0.62rem;
-      font-weight: 500;
-      letter-spacing: 0.02em;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-    }
   }
 
   .view-toggle {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
+  }
+
+  .selectable-item {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  }
+
+  .selectable-item.zebra-row :global(.ct-row) {
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+    border-radius: 10px;
+  }
+
+  .selectable-item:hover {
+    border-color: color-mix(in srgb, var(--c-border-strong) 68%, var(--c-border));
+    background: color-mix(in srgb, var(--c-surface-3) 45%, transparent);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--c-border-strong) 26%, transparent);
+  }
+
+  .selected-item {
+    border: 1px solid var(--c-accent);
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    border-radius: 10px;
+  }
+
+  .selected-item:hover {
+    border-color: var(--c-accent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--c-accent) 48%, transparent);
   }
 
   .divider-v {
     width: 1px;
     height: 20px;
-    background: color-mix(in srgb, var(--c-border) 55%, transparent);
+    background: color-mix(in srgb, var(--c-border) 5%, transparent);
   }
 
   .ctrl-select {
@@ -807,10 +851,19 @@
   }
 
   .ctrl-btn.active {
+    border: 2px solid;
     border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
-    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
     color: var(--c-text-1);
-    box-shadow: inset 0 -1px 0 0 var(--c-accent);
+  }
+
+  .ctrl-btn:active {
+    border: 1px solid;
+    border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    color: var(--c-text-1);
   }
 
   .ctrl-btn.active :global(svg) {
@@ -884,6 +937,36 @@
     display: flex;
     align-items: center;
     gap: 3px;
+  }
+
+  .pending-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--c-warn) 32%, var(--c-border));
+    background: color-mix(in srgb, var(--c-warn) 10%, var(--c-surface-2));
+    color: var(--c-warn);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .plan-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 2px 0 6px;
+    border: none;
+    background: transparent;
+    color: var(--c-text-3);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 
   /* ── Sub-panels (range + write) ──────────────────────────────────────────── */

@@ -15,10 +15,11 @@
 
 <style>
   .panel-frame {
-    border: 1px solid var(--c-border);
-    background: var(--c-surface-1);
+    border: 1px solid var(--c-border-strong);
+    /* background: var(--c-surface-1); */
+    box-shadow: rgb(0, 0, 0) 0px 0px 9px 3px, var(--c-border) 0px 0px 8px 3px;
     border-radius: 12px;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .body {

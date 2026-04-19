@@ -153,9 +153,9 @@
     onclick={(e) => e.target === e.currentTarget && (showAbout = false)}
     onkeydown={(e) => e.key === "Escape" && (showAbout = false)}
   >
-    <div class="about-modal" role="dialog" aria-modal="true" aria-label="About Modbus Lab">
+    <div class="about-modal" role="dialog" aria-modal="true" aria-label="About Modbus Lab Project">
       <header class="about-header">
-        <h2>About Modbus Lab</h2>
+        <h2>About Modbus Lab Project</h2>
         <button class="close-btn" type="button" aria-label="Close" onclick={() => (showAbout = false)}>
           <X size={18} />
         </button>
@@ -202,6 +202,7 @@
         <div class="about-section">
           <h3>License</h3>
           <p>GPL v3 for open-source use</p>
+          <p>Commercial licensing is available on request.</p>
         </div>
 
         <div class="about-section">
@@ -247,9 +248,7 @@
     overflow-x: hidden;
     scrollbar-gutter: stable;
     padding: 12px 12px 18px;
-    background:
-      radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--c-accent) 18%, transparent) 0%, transparent 42%),
-      var(--c-bg);
+    background: color-mix(in srgb, var(--c-surface-3) 56%, var(--c-surface-2));
   }
 
   :global(html[data-forced-layout="mobile"]) .main-content {
@@ -393,10 +392,10 @@
     background: var(--c-surface-1);
     border: 1px solid var(--c-border);
     border-radius: 12px;
-    max-width: 500px;
-    width: 90%;
+    max-width: 680px;
+    width: 92%;
     max-height: 80dvh;
-    overflow-y: auto;
+    overflow: hidden;
     display: grid;
     grid-template-rows: auto 1fr;
     animation: scale-in 150ms ease;
@@ -408,6 +407,10 @@
     justify-content: space-between;
     gap: 12px;
     padding: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--c-surface-1);
     border-bottom: 1px solid var(--c-border);
   }
 
@@ -436,6 +439,8 @@
   }
 
   .about-body {
+    min-height: 0;
+    overflow-y: auto;
     padding: 16px;
     display: grid;
     gap: 12px;

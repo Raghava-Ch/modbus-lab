@@ -35,8 +35,8 @@
   }
 
   button {
-    border: 1px solid var(--c-border);
-    border-radius: 6px;
+    border: 1px solid transparent;
+    border-radius: 4px;
     height: 24px;
     padding: 0 8px;
     background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
@@ -46,14 +46,16 @@
   }
 
   button:hover {
-    border-color: var(--c-border-strong);
+    border: 1px solid;
+    border-color: color-mix(in srgb, var(--c-border-strong) 38%, var(--c-surface-3));
     color: var(--c-text-1);
   }
 
   button.active {
-    border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
+    border: 1px solid var(--c-border-strong);
+    border-color:  color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
     color: var(--c-text-1);
-    background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
+    /* background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2)); */
+    /* box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent); */
   }
 </style>

@@ -36,15 +36,13 @@
     grid-template-columns: 18px 1fr;
     align-items: center;
     gap: 8px;
-    border: 1px solid color-mix(in srgb, var(--c-border) 24%, transparent);
-    border-radius: 6px;
     background: transparent;
     color: var(--c-text-2);
     padding: 7px 9px;
     text-align: left;
     font-size: 0.68rem;
     letter-spacing: 0.01em;
-    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+    transition: background 120ms ease, color 120ms ease;
   }
 
   .nav-item:hover {
@@ -55,9 +53,14 @@
 
   .nav-item.active {
     border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
+    border-right: none;
     background: color-mix(in srgb, var(--c-surface-3) 56%, var(--c-surface-2));
     color: var(--c-text-1);
-    box-shadow: inset 0 -1px 0 0 var(--c-accent);
+    box-shadow: inset 0 3px 0px rgba(0, 0, 0, 0.3);
+  }
+  .nav-item:hover,
+  .nav-item.active {
+    border-radius: 12px 0 0 12px;
   }
 
   .nav-item.active :global(svg) {

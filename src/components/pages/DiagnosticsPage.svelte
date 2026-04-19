@@ -108,17 +108,17 @@
       </PanelFrame>
     </section>
 
-    <section style="margin-top:18px;">
+    <section class="diag-section">
       <SectionHeader title="Exception Status (FC07)" subtitle="Read single-byte device exception status" />
       {#if isTcp}
         <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
       {/if}
       <PanelFrame>
         {#snippet children()}
-          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+          <div class="diag-actions wide-gap">
             <button onclick={() => void readExceptionStatus()} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read</button>
             <button onclick={() => cancelDiagnosticsRead()} disabled={!diagnosticsState.readInProgress}>Cancel</button>
-            <label style="margin-left:12px;">Poll:
+            <label class="diag-inline-label offset">Poll
               <input
                 type="checkbox"
                 checked={diagnosticsState.pollActive}
@@ -126,8 +126,8 @@
                 onchange={(event) => setDiagnosticsPollActive((event.currentTarget as HTMLInputElement).checked)}
               />
             </label>
-            <label>
-              Interval (ms):
+            <label class="diag-inline-label">
+              Interval (ms)
               <input
                 type="number"
                 min="100"
@@ -139,7 +139,7 @@
           </div>
 
           {#if diagnosticsState.exceptionStatus}
-            <div style="margin-top:12px;">
+            <div class="diag-result">
               <strong>Parsed:</strong>
               <pre>{JSON.stringify(diagnosticsState.exceptionStatus.parsed, null, 2)}</pre>
               <strong>Hex:</strong> <code>{diagnosticsState.exceptionStatus.rawHex}</code>
@@ -152,21 +152,21 @@
       </PanelFrame>
     </section>
 
-    <section style="margin-top:18px;">
+    <section class="diag-section">
       <SectionHeader title="Diagnostics (FC08)" subtitle="Support for various subfunctions; enter subfunction and optional payload" />
       {#if isTcp}
         <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
       {/if}
       <PanelFrame>
         {#snippet children()}
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <label>Subfunction: <input type="number" class="diag-input-field" bind:value={fc08Subfunction} min="0" max="255" /></label>
-            <label>Payload (hex): <input type="text" class="diag-input-field" bind:value={fc08Payload} placeholder="DE AD BE EF" /></label>
+          <div class="diag-actions">
+            <label class="diag-inline-label">Subfunction <input type="number" class="diag-input-field" bind:value={fc08Subfunction} min="0" max="255" /></label>
+            <label class="diag-inline-label">Payload (hex) <input type="text" class="diag-input-field" bind:value={fc08Payload} placeholder="DE AD BE EF" /></label>
             <button onclick={() => void runDiagnostic(Number(fc08Subfunction), fc08Payload)} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Run</button>
           </div>
 
           {#if diagnosticsState.lastDiagnostic}
-            <div style="margin-top:12px;">
+            <div class="diag-result">
               <strong>Info:</strong>
               <pre>{JSON.stringify(diagnosticsState.lastDiagnostic.parsed, null, 2)}</pre>
               <strong>Hex:</strong> <code>{diagnosticsState.lastDiagnostic.rawHex}</code>
@@ -179,18 +179,18 @@
       </PanelFrame>
     </section>
 
-    <section style="margin-top:18px;">
+    <section class="diag-section">
       <SectionHeader title="Get Com Event Counter (FC11)" />
       {#if isTcp}
         <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
       {/if}
       <PanelFrame>
         {#snippet children()}
-          <div style="display:flex;gap:12px;align-items:center;">
+          <div class="diag-actions wide-gap">
             <button onclick={() => void getComEventCounter()} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read Counter</button>
           </div>
           {#if diagnosticsState.comEventCounter}
-            <div style="margin-top:12px;">
+            <div class="diag-result">
               <pre>{JSON.stringify(diagnosticsState.comEventCounter.parsed, null, 2)}</pre>
               <strong>Hex:</strong> <code>{diagnosticsState.comEventCounter.rawHex}</code>
             </div>
@@ -199,21 +199,21 @@
       </PanelFrame>
     </section>
 
-    <section style="margin-top:18px;">
+    <section class="diag-section">
       <SectionHeader title="Get Com Event Log (FC12)" subtitle="Paged event entries" />
       {#if isTcp}
         <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
       {/if}
       <PanelFrame>
         {#snippet children()}
-          <div style="display:flex;gap:8px;align-items:center;">
-            <label>Start: <input type="number" class="diag-input-field" bind:value={comLogStart} min="0" /></label>
-            <label>Count: <input type="number" class="diag-input-field" bind:value={comLogCount} min="1" /></label>
+          <div class="diag-actions">
+            <label class="diag-inline-label">Start <input type="number" class="diag-input-field" bind:value={comLogStart} min="0" /></label>
+            <label class="diag-inline-label">Count <input type="number" class="diag-input-field" bind:value={comLogCount} min="1" /></label>
             <button onclick={() => void getComEventLog(Number(comLogStart), Number(comLogCount))} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read Log</button>
           </div>
           {#if diagnosticsState.comEventLog.length > 0}
-            <div style="margin-top:12px;">
-              <ul>
+            <div class="diag-result">
+              <ul class="diag-list">
                 {#each diagnosticsState.comEventLog as entry, idx}
                   <li><strong>#{idx + 1}</strong> <code>{entry.rawHex}</code> {entry.ascii ? ` — ${entry.ascii}` : ""}</li>
                 {/each}
@@ -224,18 +224,18 @@
       </PanelFrame>
     </section>
 
-    <section style="margin-top:18px;">
+    <section class="diag-section">
       <SectionHeader title="Report Server ID (FC17)" />
       {#if isTcp}
         <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
       {/if}
       <PanelFrame>
         {#snippet children()}
-          <div style="display:flex;gap:12px;align-items:center;">
+          <div class="diag-actions wide-gap">
             <button onclick={() => void reportServerId()} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read Server ID</button>
           </div>
           {#if diagnosticsState.serverId}
-            <div style="margin-top:12px;">
+            <div class="diag-result">
               <pre>{JSON.stringify(diagnosticsState.serverId.parsed, null, 2)}</pre>
               <code>{diagnosticsState.serverId.rawHex}</code>
             </div>
@@ -244,13 +244,13 @@
       </PanelFrame>
     </section>
 
-    <section style="margin-top:18px; margin-bottom:24px;">
+    <section class="diag-section diag-section-last">
       <SectionHeader title="Read Device Identification (FC43)" subtitle="Read device id objects — TCP and Serial" />
       <PanelFrame>
         {#snippet children()}
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <label>
-              Code:
+          <div class="diag-actions">
+            <label class="diag-inline-label">
+              Code
               <select class="diag-input-field" bind:value={deviceIdLevel}>
                 <option value={1}>1 — Basic</option>
                 <option value={2}>2 — Regular</option>
@@ -258,12 +258,12 @@
                 <option value={4}>4 — Individual (needs Object ID)</option>
               </select>
             </label>
-            <label>Object ID: <input type="number" class="diag-input-field" bind:value={deviceIdObject} min="0" max="255" placeholder="0" /></label>
+            <label class="diag-inline-label">Object ID <input type="number" class="diag-input-field" bind:value={deviceIdObject} min="0" max="255" placeholder="0" /></label>
             <button onclick={() => void readDeviceIdentification(Number(deviceIdLevel), deviceIdObject ?? undefined)} disabled={!connected || diagnosticsState.readInProgress}>Read</button>
           </div>
 
           {#if diagnosticsState.deviceIdentification}
-            <div style="margin-top:12px;">
+            <div class="diag-result">
               <strong>Objects</strong>
               <pre>{JSON.stringify(diagnosticsState.deviceIdentification.parsed, null, 2)}</pre>
             </div>
@@ -275,6 +275,93 @@
 </PageShell>
 
 <style>
+  .diag-section {
+    margin-top: 18px;
+  }
+
+  .diag-section-last {
+    margin-bottom: 24px;
+  }
+
+  .diag-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .diag-actions.wide-gap {
+    gap: 12px;
+  }
+
+  .diag-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 78%, var(--c-surface-3));
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
+    color: var(--c-text-1);
+    font: inherit;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+
+  .diag-actions button:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--c-border-strong) 68%, var(--c-surface-3));
+    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
+  }
+
+  .diag-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .diag-inline-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.74rem;
+    color: var(--c-text-2);
+  }
+
+  .diag-inline-label.offset {
+    margin-left: 12px;
+  }
+
+  .diag-result {
+    margin-top: 12px;
+    display: grid;
+    gap: 6px;
+  }
+
+  .diag-result pre {
+    margin: 0;
+    padding: 8px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 72%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+    color: var(--c-text-1);
+    font-size: 0.75rem;
+    overflow-x: auto;
+  }
+
+  .diag-result code {
+    font-size: 0.74rem;
+    color: var(--c-text-1);
+  }
+
+  .diag-list {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+  }
+
   .disconnected-banner {
     display: flex;
     align-items: center;
@@ -298,7 +385,7 @@
     color: var(--c-accent);
   }
 
-  :global(.diag-input-field) {
+  .diag-input-field {
     width: 120px;
     padding: 6px 8px;
     background: var(--c-surface-2);
@@ -309,7 +396,7 @@
     font-size: 0.95rem;
   }
 
-  :global(.diag-input-field):focus {
+  .diag-input-field:focus {
     outline: none;
     border-color: var(--c-accent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 25%, transparent);

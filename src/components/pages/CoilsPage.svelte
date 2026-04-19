@@ -302,6 +302,7 @@
 
   // ── Inline label editing ────────────────────────────────────────────────────
   let editingAddress: number | null = $state(null);
+  let selectedCoilAddress: number | null = $state(null);
   let editLabelVal = $state("");
   let addAddressInput = $state("");
   let singleWriteAddressInput = $state("");
@@ -885,23 +886,45 @@
               <div class="ct-spacer" style={`height: ${tableTopSpacerHeight}px;`}></div>
             {/if}
 
-            {#each visibleTableEntries as entry (entry.address)}
-              <TableRow
-                {entry}
-                {connected}
-                {editingAddress}
-                {editLabelVal}
-                {addrFmt}
-                {beginEdit}
-                {commitEdit}
-                {cancelEdit}
-                {onLabelKeydown}
-                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                onToggle={(address: number) => toggleCoilValue(address)}
-                onRead={(address: number) => { void readCoil(address); }}
-                onWrite={(address: number) => { void writeCoil(address); }}
-                onDelete={(address: number) => removeCoil(address)}
-              />
+            {#each visibleTableEntries as entry, rowIndex (entry.address)}
+              <div
+                class="selectable-item"
+                class:zebra-row={(tableStartRow + rowIndex) % 2 === 1}
+                class:selected-item={selectedCoilAddress === entry.address}
+                role="button"
+                tabindex="0"
+                onclick={() => { selectedCoilAddress = entry.address; }}
+                onkeydown={(e) => {
+                  const target = e.target as HTMLElement | null;
+                  if (
+                    target &&
+                    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                  ) {
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectedCoilAddress = entry.address;
+                  }
+                }}
+              >
+                <TableRow
+                  {entry}
+                  {connected}
+                  {editingAddress}
+                  {editLabelVal}
+                  {addrFmt}
+                  {beginEdit}
+                  {commitEdit}
+                  {cancelEdit}
+                  {onLabelKeydown}
+                  onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                  onToggle={(address: number) => toggleCoilValue(address)}
+                  onRead={(address: number) => { void readCoil(address); }}
+                  onWrite={(address: number) => { void writeCoil(address); }}
+                  onDelete={(address: number) => removeCoil(address)}
+                />
+              </div>
             {/each}
 
             {#if tableBottomSpacerHeight > 0}
@@ -927,32 +950,53 @@
 
           <div class="switch-grid">
             {#each visibleSwitchEntries as entry (entry.address)}
-              <SwitchCard
-                address={entry.address}
-                label={entry.label}
-                pending={entry.pending}
-                readValue={entry.slaveValue}
-                toggleValue={entry.desiredValue}
-                {connected}
-                cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
-                {editingAddress}
-                {editLabelVal}
-                {addrFmt}
-                onBeginEdit={beginEdit}
-                onCommitEdit={commitEdit}
-                onCancelEdit={cancelEdit}
-                {onLabelKeydown}
-                onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                onToggle={(address: number) => toggleCoilValue(address)}
-                onRead={(address: number) => { void readCoil(address); }}
-                onWrite={(address: number) => { void writeCoil(address); }}
-                onDelete={(address: number) => removeCoil(address)}
-                statusBadgeText={entry.writeError ? "Not avail" : (entry.desiredValue !== entry.slaveValue ? "Unsynced" : null)}
-                statusBadgeTitle={entry.writeError ?? "Local value differs from device"}
-                statusBadgeVariant={entry.writeError ? "failed" : "pending"}
-                writeButtonTitle={connected ? (entry.desiredValue ? "Write ON" : "Write OFF") : "Connect to device first"}
-                deleteButtonTitle="Delete coil"
-              />
+              <div
+                class="selectable-item"
+                class:selected-item={selectedCoilAddress === entry.address}
+                role="button"
+                tabindex="0"
+                onclick={() => { selectedCoilAddress = entry.address; }}
+                onkeydown={(e) => {
+                  const target = e.target as HTMLElement | null;
+                  if (
+                    target &&
+                    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                  ) {
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectedCoilAddress = entry.address;
+                  }
+                }}
+              >
+                <SwitchCard
+                  address={entry.address}
+                  label={entry.label}
+                  pending={entry.pending}
+                  readValue={entry.slaveValue}
+                  toggleValue={entry.desiredValue}
+                  {connected}
+                  cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
+                  {editingAddress}
+                  {editLabelVal}
+                  {addrFmt}
+                  onBeginEdit={beginEdit}
+                  onCommitEdit={commitEdit}
+                  onCancelEdit={cancelEdit}
+                  {onLabelKeydown}
+                  onEditLabelValChange={(next: string) => { editLabelVal = next; }}
+                  onToggle={(address: number) => toggleCoilValue(address)}
+                  onRead={(address: number) => { void readCoil(address); }}
+                  onWrite={(address: number) => { void writeCoil(address); }}
+                  onDelete={(address: number) => removeCoil(address)}
+                  statusBadgeText={entry.writeError ? "Not avail" : (entry.desiredValue !== entry.slaveValue ? "Unsynced" : null)}
+                  statusBadgeTitle={entry.writeError ?? "Local value differs from device"}
+                  statusBadgeVariant={entry.writeError ? "failed" : "pending"}
+                  writeButtonTitle={connected ? (entry.desiredValue ? "Write ON" : "Write OFF") : "Connect to device first"}
+                  deleteButtonTitle="Delete coil"
+                />
+              </div>
             {/each}
           </div>
 
@@ -982,13 +1026,43 @@
   .view-toggle {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
+  }
+
+  .selectable-item {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  }
+
+  .selectable-item.zebra-row :global(.ct-row) {
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+    border-radius: 10px;
+  }
+
+  .selectable-item:hover {
+    border-color: color-mix(in srgb, var(--c-border-strong) 68%, var(--c-border));
+    background: color-mix(in srgb, var(--c-surface-3) 45%, transparent);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--c-border-strong) 26%, transparent);
+  }
+
+  .selected-item {
+    border: 1px solid var(--c-accent);
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    border-radius: 10px;
+  }
+
+  .selected-item:hover {
+    border-color: var(--c-accent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--c-accent) 48%, transparent);
   }
 
   .divider-v {
     width: 1px;
     height: 20px;
-    background: color-mix(in srgb, var(--c-border) 55%, transparent);
+    background: color-mix(in srgb, var(--c-border) 5%, transparent);
   }
 
   .ctrl-select {
@@ -1039,10 +1113,19 @@
   }
 
   .ctrl-btn.active {
+    border: 2px solid;
     border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
-    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
     color: var(--c-text-1);
-    box-shadow: inset 0 -1px 0 0 var(--c-accent);
+  }
+
+  .ctrl-btn:active {
+    border: 1px solid;
+    border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    color: var(--c-text-1);
   }
 
   .ctrl-btn.active :global(svg) {

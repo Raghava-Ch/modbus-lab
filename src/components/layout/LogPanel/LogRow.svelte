@@ -123,7 +123,7 @@
     font-size: 0.75rem;
     color: var(--c-text-1);
     padding: 6px 8px;
-    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 35%, transparent);
   }
 
   .log-row:focus-visible {

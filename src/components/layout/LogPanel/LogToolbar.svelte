@@ -90,11 +90,11 @@
 
         <div class="export-group">
           <div class="export-controls">
-            <span class="export-label">Export</span>
 
             <div class="scope-toggle" role="group" aria-label="Select log export scope">
               <button
                 class:active={saveScope === "filtered"}
+                class="filtered-btn"
                 type="button"
                 onclick={() => (saveScope = "filtered")}
               >
@@ -135,7 +135,6 @@
     align-items: center;
     gap: 6px;
     padding: 0 10px;
-    border-bottom: 1px solid var(--c-border);
     height: 32px;
     background: color-mix(in srgb, var(--c-surface-1) 86%, var(--c-surface-2));
   }
@@ -187,7 +186,6 @@
     letter-spacing: 0.04em;
     cursor: pointer;
     position: relative;
-    border-right: 1px solid color-mix(in srgb, var(--c-border) 35%, transparent);
   }
 
   .tab-btn:last-child {
@@ -201,8 +199,11 @@
 
   .tab-btn.active {
     color: var(--c-text-1);
-    background: color-mix(in srgb, var(--c-surface-3) 50%, transparent);
-    box-shadow: inset 0 -1px 0 0 color-mix(in srgb, var(--c-accent) 90%, #ffffff);
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in srgb, var(--c-surface-3) 100%, transparent)
+    );
   }
 
   .export-group {
@@ -210,7 +211,7 @@
     align-items: center;
     gap: 0;
     border: 1px solid var(--c-border);
-    border-radius: 6px;
+    border-radius: 3px;
     background: color-mix(in srgb, var(--c-surface-1) 70%, var(--c-surface-2));
     overflow: hidden;
   }
@@ -223,13 +224,9 @@
     border-right: 1px solid var(--c-border);
   }
 
-  .export-label {
-    color: var(--c-text-1);
-    font-size: 0.6rem;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
+  .filtered-btn {
+    min-width: 120px;
   }
-
   .scope-toggle {
     display: inline-flex;
     align-items: center;
@@ -238,8 +235,7 @@
   }
 
   .scope-toggle button {
-    border: 0;
-    border-right: 1px solid var(--c-border);
+    border: 1px solid transparent;
     height: 20px;
     padding: 0 6px;
     background: transparent;
@@ -252,18 +248,20 @@
   }
 
   .scope-toggle button:last-child {
-    border-right: 0;
+    border: 1px solid transparent;
   }
 
   .scope-toggle button:hover {
     color: var(--c-text-1);
-    background: color-mix(in srgb, var(--c-surface-3) 78%, var(--c-surface-2));
+    /* background: color-mix(in srgb, var(--c-surface-3) 78%, var(--c-surface-2)); */
+    border: 1px solid var(--c-border-strong);
   }
 
   .scope-toggle button.active {
+    border-radius: 3px;
     color: var(--c-text-1);
-    background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-2));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
+    background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-3));
+    /* box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent); */
   }
 
   .save-btn {
