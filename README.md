@@ -84,13 +84,17 @@ The application is currently in **alpha**. It is fully usable for core Modbus TC
 ![Coils - Switch View](screenshots/CoilsSwitchView.png)
 ![Coils - Table View](screenshots/CoilsTableView.png)
 
+### Holding Registers
+![Holding Registers - Switch View](screenshots/HoldingRegistersSwitchView.png)
+![Holding Registers - Table View](screenshots/HoldingRegistersTableView.png)
+
+### Bitwise Register View
+![Holding Registers - Bitwise View](screenshots/BitwiseDetailsView.png)
+
 ### Discrete Inputs
 ![Discrete Inputs - Table View](screenshots/DiscreteInputsTableView.png)
 ![Discrete Inputs - Switch View](screenshots/DiscreteInputsSwitchView.png)
 
-### Holding Registers
-![Holding Registers - Switch View](screenshots/HoldingRegistersSwitchView.png)
-![Holding Registers - Table View](screenshots/HoldingRegistersTableView.png)
 
 ### Input Registers
 ![Input Registers - Table View](screenshots/InputRegistersTableView.png)

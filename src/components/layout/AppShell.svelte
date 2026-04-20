@@ -45,7 +45,7 @@
   const filtered = $derived(getFilteredLogs(logState.filter));
   let showAbout = $state(false);
   let selectedEntry = $state<LogEntry | null>(null);
-  const appVersion = "0.0.3";
+  const appVersion = "0.0.4";
   const buildDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
   interface BackendEventPayload {
