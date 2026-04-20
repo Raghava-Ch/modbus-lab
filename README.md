@@ -166,9 +166,19 @@ It is recommended to build from source yourself. See the [Local Development](#-l
 * Rust toolchain + Cargo
 * [Tauri v2 Prerequisites](https://v2.tauri.app/start/prerequisites/) for your specific OS (Windows, macOS, or Linux).
 
-### Run web dev server
+### Workspace layout
+* `apps/client` contains the current Modbus client desktop application.
+* `apps/server` contains an early server simulator sample app used to validate shared frontend assets and styles.
+* `packages/shared-frontend` contains shared frontend assets and base styles.
+
+### Run client web dev server
 ```bash
-npm run dev
+npm run dev:client
+```
+
+### Run server sample web dev server
+```bash
+npm run dev:server
 ```
 
 ## ⚠ Limitations
@@ -179,9 +189,9 @@ npm run dev
 
 Note: This tool is intended as both a **daily-use industrial Modbus client** and a **reference implementation** for modbus-rs.
 
-### Run desktop app (Tauri)
+### Run client desktop app (Tauri)
 ```bash
-npm run tauri dev
+npm run tauri:client -- dev
 ```
 
 ### Type check
@@ -189,9 +199,9 @@ npm run tauri dev
 npm run check
 ```
 
-### Production build
+### Client production build
 ```bash
-npm run tauri build
+npm run tauri:client -- build
 ```
 
 ## 📄 License
