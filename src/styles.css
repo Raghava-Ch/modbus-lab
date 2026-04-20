@@ -1,16 +1,16 @@
 :root {
-  --c-bg: #121417;
-  --c-surface-1: #1d2127;
-  --c-surface-2: #272d35;
-  --c-surface-3: #343d49;
-  --c-border: #464f5f;
-  --c-border-strong: #667287;
-  --c-accent: #7fc6de;
-  --c-text-1: #f5f7fa;
-  --c-text-2: #c9cfda;
-  --c-ok: #71cf9c;
-  --c-warn: #e0b55f;
-  --c-error: #de7d76;
+  --c-bg: #0f1419;
+  --c-surface-1: #1a1f2e;
+  --c-surface-2: #202736;
+  --c-surface-3: #2a3240;
+  --c-border: #5e409c;
+  --c-border-strong: #674c5a;
+  --c-accent: #04a99e;
+  --c-text-1: #fef3c7;
+  --c-text-2: #fbbf24;
+  --c-ok: #34d399;
+  --c-warn: #fbbf24;
+  --c-error: #f472b6;
 
   --nav-width-open: 170px;
   --nav-width-collapsed: 56px;
@@ -156,4 +156,32 @@ button {
 [data-tip]:focus-visible::after,
 [data-tip]:focus-visible::before {
   opacity: 1;
+}
+
+html[data-tooltip-overlay="on"] .has-tip::after,
+html[data-tooltip-overlay="on"] .has-tip::before,
+html[data-tooltip-overlay="on"] [data-tip]::after,
+html[data-tooltip-overlay="on"] [data-tip]::before {
+  display: none !important;
+}
+
+.app-tooltip-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: none;
+  pointer-events: none;
+  z-index: 99999;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
+  box-shadow:
+    0 8px 18px color-mix(in srgb, var(--c-bg) 62%, transparent),
+    0 1px 0 color-mix(in srgb, var(--c-text-1) 10%, transparent);
+  color: var(--c-text-1);
+  font-size: 0.58rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 100ms ease;
 }

@@ -40,6 +40,7 @@
     writePendingHoldingRegisters,
   } from "../../state/holding-registers.svelte";
   import { connectionState } from "../../state/connection.svelte";
+  import { estimateFrameMs } from "../../lib/frame-timing";
   import {
     formatAddressWithSettings,
     formatWordValueWithSettings,
@@ -72,8 +73,62 @@
   let rangeCount = $state(holdingRegisterState.registerCount);
   let rangeApplyPending = $state(false);
   const RANGE_APPLY_MIN_SPINNER_MS = 250;
+  const HOLDING_READ_CHUNK_MAX = 125;
+  const HOLDING_WRITE_CHUNK_MAX = 120;
+
+  interface AddressSection {
+    start: number;
+    quantity: number;
+  }
+
+  function buildAddressSections(addresses: number[]): AddressSection[] {
+    if (addresses.length === 0) return [];
+
+    const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
+    const sections: AddressSection[] = [];
+    let sectionStart = uniqueSorted[0];
+    let prev = uniqueSorted[0];
+
+    for (let i = 1; i < uniqueSorted.length; i += 1) {
+      const current = uniqueSorted[i];
+      if (current === prev + 1) {
+        prev = current;
+        continue;
+      }
+
+      sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+      sectionStart = current;
+      prev = current;
+    }
+
+    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
+    return sections;
+  }
+
+  function buildRequestPlan(
+    addresses: number[],
+    chunkMax: number,
+    responsePayloadBytes: number,
+  ): { frames: number; cycleMs: number } {
+    const sections = buildAddressSections(addresses);
+    const frames = sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
+    const { protocol, serial, tcp } = connectionState;
+    const frameMs = estimateFrameMs(
+      responsePayloadBytes,
+      protocol,
+      serial.baudRate,
+      serial.dataBits,
+      serial.parity,
+      serial.stopBits,
+      tcp.responseTimeoutMs,
+    );
+    return { frames, cycleMs: frames * frameMs };
+  }
 
   const filtered = $derived(getFilteredHoldingRegisters());
+  const readPlan = $derived(
+    buildRequestPlan(holdingRegisterState.entries.map((entry) => entry.address), HOLDING_READ_CHUNK_MAX, 250),
+  );
   const LARGE_DATASET_THRESHOLD = 5000;
   const VIRTUAL_ROW_HEIGHT = 34;
   const VIRTUAL_OVERSCAN = 10;
@@ -218,6 +273,15 @@
   const zeroCount = $derived(holdingRegisterState.entries.filter((e) => e.slaveValue === 0).length);
   const pendingWriteCount = $derived(
     holdingRegisterState.entries.filter((e) => e.desiredValue !== e.slaveValue).length,
+  );
+  const writePlan = $derived(
+    buildRequestPlan(
+      holdingRegisterState.entries
+        .filter((entry) => entry.desiredValue !== entry.slaveValue)
+        .map((entry) => entry.address),
+      HOLDING_WRITE_CHUNK_MAX,
+      4,
+    ),
   );
   const anyAddressFilterActive = $derived(holdingRegisterState.addressFilter !== "all");
   const anyFilterActive = $derived(
@@ -409,7 +473,7 @@
 </script>
 
 <div class="coils-page">
-  {#if !connected}
+  {#if connectionState.status === "disconnected"}
     <div class="disconnected-banner" role="alert">
       <span class="banner-icon">⚠</span>
       <span class="banner-text">Not connected — go to <strong>Connection</strong> and connect to a device before using holding-register operations.</span>
@@ -423,30 +487,20 @@
     {#snippet actions()}
       <div class="poll-controls">
         <select
-          class="ctrl-select"
+          class="ctrl-select has-tip"
           value={holdingRegisterState.pollInterval}
           onchange={(e) => setHoldingRegisterPollInterval(Math.max(Number(e.currentTarget.value), practicalMinPollIntervalMs))}
-          title="Poll interval"
+          data-tip="Poll interval"
           disabled={pollDisabledByCount}
         >
           {#each pollIntervals as pi}
             <option value={pi.ms} disabled={pi.ms < practicalMinPollIntervalMs}>{pi.label}</option>
           {/each}
         </select>
-        {#if practicalMinPollIntervalMs > 500}
-          <span class="pending-chip" title="Auto-limited for practical polling at current dataset size">
-            Min poll: {practicalMinPollLabel}
-          </span>
-        {/if}
-        {#if pollDisabledByCount}
-          <span class="pending-chip" title={`Polling is limited to at most ${pollMaxCount} holding registers`}>
-            Poll disabled: list &gt; {pollMaxCount}
-          </span>
-        {/if}
         <button
-          class="ctrl-btn"
+          class="ctrl-btn poll-btn has-tip"
           class:active={holdingRegisterState.pollActive}
-          title={pollDisabledByCount ? "Polling disabled when list has more than 125 registers" : holdingRegisterState.pollActive ? "Stop polling" : "Start polling"}
+          data-tip={pollDisabledByCount ? "Polling disabled when list has more than 125 registers" : holdingRegisterState.pollActive ? "Stop polling" : "Start polling"}
           type="button"
           disabled={!connected || pollDisabledByCount}
           onclick={() => setHoldingRegisterPollActive(!holdingRegisterState.pollActive)}
@@ -459,10 +513,25 @@
             <span>Poll</span>
           {/if}
         </button>
-        <button class="ctrl-btn icon-only" title="Read once" type="button" disabled={!connected}
+        <button class="ctrl-btn icon-only has-tip" data-tip="Read once" type="button" disabled={!connected}
           onclick={handleManualReadAllHoldingRegisters}>
           <RefreshCw size={14} />
         </button>
+        {#if practicalMinPollIntervalMs > 500}
+          <span class="pending-chip has-tip" data-tip="Auto-limited for practical polling at current dataset size">
+            Min poll: {practicalMinPollLabel}
+          </span>
+        {/if}
+        {#if pollDisabledByCount}
+          <span class="pending-chip has-tip" data-tip={`Polling is limited to at most ${pollMaxCount} holding registers`}>
+            Poll disabled: list &gt; {pollMaxCount}
+          </span>
+        {/if}
+        {#if holdingRegisterState.entries.length > 0}
+          <span class="plan-chip has-tip" data-tip="Estimated FC03 frames and cycle time per read-all run">
+            Read {readPlan.frames}f ~{readPlan.cycleMs}ms
+          </span>
+        {/if}
       </div>
 
       <div class="divider-v"></div>
@@ -536,6 +605,9 @@
         </span>
       {/if}
       {#if pendingWriteCount > 0}
+        <span class="pending-chip" title="Estimated FC16 frames and cycle time for pending writes">
+          Write plan: {writePlan.frames}f ~{writePlan.cycleMs}ms
+        </span>
         <button
           class="pending-chip pending-chip-action"
           type="button"
@@ -886,32 +958,36 @@
   .view-toggle {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
   }
 
   .selectable-item {
-    border-radius: 8px;
+    border: 1px solid transparent;
+    border-radius: 10px;
   }
 
   .selectable-item.zebra-row :global(.rt-row) {
     background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+    border-radius: 10px;
   }
 
   .selected-item {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 62%, transparent);
-    background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+    border: 1px solid var(--c-accent);
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    border-radius: 10px;
   }
 
   .divider-v {
     width: 1px;
     height: 20px;
-    background: var(--c-border);
+    background: color-mix(in srgb, var(--c-border) 5%, transparent);
   }
 
   .ctrl-select {
     height: 24px;
     padding: 0 20px 0 7px;
-    border: 1px solid var(--c-border);
+    border: 1px solid color-mix(in srgb, var(--c-border) 78%, var(--c-surface-3));
     border-radius: 4px;
     background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23c9cfda' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
@@ -930,7 +1006,7 @@
     gap: 3px;
     height: 24px;
     padding: 0 8px;
-    border: 1px solid var(--c-border);
+    border: 1px solid color-mix(in srgb, var(--c-border) 78%, var(--c-surface-3));
     border-radius: 4px;
     background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
     color: var(--c-text-2);
@@ -945,17 +1021,32 @@
     padding: 0 6px;
   }
 
+  .ctrl-btn.poll-btn {
+    min-width: 78px;
+    justify-content: center;
+  }
+
   .ctrl-btn:hover {
-    border-color: var(--c-border-strong);
+    border-color: color-mix(in srgb, var(--c-border-strong) 68%, var(--c-surface-3));
     color: var(--c-text-1);
   }
 
   .ctrl-btn.active {
-    border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
-    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
+    border: 2px solid;
+    border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
     color: var(--c-text-1);
-    box-shadow: inset 0 -1px 0 0 var(--c-accent);
   }
+
+  .ctrl-btn:active {
+    border: 1px solid;
+    border-color: color-mix(in srgb, var(--c-accent) 38%, var(--c-border-strong));
+    background: color-mix(in srgb, var(--c-accent) 5%, var(--c-surface-3));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--c-accent) 40%, transparent);
+    color: var(--c-text-1);
+  }
+
 
   .ctrl-btn.active :global(svg) {
     color: var(--c-accent);
@@ -1109,6 +1200,21 @@
     font-size: 0.66rem;
     font-weight: 600;
     letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .plan-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 2px 0 6px;
+    border: none;
+    background: transparent;
+    color: var(--c-text-3);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
 
@@ -1288,7 +1394,9 @@
   .rt-body {
     max-height: min(62vh, 680px);
     overflow-y: auto;
+    overflow-y: overlay;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     overscroll-behavior: contain;
   }
 
@@ -1324,7 +1432,9 @@
   .switch-virtual-scroll {
     max-height: min(62vh, 680px);
     overflow-y: auto;
+    overflow-y: overlay;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     overscroll-behavior: contain;
   }
 

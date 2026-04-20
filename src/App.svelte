@@ -6,16 +6,17 @@
   import AppShell from "./components/layout/AppShell.svelte";
   import { addLog } from "./state/logs.svelte";
   import { applyBackendConnectionStatus } from "./state/connection.svelte";
-  import { notifyError } from "./state/notifications.svelte";
+  import { notifyError, notifyInfo } from "./state/notifications.svelte";
   import { initLayoutState } from "./state/layout.svelte";
   import { initSettingsState } from "./state/settings.svelte";
+  import { trackConnectionHealthEvent } from "./state/connection-health.svelte";
 
   let seeded = $state(false);
   let previousBackendStatus = $state<string | null>(null);
   let outageNotified = $state(false);
 
   interface BackendEventPayload {
-    level?: "info" | "warn" | "error";
+    level?: "info" | "warn" | "error" | "traffic";
     topic?: string;
     message?: string;
     status?: {
@@ -69,6 +70,9 @@
     }
 
     if (isConnectedStatus(nextStatus)) {
+      if (outageNotified) {
+        notifyInfo("Reconnected to Modbus server.");
+      }
       outageNotified = false;
     }
 
@@ -98,6 +102,7 @@
         unlisten = await listen<BackendEventPayload>("modbus://event", (event) => {
           const payload = event.payload;
           addLog(toLogLevel(payload.level), formatBackendEventMessage(payload));
+          trackConnectionHealthEvent(payload);
 
           if (payload.status?.status) {
             maybeNotifyServerDown(payload.status.status, payload.status.details);

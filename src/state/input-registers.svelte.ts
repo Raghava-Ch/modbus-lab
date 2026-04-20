@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
+import { connectionState } from "./connection.svelte";
 import {
   getGlobalPollingMaxAddressCount,
   getSettingsSnapshot,
@@ -43,16 +44,41 @@ interface AddressSection {
 function parseInvokeError(err: unknown): string {
   if (typeof err === "string") {
     try {
-      const parsed = JSON.parse(err) as { message?: string };
+      const parsed = JSON.parse(err) as { message?: string; details?: string };
+      if (typeof parsed.details === "string" && parsed.details.trim().length > 0) {
+        return `${parsed.message ?? "Unknown error"} (${parsed.details})`;
+      }
       return parsed.message ?? err;
     } catch {
       return err;
     }
   }
   if (typeof err === "object" && err !== null && "message" in err) {
-    return String((err as { message: unknown }).message);
+    const maybe = err as { message: unknown; details?: unknown };
+    if (typeof maybe.details === "string" && maybe.details.trim().length > 0) {
+      return `${String(maybe.message)} (${maybe.details})`;
+    }
+    return String(maybe.message);
   }
   return "Unknown error";
+}
+
+function isTransientTransportError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("too many requests")
+    || lower.includes("expected responses buffer is full")
+    || lower.includes("timeout")
+    || lower.includes("timed out")
+    || lower.includes("not connected")
+    || lower.includes("reconnecting")
+    || lower.includes("broken pipe")
+    || lower.includes("connection reset")
+    || lower.includes("transport")
+    || lower.includes("send failed")
+    || lower.includes("io error")
+    || lower.includes("connection closed")
+  );
 }
 
 function warnLocal(message: string): void {
@@ -169,7 +195,8 @@ export const inputRegisterState = $state({
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let pollReadInFlight = false;
+let readAllQueuedRuns = 0;
+const READ_ALL_QUEUE_DEPTH_MAX = 6;
 
 export function initInputRegisterState(): void {
   const settings = getSettingsSnapshot();
@@ -254,9 +281,18 @@ async function readInputRange(
   });
 }
 
-export async function readAllInputRegisters(options?: { markPending?: boolean }): Promise<void> {
+export async function readAllInputRegisters(options?: { markPending?: boolean; queueIfBusy?: boolean }): Promise<void> {
   if (inputRegisterState.entries.length === 0) return;
-  if (inputRegisterState.readInProgress) return;
+  // Do not issue reads while the transport layer is recovering.
+  if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") return;
+
+  const queueIfBusy = options?.queueIfBusy ?? true;
+  if (inputRegisterState.readInProgress) {
+    if (queueIfBusy && readAllQueuedRuns < READ_ALL_QUEUE_DEPTH_MAX) {
+      readAllQueuedRuns += 1;
+    }
+    return;
+  }
 
   inputRegisterState.readInProgress = true;
   inputRegisterState.cancelReadRequested = false;
@@ -264,7 +300,11 @@ export async function readAllInputRegisters(options?: { markPending?: boolean })
   const markPending = options?.markPending ?? true;
 
   const sections = buildAddressSections(inputRegisterState.entries.map((e) => e.address));
-  if (sections.length === 0) return;
+  if (sections.length === 0) {
+    inputRegisterState.readInProgress = false;
+    inputRegisterState.cancelReadRequested = false;
+    return;
+  }
 
   if (markPending) {
     addLog(
@@ -312,7 +352,17 @@ export async function readAllInputRegisters(options?: { markPending?: boolean })
             }
             if (markPending) entry.pending = false;
           }
-        } catch {
+        } catch (singleErr) {
+          const reason = parseInvokeError(singleErr);
+          if (isTransientTransportError(reason)) {
+            const entry = entryByAddress.get(section.start);
+            if (entry && markPending) {
+              entry.pending = false;
+            }
+            addLog("warn", `fc04.read transient start=${section.start} qty=1 msg=${reason}`);
+            continue;
+          }
+
           const entry = entryByAddress.get(section.start);
           if (entry) {
             entry.readError = "Address not available";
@@ -348,7 +398,19 @@ export async function readAllInputRegisters(options?: { markPending?: boolean })
             }
             if (markPending) entry.pending = false;
           }
-        } catch {
+        } catch (chunkErr) {
+          const reason = parseInvokeError(chunkErr);
+          if (isTransientTransportError(reason)) {
+            for (let address = chunkStart; address <= chunkEnd; address += 1) {
+              const entry = entryByAddress.get(address);
+              if (entry && markPending) {
+                entry.pending = false;
+              }
+            }
+            addLog("warn", `fc04.read transient start=${chunkStart} qty=${chunkQty} msg=${reason}`);
+            continue;
+          }
+
           failedRanges.push({ start: chunkStart, end: chunkEnd, quantity: chunkQty });
           for (let address = chunkStart; address <= chunkEnd; address += 1) {
             const entry = entryByAddress.get(address);
@@ -394,6 +456,10 @@ export async function readAllInputRegisters(options?: { markPending?: boolean })
   } finally {
     inputRegisterState.readInProgress = false;
     inputRegisterState.cancelReadRequested = false;
+    if (readAllQueuedRuns > 0) {
+      readAllQueuedRuns -= 1;
+      void readAllInputRegisters({ markPending: false, queueIfBusy: false });
+    }
   }
 }
 
@@ -406,13 +472,7 @@ export function cancelInputRegisterRead(): void {
 }
 
 async function runInputRegisterPollTick(): Promise<void> {
-  if (pollReadInFlight) return;
-  pollReadInFlight = true;
-  try {
-    await readAllInputRegisters({ markPending: false });
-  } finally {
-    pollReadInFlight = false;
-  }
+  await readAllInputRegisters({ markPending: false, queueIfBusy: true });
 }
 
 export function applyInputRegisterRange(startAddress: number, count: number): void {

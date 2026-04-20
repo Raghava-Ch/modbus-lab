@@ -1,6 +1,7 @@
 import "./styles.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
+import { initializeTooltipOverlay } from "./lib/tooltip-overlay";
 
 const target = document.getElementById("app");
 
@@ -14,5 +15,7 @@ target.innerHTML = "";
 const app = mount(App, {
   target,
 });
+
+initializeTooltipOverlay();
 
 export default app;

@@ -608,7 +608,7 @@
 <style>
   .connection-page {
     display: grid;
-    gap: 14px;
+    gap: 10px;
   }
 
   .connection-status {

@@ -25,7 +25,6 @@
       <ChevronsRight size={16} />
     {:else}
       <ChevronsLeft size={16} />
-      <span>Collapse</span>
     {/if}
   </button>
 </div>
@@ -37,11 +36,9 @@
   }
 
   .nav-toggle {
-    width: 100%;
     display: grid;
     grid-template-columns: 16px 1fr;
     align-items: center;
-    gap: 8px;
     border: 1px solid color-mix(in srgb, var(--c-border) 24%, transparent);
     border-radius: 6px;
     background: transparent;

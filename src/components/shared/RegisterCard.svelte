@@ -130,9 +130,9 @@
     box-sizing: border-box;
     position: relative;
     padding: 12px 10px 10px;
-    border: 1px solid color-mix(in srgb, var(--c-border-strong) 48%, var(--c-border));
+    border: 1px solid color-mix(in srgb, var(--c-surface-3) 48%, var(--c-border));
     border-radius: 10px;
-    background: var(--c-surface-2);
+    background: transparent;
     transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
     font: inherit;
     text-align: left;
@@ -140,11 +140,10 @@
 
   .register-card:hover {
     border-color: var(--c-border-strong);
-    background: var(--c-surface-3);
   }
 
   .register-card.card-dirty {
-    border-color: color-mix(in srgb, var(--c-warn) 40%, var(--c-border));
+    border-color: color-mix(in srgb, var(--c-warn) 30%, var(--c-border));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-warn) 22%, transparent);
   }
 

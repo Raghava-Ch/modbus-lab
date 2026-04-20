@@ -46,7 +46,6 @@
     grid-area: nav;
     display: grid;
     grid-template-rows: auto 1fr auto;
-    border-right: 1px solid var(--c-border);
     background: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
     width: var(--nav-width-open);
     transition: width 180ms ease;
@@ -59,7 +58,7 @@
 
   .main-nav,
   .settings-nav {
-    padding: 6px;
+    padding: 6px 0 8px 0;
   }
 
   .main-nav {

@@ -146,12 +146,14 @@
 
 <style>
   .rt-row {
+    border: 1px solid transparent;
+    border-radius: 10px;
     display: grid;
     grid-template-columns: minmax(140px, 1fr) 92px 64px 88px 110px 182px 52px;
     align-items: center;
     gap: 0;
     min-width: 730px;
-    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
+    /* border-bottom: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent); */
     min-height: 34px;
     transition: background 100ms;
   }
@@ -160,17 +162,12 @@
     padding: 0 4px;
   }
 
-  .rt-row:last-child {
-    border-bottom: none;
-  }
-
   .rt-row:nth-child(even) {
     background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
   }
 
   .rt-row:hover {
-    background: color-mix(in srgb, var(--c-surface-3) 52%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-border) 52%, transparent);
+    border-color: var(--c-border-strong);
   }
 
   .rt-row.row-pending {

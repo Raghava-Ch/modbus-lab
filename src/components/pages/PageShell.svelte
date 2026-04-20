@@ -44,7 +44,7 @@
 <style>
   .page-shell {
     display: grid;
-    gap: 14px;
+    gap: 10px;
   }
 
   .icon-wrap {
