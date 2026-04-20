@@ -56,12 +56,8 @@
     width: var(--nav-width-collapsed);
   }
 
-  .main-nav,
-  .settings-nav {
-    padding: 6px 0 8px 0;
-  }
-
   .main-nav {
+    padding: 6px 0 8px 0;
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
@@ -70,6 +66,11 @@
   .settings-nav {
     border-top: 1px solid var(--c-border);
     background: color-mix(in srgb, var(--c-surface-1) 92%, transparent);
+    padding: 6px 0 8px;
+  }
+
+  .nav-panel.collapsed .settings-nav :global(.nav-item span) {
+    display: none;
   }
 
   @media (max-width: 767px) {

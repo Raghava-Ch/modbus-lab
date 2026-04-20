@@ -176,20 +176,20 @@
     </header>
 
     <div class="rdp-body">
-      <!-- READ -->
-      <div class="reg-block">
-        <div class="block-header">
-          <span class="block-title">Read</span>
-          <span class="num-primary">{h.slaveValue}</span>
+      <!-- READ row -->
+      <div class="reg-row">
+        <span class="row-label read-label">READ</span>
+        <div class="row-nums">
+          <span class="num-dec">{h.slaveValue}</span>
           <span class="num-hex">0x{h.slaveValue.toString(16).toUpperCase().padStart(4, "0")}</span>
         </div>
-        <div class="bit-strip read-strip" role="group" aria-label="Read value bits">
+        <div class="row-bits">
           {#each [0, 1, 2, 3] as nibble}
             <div class="nibble">
               {#each [0, 1, 2, 3] as b}
                 {@const idx = nibble * 4 + b}
                 {@const on = getBits(h.slaveValue)[idx]}
-                <div class="bit-led" class:on>
+                <div class="bit-led read-led" class:on>
                   <div class="led-dot"></div>
                   <span class="bit-num">{15 - idx}</span>
                 </div>
@@ -199,12 +199,12 @@
         </div>
       </div>
 
-      <div class="block-divider"></div>
+      <div class="row-divider"></div>
 
-      <!-- DESIRED -->
-      <div class="reg-block">
-        <div class="block-header">
-          <span class="block-title">Desired</span>
+      <!-- DESIRED row -->
+      <div class="reg-row">
+        <span class="row-label desired-label">DESIRED</span>
+        <div class="row-nums">
           <div class="num-input-wrapper">
             <input
               class="num-input"
@@ -250,14 +250,14 @@
           </div>
           <span class="num-hex">0x{h.desiredValue.toString(16).toUpperCase().padStart(4, "0")}</span>
         </div>
-        <div class="bit-strip desired-strip" role="group" aria-label="Desired bits — click to toggle">
+        <div class="row-bits">
           {#each [0, 1, 2, 3] as nibble}
             <div class="nibble">
               {#each [0, 1, 2, 3] as b}
                 {@const idx = nibble * 4 + b}
                 {@const on = getBits(h.desiredValue)[idx]}
                 <button
-                  class="bit-led clickable has-tip"
+                  class="bit-led desired-led clickable has-tip"
                   class:on
                   type="button"
                   aria-label="Toggle bit {15 - idx}"
@@ -450,59 +450,149 @@
     color: var(--c-text-1);
   }
 
-  /* ── Body ────────────────────────────────────────── */
+  /* ── Body: READ on top, DESIRED below ── */
   .rdp-body {
     display: flex;
-    flex-direction: row;
-    gap: 0;
-    padding: 10px 14px;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 4px;
+    padding: 8px 0 0;
     flex: 1;
     min-height: 0;
     overflow: hidden;
-    align-items: flex-start;
   }
 
-  .reg-block {
-    flex: 1;
+  /* One row: label | value | bits — all on the same horizontal line */
+  .reg-row {
     display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 12px;
+    padding: 0 16px;
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .block-divider {
-    width: 1px;
-    align-self: stretch;
-    background: var(--c-border);
-    margin: 0 16px;
+  .row-divider { display: none; }
+
+  /* ── Label (fixed width so bits start at same X in both rows) ── */
+  .row-label {
     flex-shrink: 0;
-  }
-
-  /* ── Value header row ───────────────────────────── */
-  .block-header {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .block-title {
-    font-size: 0.62rem;
+    width: 58px;
+    font-size: 0.57rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.07em;
-    color: var(--c-text-2);
-    min-width: 46px;
-  }
-
-  .num-primary {
-    font-size: 1.4rem;
-    font-weight: 700;
-    font-family: monospace;
-    color: var(--c-text-1);
+    padding: 3px 4px;
+    border-radius: 4px;
+    text-align: center;
     line-height: 1;
   }
 
+  .read-label {
+    background: color-mix(in srgb, var(--c-ok) 14%, transparent);
+    color: var(--c-ok);
+    border: 1px solid color-mix(in srgb, var(--c-ok) 30%, transparent);
+  }
+
+  .desired-label {
+    background: color-mix(in srgb, var(--c-warn) 14%, transparent);
+    color: var(--c-warn);
+    border: 1px solid color-mix(in srgb, var(--c-warn) 30%, transparent);
+  }
+
+  /* ── Value (fixed width so bits start at same X in both rows) ── */
+  .row-nums {
+    flex-shrink: 0;
+    width: 160px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .num-dec {
+    font-family: monospace;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--c-text-1);
+    flex-shrink: 0;
+  }
+
+  .num-hex {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--c-text-2);
+    flex-shrink: 0;
+  }
+
+  /* ── Bits: compact, starts at the same X for both rows ── */
+  .row-bits {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .nibble {
+    display: flex;
+    flex-direction: row;
+    gap: 5px;
+    align-items: center;
+  }
+
+  .bit-led {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: default;
+    font: inherit;
+  }
+
+  .bit-led.clickable { cursor: pointer; }
+  .bit-led.clickable:hover .led-dot {
+    border-color: color-mix(in srgb, var(--c-warn) 80%, transparent);
+    transform: scale(1.15);
+  }
+  .bit-led.clickable:active .led-dot { transform: scale(0.92); }
+
+  .led-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--c-surface-3);
+    border: 1.5px solid color-mix(in srgb, var(--c-border) 70%, transparent);
+    transition: background 80ms, box-shadow 80ms, transform 60ms, border-color 80ms;
+  }
+
+  .read-led.on .led-dot {
+    background: var(--c-ok);
+    border-color: color-mix(in srgb, var(--c-ok) 60%, transparent);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--c-ok) 55%, transparent);
+  }
+
+  .desired-led.on .led-dot {
+    background: var(--c-warn);
+    border-color: color-mix(in srgb, var(--c-warn) 60%, transparent);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--c-warn) 55%, transparent);
+  }
+
+  .bit-num {
+    font-size: 0.48rem;
+    color: var(--c-text-2);
+    font-family: monospace;
+    line-height: 1;
+    opacity: 0.7;
+  }
+
+  /* ── Input wrapper (DESIRED value) ── */
   .num-input-wrapper {
     display: flex;
     align-items: stretch;
@@ -525,24 +615,21 @@
   }
 
   .num-input {
-    flex: 1;
-    min-width: 50px;
-    height: 30px;
-    padding: 0 6px;
+    width: 52px;
+    height: 26px;
+    padding: 0 4px;
     border: none;
     background: transparent;
     color: var(--c-text-1);
     font-family: monospace;
-    font-size: 1.2rem;
+    font-size: 0.88rem;
     font-weight: 700;
     line-height: 1;
     text-align: right;
     cursor: text;
   }
 
-  .num-input:focus {
-    outline: none;
-  }
+  .num-input:focus { outline: none; }
 
   .num-spinners {
     display: flex;
@@ -552,12 +639,12 @@
 
   .spinner-btn {
     flex: 1;
-    width: 20px;
+    width: 18px;
     padding: 0;
     border: none;
     background: transparent;
     color: var(--c-text-2);
-    font-size: 0.6rem;
+    font-size: 0.55rem;
     cursor: pointer;
     transition: color 80ms, background 80ms;
     display: flex;
@@ -576,76 +663,6 @@
 
   .spinner-up {
     border-bottom: 1px solid color-mix(in srgb, var(--c-border) 30%, transparent);
-  }
-
-  /* ── Bit strip ──────────────────────────────────── */
-  .bit-strip {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .nibble {
-    display: flex;
-    gap: 5px;
-  }
-
-  .bit-led {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: default;
-    font: inherit;
-  }
-
-  .bit-led.clickable {
-    cursor: pointer;
-  }
-  .bit-led.clickable:hover .led-dot {
-    border-color: color-mix(in srgb, var(--c-warn) 80%, transparent);
-    transform: scale(1.15);
-  }
-  .bit-led.clickable:active .led-dot {
-    transform: scale(0.92);
-  }
-
-  .led-dot {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--c-surface-3);
-    border: 1.5px solid color-mix(in srgb, var(--c-border) 70%, transparent);
-    transition:
-      background 80ms,
-      box-shadow 80ms,
-      transform 60ms,
-      border-color 80ms;
-  }
-
-  /* Read LED — green when ON */
-  .read-strip .bit-led.on .led-dot {
-    background: var(--c-ok);
-    border-color: color-mix(in srgb, var(--c-ok) 60%, transparent);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--c-ok) 55%, transparent);
-  }
-
-  /* Desired LED — amber when ON */
-  .desired-strip .bit-led.on .led-dot {
-    background: var(--c-warn);
-    border-color: color-mix(in srgb, var(--c-warn) 60%, transparent);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--c-warn) 55%, transparent);
-  }
-
-  .bit-num {
-    font-size: 0.5rem;
-    color: var(--c-text-2);
-    font-family: monospace;
-    line-height: 1;
-    opacity: 0.7;
   }
 
   /* ── Footer ─────────────────────────────────────── */
@@ -672,25 +689,15 @@
     align-items: center;
     font-size: 0.62rem;
   }
-  .mk {
-    color: var(--c-text-2);
-  }
-  .mv {
-    color: var(--c-text-1);
-    font-family: monospace;
-  }
+  .mk { color: var(--c-text-2); }
+  .mv { color: var(--c-text-1); font-family: monospace; }
 
-  .act-row {
-    display: flex;
-    gap: 5px;
-  }
+  .act-row { display: flex; gap: 5px; }
 
   .act-btn {
     height: 26px;
     padding: 0 11px;
     border-radius: 5px;
-    font-size: 0.7rem;
-    font-weight: 600;
     font: inherit;
     font-size: 0.7rem;
     font-weight: 600;
@@ -699,13 +706,8 @@
     transition: background 80ms;
   }
 
-  .read-btn {
-    background: var(--c-surface-2);
-    color: var(--c-text-1);
-  }
-  .read-btn:hover:not(:disabled) {
-    background: var(--c-surface-3);
-  }
+  .read-btn { background: var(--c-surface-2); color: var(--c-text-1); }
+  .read-btn:hover:not(:disabled) { background: var(--c-surface-3); }
 
   .write-btn {
     background: color-mix(in srgb, var(--c-accent) 14%, transparent);
@@ -716,12 +718,9 @@
     background: color-mix(in srgb, var(--c-accent) 24%, transparent);
   }
 
-  .act-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
+  .act-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  /* ── Empty states ────────────────────────────────── */
+  /* ── Empty states ─────────────────────────────────── */
   .rdp-empty {
     padding: 14px 12px;
     font-size: 0.72rem;
@@ -731,15 +730,6 @@
 
   /* ── Responsive ─────────────────────────────────── */
   @media (max-width: 680px) {
-    .rdp-body {
-      flex-direction: column;
-      overflow-y: auto;
-    }
-    .block-divider {
-      width: auto;
-      height: 1px;
-      margin: 4px 0 8px;
-    }
     .rdp-foot {
       flex-direction: column;
       align-items: flex-start;

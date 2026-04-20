@@ -38,29 +38,26 @@
     gap: 8px;
     background: transparent;
     color: var(--c-text-2);
-    padding: 7px 9px;
+    padding: 7px 9px 7px 11px;
     text-align: left;
     font-size: 0.68rem;
     letter-spacing: 0.01em;
-    transition: background 120ms ease, color 120ms ease;
+    border-radius: 6px 0 0 6px;
+    border: none;
+    border-left: 3px solid transparent;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
   }
 
   .nav-item:hover {
-    border-color: var(--c-border-strong);
     color: var(--c-text-1);
-    background: color-mix(in srgb, var(--c-surface-3) 34%, transparent);
+    background: color-mix(in srgb, var(--c-surface-3) 40%, transparent);
+    border-left-color: color-mix(in srgb, var(--c-border) 60%, transparent);
   }
 
   .nav-item.active {
-    border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
-    border-right: none;
-    background: color-mix(in srgb, var(--c-surface-3) 56%, var(--c-surface-2));
+    background: color-mix(in srgb, var(--c-surface-3) 60%, var(--c-surface-2));
     color: var(--c-text-1);
-    box-shadow: inset 0 3px 0px rgba(0, 0, 0, 0.3);
-  }
-  .nav-item:hover,
-  .nav-item.active {
-    border-radius: 12px 0 0 12px;
+    border-left-color: var(--c-accent);
   }
 
   .nav-item.active :global(svg) {
@@ -71,25 +68,19 @@
     grid-template-columns: 1fr;
     justify-items: center;
     padding: 7px 4px;
+    border-left: none;
+    border-bottom: 2px solid transparent;
+  }
+
+  .nav-item.collapsed.active {
+    border-bottom-color: var(--c-accent);
+  }
+
+  .nav-item.collapsed.active:hover {
+    border-left: none;
   }
 
   .nav-item.collapsed span {
     display: none;
-  }
-
-  @media (max-width: 767px) {
-    .nav-item {
-      grid-template-columns: 1fr;
-      justify-items: center;
-      gap: 4px;
-      border-radius: 8px;
-      padding: 8px 4px;
-      font-size: 0.7rem;
-    }
-
-    .nav-item span {
-      display: block;
-      line-height: 1;
-    }
   }
 </style>
