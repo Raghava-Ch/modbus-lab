@@ -28,17 +28,4 @@
     display: grid;
     gap: 6px;
   }
-
-  @media (max-width: 767px) {
-    .nav-section {
-      display: flex;
-      gap: 4px;
-      overflow-x: auto;
-      padding: 0 2px;
-    }
-
-    .nav-section :global(.nav-item) {
-      min-width: 70px;
-    }
-  }
 </style>

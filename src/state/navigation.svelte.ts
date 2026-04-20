@@ -30,7 +30,7 @@ export interface TabDef {
 }
 
 export const tabDefs: TabDef[] = [
-  { id: "connection", label: "Connection", icon: "plug", group: "main", feature: "TCP/RTU setup" },
+  { id: "connection", label: "Connection", icon: "plug", group: "settings", feature: "TCP/RTU setup" },
   { id: "coils", label: "Coils", icon: "toggle-left", group: "main", feature: "FC 01/05/15" },
   { id: "discrete-inputs", label: "Discrete Inputs", icon: "list", group: "main", feature: "FC 02" },
   { id: "holding-registers", label: "Holding Registers", icon: "database", group: "main", feature: "FC 03/06/16" },

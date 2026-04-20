@@ -167,24 +167,10 @@
 </div>
 
 <style>
+  /* ── switch-card: ON state (unique to coil/discrete) ── */
   .switch-card {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
-    position: relative;
-    padding: 12px 10px 10px;
-    border: 1px solid color-mix(in srgb, var(--c-border-strong) 48%, var(--c-border));
-    border-radius: 10px;
-    background: var(--c-surface-2);
-    transition: all 160ms ease;
-    font: inherit;
-    text-align: left;
-  }
-
-  .switch-card:hover {
-    border-color: var(--c-border-strong);
-    background: var(--c-surface-3);
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .switch-card.card-on {
@@ -192,71 +178,11 @@
     background: color-mix(in srgb, var(--c-ok) 7%, var(--c-surface-1));
   }
 
-  .switch-card.card-dirty {
-    border-color: color-mix(in srgb, var(--c-warn) 40%, var(--c-border));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-warn) 22%, transparent);
-  }
-
-  .switch-card.card-pending {
-    opacity: 0.65;
-  }
-
-  .card-addr {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    font-family: monospace;
-    font-size: 0.9rem;
-    color: var(--c-text-2);
-    text-align: left;
-    line-height: 1;
-  }
-
-  .card-inline-status-slot {
-    height: 25px;
-  }
-
-  .card-label {
-    font-size: 0.8rem;
-    color: var(--c-text-2);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    width: 100%;
-    line-height: 24px;
-  }
-
-  .card-label-wrap {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 24px;
-    min-height: 24px;
-  }
-
-  .card-label-input {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 6px;
-    border: 1px solid var(--c-accent);
-    border-radius: 4px;
-    background: var(--c-surface-2);
-    color: var(--c-text-1);
-    font: inherit;
-    font-size: 0.72rem;
-    outline: none;
-  }
-
   .card-label-edit {
     opacity: 0.8;
   }
 
-  .card-label-empty {
-    opacity: 0.45;
-  }
-
+  /* ── switch-card layout (status row + toggle + actions) ── */
   .card-status-row {
     width: 100%;
     display: flex;
@@ -294,157 +220,8 @@
     padding: 6px;
   }
 
-  .card-meta {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    min-height: 26px;
-    border-top: 1px solid color-mix(in srgb, var(--c-border) 45%, transparent);
-    padding-top: 6px;
-  }
-
-  .card-inline-status {
-    height: 18px;
-    padding: 0 6px;
-    font-size: 0.6rem;
-    letter-spacing: 0.03em;
-    flex-shrink: 0;
-  }
-
-  .icon-micro {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    border: none;
-    border-radius: 3px;
-    background: transparent;
-    color: var(--c-text-2);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: color 100ms;
-  }
-
-  .icon-micro:hover {
-    color: var(--c-text-1);
-  }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 18px;
-    min-width: 34px;
-    border-radius: 9px;
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-  }
-
-  .badge-live-on {
-    background: color-mix(in srgb, var(--c-ok) 20%, var(--c-surface-3));
-    color: var(--c-ok);
-  }
-
-  .badge-live-off {
-    background: color-mix(in srgb, var(--c-text-2) 12%, var(--c-surface-3));
-    color: var(--c-text-2);
-    opacity: 0.8;
-  }
-
-  .dirty-indicator {
-    display: inline-flex;
-    align-items: center;
-    height: 20px;
-    padding: 0 7px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--c-warn) 36%, var(--c-border));
-    background: color-mix(in srgb, var(--c-warn) 12%, var(--c-surface-2));
-    color: var(--c-warn);
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .failed-indicator {
-    border-color: color-mix(in srgb, var(--c-error, #cf4b4b) 62%, var(--c-border));
-    background: color-mix(in srgb, var(--c-error, #cf4b4b) 18%, var(--c-surface-2));
-    color: color-mix(in srgb, var(--c-error, #cf4b4b) 90%, #8f1f1f);
-  }
-
-  .write-mini,
-  .read-mini {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 8px;
-    border-radius: 6px;
-    font: inherit;
-    font-size: 0.66rem;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 120ms ease;
-  }
-
-  .write-mini {
-    border: 1px solid color-mix(in srgb, var(--c-accent) 30%, var(--c-border));
-    background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2));
-    color: var(--c-accent);
-  }
-
-  .write-mini:hover {
-    border-color: var(--c-accent);
-    color: var(--c-text-1);
-  }
-
-  .write-mini:disabled,
-  .read-mini:disabled,
-  .delete-mini:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
-  .read-mini {
-    border: 1px solid color-mix(in srgb, var(--c-text-2) 30%, var(--c-border));
-    background: color-mix(in srgb, var(--c-text-2) 8%, var(--c-surface-2));
-    color: var(--c-text-2);
-  }
-
-  .read-mini:hover {
-    border-color: var(--c-border-strong);
-    color: var(--c-text-1);
-  }
-
-  .delete-mini {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border: 1px solid color-mix(in srgb, var(--c-error) 30%, var(--c-border));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--c-error) 10%, var(--c-surface-2));
-    color: var(--c-error);
-    font: inherit;
-    cursor: pointer;
-    transition: all 120ms ease;
-  }
-
-  .delete-mini:hover {
-    border-color: var(--c-error);
-    color: var(--c-text-1);
-  }
-
   @media (max-width: 760px) {
     .switch-card {
-      width: 100%;
       align-items: stretch;
     }
 

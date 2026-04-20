@@ -18,6 +18,7 @@
     logState,
     saveLogsToFile,
     setLogFilter,
+    type LogEntry,
     type LogExportScope,
   } from "../../state/logs.svelte";
   import { navigationState } from "../../state/navigation.svelte";
@@ -27,6 +28,8 @@
   import LogPanel from "./LogPanel/LogPanel.svelte";
   import LogToolbar from "./LogPanel/LogToolbar.svelte";
   import LogList from "./LogPanel/LogList.svelte";
+  import RegisterDetailsPanel from "./LogPanel/RegisterDetailsPanel.svelte";
+  import LogEntryDetailModal from "./LogPanel/LogEntryDetailModal.svelte";
   import IconButton from "../shared/IconButton.svelte";
   import ConnectionPage from "../pages/ConnectionPage.svelte";
   import CoilsPage from "../pages/CoilsPage.svelte";
@@ -41,6 +44,7 @@
 
   const filtered = $derived(getFilteredLogs(logState.filter));
   let showAbout = $state(false);
+  let selectedEntry = $state<LogEntry | null>(null);
   const appVersion = "0.0.3";
   const buildDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
@@ -138,10 +142,18 @@
         onToggle={toggleLogCollapsed}
       />
       {#if !layoutState.logCollapsed}
-        <LogList entries={filtered} />
+        {#if layoutState.logPanelView === "logs"}
+          <LogList entries={filtered} onopen={(entry) => (selectedEntry = entry)} />
+        {:else}
+          <RegisterDetailsPanel inline={true} />
+        {/if}
       {/if}
     </section>
   </div>
+{/if}
+
+{#if selectedEntry}
+  <LogEntryDetailModal entry={selectedEntry} onclose={() => (selectedEntry = null)} />
 {/if}
 
 {#if showAbout}
@@ -202,7 +214,7 @@
         <div class="about-section">
           <h3>License</h3>
           <p>GPL v3 for open-source use</p>
-          <p>Commercial licensing is available on request.</p>
+          <p>Commercial licensing on source code is available on request.</p>
         </div>
 
         <div class="about-section">
@@ -311,8 +323,163 @@
     .main-content {
       padding-bottom: calc(18px + 94px + env(safe-area-inset-bottom, 0px));
     }
+
+    /* Reuse bottom-nav styles inline for @media case */
+    .app-shell :global(.nav-panel),
+    .app-shell :global(.nav-panel.collapsed) {
+      position: relative;
+      width: auto;
+      border-right: none;
+      border-top: 1px solid var(--c-border);
+      grid-template-rows: 1fr;
+      display: flex;
+      align-items: stretch;
+      padding: 4px;
+      gap: 4px;
+      background: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: thin;
+    }
+
+    .app-shell :global(.nav-panel)::before,
+    .app-shell :global(.nav-panel)::after {
+      display: none;
+    }
+    .app-shell :global(.nav-panel)::before {
+      left: 0;
+      background: linear-gradient(to right, var(--c-surface-1), transparent);
+    }
+    .app-shell :global(.nav-panel)::after {
+      right: 0;
+      background: linear-gradient(to left, var(--c-surface-1), transparent);
+    }
+
+    .app-shell :global(.nav-section) {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      padding: 0 2px;
+    }
+
+    .app-shell :global(.nav-collapse-btn) { display: none; }
+
+    .app-shell :global(.main-nav),
+    .app-shell :global(.settings-nav) {
+      padding: 0;
+      border: none;
+      background: none;
+    }
+
+    .app-shell :global(.main-nav) { flex: 1; min-width: 0; }
+
+    .app-shell :global(.nav-item) {
+      grid-template-columns: 1fr;
+      justify-items: center;
+      gap: 4px;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.7rem;
+      border-left: 2px solid transparent;
+      border-bottom: 2px solid transparent;
+      min-width: 68px;
+      color: var(--c-text-2);
+      background: transparent;
+    }
+
+    .app-shell :global(.nav-item span) {
+      display: block;
+      line-height: 1;
+    }
+
+    .app-shell :global(.nav-item:hover) {
+      color: var(--c-text-1);
+      background: color-mix(in srgb, var(--c-surface-3) 40%, transparent);
+      border-left-color: transparent;
+      border-bottom-color: color-mix(in srgb, var(--c-border) 60%, transparent);
+    }
+
+    .app-shell :global(.nav-item.active) {
+      color: var(--c-text-1);
+      background: color-mix(in srgb, var(--c-surface-3) 60%, var(--c-surface-2));
+      border-left-color: transparent;
+      border-bottom-color: var(--c-accent);
+    }
+
+    .app-shell :global(.nav-item.active svg) { color: var(--c-accent); }
   }
 
+  /* ── Force Desktop — always sidebar, ignore media query ── */
+  .app-shell.force-desktop {
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas:
+      "status status"
+      "nav content"
+      "logs logs";
+  }
+
+  .app-shell.force-desktop :global(.nav-panel),
+  .app-shell.force-desktop :global(.nav-panel.collapsed) {
+    display: grid !important;
+    grid-template-rows: auto 1fr auto;
+    width: var(--nav-width-open);
+    border-top: none;
+    position: static;
+    overflow: hidden;
+    padding: unset;
+    gap: unset;
+    flex-direction: unset;
+    align-items: unset;
+  }
+
+  .app-shell.force-desktop :global(.nav-panel.collapsed) {
+    width: var(--nav-width-collapsed);
+  }
+
+  .app-shell.force-desktop :global(.nav-panel)::before,
+  .app-shell.force-desktop :global(.nav-panel)::after {
+    display: none;
+  }
+
+  .app-shell.force-desktop :global(.nav-section) {
+    display: grid;
+    gap: 6px;
+    overflow: unset;
+    padding: unset;
+  }
+
+  .app-shell.force-desktop :global(.nav-item) {
+    grid-template-columns: 18px 1fr;
+    justify-items: start;
+    border-left: 2px solid transparent;
+    border-bottom: none;
+    border-radius: 6px;
+    padding: 7px 9px 7px 11px;
+    font-size: 0.68rem;
+    min-width: unset;
+  }
+
+  .app-shell.force-desktop :global(.nav-item span) {
+    display: block;
+  }
+
+  .app-shell.force-desktop :global(.nav-item.active) {
+    border-left-color: var(--c-accent);
+    border-bottom-color: transparent;
+  }
+
+  .app-shell.force-desktop :global(.nav-item.collapsed) {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 7px 4px;
+  }
+
+  .app-shell.force-desktop :global(.nav-item.collapsed span) {
+    display: none;
+  }
+
+  /* ── Force Mobile — always bottom-bar, ignore media query ── */
   .app-shell.force-mobile {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr auto;
@@ -339,6 +506,7 @@
     display: inline-flex;
   }
 
+  /* Bottom-bar nav — same styles as @media block */
   .app-shell.force-mobile :global(.nav-panel),
   .app-shell.force-mobile :global(.nav-panel.collapsed) {
     position: relative;
@@ -346,11 +514,11 @@
     border-right: none;
     border-top: 1px solid var(--c-border);
     grid-template-rows: 1fr;
-    display: flex;
+    display: flex !important;
     align-items: stretch;
     padding: 4px;
     gap: 4px;
-    background: var(--c-surface-1);
+    background: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: thin;
@@ -358,13 +526,7 @@
 
   .app-shell.force-mobile :global(.nav-panel)::before,
   .app-shell.force-mobile :global(.nav-panel)::after {
-    content: "";
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    top: 0;
-    pointer-events: none;
-    z-index: 10;
+    display: none;
   }
 
   .app-shell.force-mobile :global(.nav-panel)::before {
@@ -377,6 +539,65 @@
     background: linear-gradient(to left, var(--c-surface-1), transparent);
   }
 
+  .app-shell.force-mobile :global(.nav-section) {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 0 2px;
+  }
+
+  .app-shell.force-mobile :global(.nav-collapse-btn) { display: none !important; }
+
+  .app-shell.force-mobile :global(.main-nav),
+  .app-shell.force-mobile :global(.settings-nav) {
+    padding: 0;
+    border: none;
+    background: none;
+  }
+
+  .app-shell.force-mobile :global(.main-nav) { flex: 1; min-width: 0; }
+
+  .app-shell.force-mobile :global(.nav-item) {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 4px;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.7rem;
+    border-left: 2px solid transparent;
+    border-bottom: 2px solid transparent;
+    min-width: 68px;
+    color: var(--c-text-2);
+    background: transparent;
+  }
+
+  .app-shell.force-mobile :global(.nav-item span) {
+    display: block;
+    line-height: 1;
+  }
+
+  .app-shell.force-mobile :global(.nav-item:hover) {
+    color: var(--c-text-1);
+    background: color-mix(in srgb, var(--c-surface-3) 40%, transparent);
+    border-left-color: transparent;
+    border-bottom-color: color-mix(in srgb, var(--c-border) 60%, transparent);
+  }
+
+  .app-shell.force-mobile :global(.nav-item.active) {
+    color: var(--c-text-1);
+    background: color-mix(in srgb, var(--c-surface-3) 60%, var(--c-surface-2));
+    border-left-color: transparent;
+    border-bottom-color: var(--c-accent);
+  }
+
+  .app-shell.force-mobile :global(.nav-item.active svg) { color: var(--c-accent); }
+
+  /* Keep mobile-log overlay visible when force-open */
+  .mobile-log-overlay.force-open {
+    display: flex;
+  }
+
+
   .about-backdrop {
     position: fixed;
     inset: 0;
@@ -387,7 +608,6 @@
     z-index: 100;
     animation: fade-in 150ms ease;
   }
-
   .about-modal {
     background: var(--c-surface-1);
     border: 1px solid var(--c-border);
@@ -400,7 +620,6 @@
     grid-template-rows: auto 1fr;
     animation: scale-in 150ms ease;
   }
-
   .about-header {
     display: flex;
     align-items: center;
@@ -413,291 +632,27 @@
     background: var(--c-surface-1);
     border-bottom: 1px solid var(--c-border);
   }
-
-  .about-header h2 {
-    margin: 0;
-    font-size: 1.1rem;
-    color: var(--c-text-1);
-  }
-
+  .about-header h2 { margin: 0; font-size: 1.1rem; color: var(--c-text-1); }
   .close-btn {
-    background: none;
-    border: none;
-    color: var(--c-text-2);
-    cursor: pointer;
-    padding: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    transition: background 120ms ease;
+    background: none; border: none; color: var(--c-text-2); cursor: pointer;
+    padding: 4px; display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; transition: background 120ms ease;
   }
-
-  .close-btn:hover {
-    background: var(--c-surface-2);
-    color: var(--c-text-1);
-  }
-
+  .close-btn:hover { background: var(--c-surface-2); color: var(--c-text-1); }
   .about-body {
-    min-height: 0;
-    overflow-y: auto;
-    padding: 16px;
-    display: grid;
-    gap: 12px;
-    font-size: 0.9rem;
-    color: var(--c-text-1);
-    line-height: 1.5;
+    min-height: 0; overflow-y: auto; padding: 16px; display: grid;
+    gap: 12px; font-size: 0.9rem; color: var(--c-text-1); line-height: 1.5;
   }
-
-  .about-section {
-    display: grid;
-    gap: 6px;
-  }
-
-  .about-section h3 {
-    margin: 0;
-    font-size: 0.95rem;
-    color: var(--c-accent);
-    font-weight: 600;
-  }
-
-  .about-section p {
-    margin: 0;
-  }
-
-  .about-section ul {
-    margin: 0;
-    padding-left: 20px;
-  }
-
-  .about-section li {
-    margin: 4px 0;
-  }
-
-  .about-section a {
-    color: var(--c-accent);
-    text-decoration: none;
-  }
-
-  .about-section a:hover {
-    text-decoration: underline;
-  }
-
-  @keyframes fade-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
+  .about-section { display: grid; gap: 6px; }
+  .about-section h3 { margin: 0; font-size: 0.95rem; color: var(--c-accent); font-weight: 600; }
+  .about-section p { margin: 0; }
+  .about-section ul { margin: 0; padding-left: 20px; }
+  .about-section li { margin: 4px 0; }
+  .about-section a { color: var(--c-accent); text-decoration: none; }
+  .about-section a:hover { text-decoration: underline; }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes scale-in {
-    from {
-      opacity: 0;
-      transform: scale(0.95);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
   }
-
-  .app-shell.force-mobile :global(.nav-panel)::before {
-    left: 0;
-    background: linear-gradient(to right, var(--c-surface-1), transparent);
-  }
-
-  .app-shell.force-mobile :global(.nav-panel)::after {
-    right: 0;
-    background: linear-gradient(to left, var(--c-surface-1), transparent);
-  }
-
-  .app-shell.force-mobile :global(.nav-panel .main-nav),
-  .app-shell.force-mobile :global(.nav-panel .settings-nav) {
-    padding: 0;
-    border: 0;
-    flex: 0 0 auto;
-  }
-
-  .app-shell.force-mobile :global(.nav-panel .main-nav) {
-    min-width: 0;
-  }
-
-  .app-shell.force-mobile :global(.nav-collapse-btn) {
-    display: none;
-  }
-
-  .app-shell.force-mobile :global(.nav-section) {
-    display: flex;
-    gap: 4px;
-    overflow: visible;
-    padding: 0 2px;
-    white-space: nowrap;
-  }
-
-  .app-shell.force-mobile :global(.nav-section .nav-item) {
-    min-width: 70px;
-    width: auto;
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 4px;
-    border-radius: 8px;
-    padding: 8px 4px;
-    font-size: 0.7rem;
-    text-align: center;
-  }
-
-  .app-shell.force-mobile :global(.nav-section .nav-item span) {
-    display: block;
-    line-height: 1;
-  }
-
-  .app-shell.force-mobile :global(.main-content) {
-    overflow-x: auto;
-    overflow-y: auto;
-    overflow-y: overlay;
-    scrollbar-gutter: stable;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .app-shell.force-mobile :global(.panel-frame) {
-    overflow-x: auto;
-  }
-
-  .app-shell.force-mobile :global(.toolbar) {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .app-shell.force-mobile :global(.toolbar-left) {
-    justify-content: space-between;
-  }
-
-  .app-shell.force-mobile :global(.toolbar-actions) {
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-
-  .app-shell.force-mobile :global(.address-filter-row) {
-    align-items: stretch;
-  }
-
-  .app-shell.force-mobile :global(.address-filter-select),
-  .app-shell.force-mobile :global(.address-filter-input),
-  .app-shell.force-mobile :global(.address-filter-list-input) {
-    width: 100%;
-  }
-
-  .app-shell.force-mobile :global(.form-row),
-  .app-shell.force-mobile :global(.protocol-buttons) {
-    grid-template-columns: 1fr !important;
-  }
-
-  .app-shell.force-mobile :global(.tcp-fields),
-  .app-shell.force-mobile :global(.device-fields) {
-    flex-wrap: wrap;
-  }
-
-  .app-shell.force-mobile :global(.tcp-host),
-  .app-shell.force-mobile :global(.tcp-port),
-  .app-shell.force-mobile :global(.slave-id-group),
-  .app-shell.force-mobile :global(.actions) {
-    width: 100%;
-    flex: 1 1 100%;
-  }
-
-  .mobile-log-overlay.force-open {
-    display: flex;
-  }
-
-  .app-shell.force-desktop {
-    grid-template-columns: auto 1fr;
-    grid-template-rows: auto 1fr auto;
-    grid-template-areas:
-      "status status"
-      "nav content"
-      "logs logs";
-  }
-
-  .app-shell.force-desktop :global(.log-panel) {
-    display: grid !important;
-  }
-
-  .app-shell.force-desktop :global(.status-bar) {
-    grid-template-columns: auto 1fr auto;
-    gap: 10px;
-  }
-
-  .app-shell.force-desktop :global(.status-bar .center) {
-    display: flex;
-  }
-
-  .app-shell.force-desktop :global(.status-actions .mobile-only) {
-    display: none;
-  }
-
-  .app-shell.force-desktop :global(.nav-panel) {
-    width: var(--nav-width-open);
-    border-right: 1px solid var(--c-border);
-    border-top: none;
-    grid-template-rows: auto 1fr auto;
-    display: grid;
-    padding: 0;
-    gap: 0;
-    background: var(--c-surface-1);
-  }
-
-  .app-shell.force-desktop :global(.nav-panel.collapsed) {
-    width: var(--nav-width-collapsed);
-  }
-
-  .app-shell.force-desktop :global(.nav-panel .main-nav),
-  .app-shell.force-desktop :global(.nav-panel .settings-nav) {
-    padding: 8px;
-  }
-
-  .app-shell.force-desktop :global(.nav-panel .settings-nav) {
-    border-top: 1px solid var(--c-border);
-  }
-
-  .app-shell.force-desktop :global(.nav-collapse-btn) {
-    display: block;
-    padding: 8px;
-  }
-
-  .app-shell.force-desktop :global(.nav-section) {
-    display: grid;
-    gap: 6px;
-    overflow: visible;
-    padding: 0;
-  }
-
-  .app-shell.force-desktop :global(.nav-section .nav-item) {
-    width: 100%;
-    min-width: 0;
-    grid-template-columns: 20px 1fr;
-    justify-items: stretch;
-    gap: 10px;
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-size: inherit;
-    text-align: left;
-  }
-
-  .app-shell.force-desktop :global(.nav-section .nav-item span) {
-    display: block;
-    line-height: inherit;
-  }
-
-  .app-shell.force-desktop :global(.nav-section .nav-item.collapsed) {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    padding: 10px 6px;
-  }
-
-  .app-shell.force-desktop :global(.nav-section .nav-item.collapsed span) {
-    display: none;
-  }
-
 </style>
