@@ -1,0 +1,573 @@
+use serde::{Deserialize, Serialize};
+
+pub type ApiResult<T> = Result<T, ApiError>;
+
+pub const DEFAULT_TCP_CONNECTION_TIMEOUT_MS: u64 = 2_000;
+pub const DEFAULT_TCP_RESPONSE_TIMEOUT_MS: u64 = 2_000;
+pub const DEFAULT_TCP_RETRY_ATTEMPTS: u8 = 2;
+pub const DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 30_000;
+pub const MIN_TCP_HEARTBEAT_IDLE_AFTER_MS: u64 = 1_000;
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsContext {
+    pub trace_id: Option<String>,
+    pub session_id: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RetryBackoffStrategy {
+    Fixed,
+    Linear,
+    Exponential,
+}
+
+impl Default for RetryBackoffStrategy {
+    fn default() -> Self {
+        Self::Fixed
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RetryJitterStrategy {
+    None,
+    Full,
+    Equal,
+}
+
+impl Default for RetryJitterStrategy {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpConnectRequest {
+    pub host: String,
+    pub port: u16,
+    pub slave_id: u8,
+    #[serde(default, alias = "timeoutMs")]
+    pub connection_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub response_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub retry_attempts: Option<u8>,
+    #[serde(default)]
+    pub retry_backoff_strategy: Option<RetryBackoffStrategy>,
+    #[serde(default)]
+    pub retry_jitter_strategy: Option<RetryJitterStrategy>,
+    #[serde(default)]
+    pub heartbeat_idle_after_ms: Option<u64>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ListenerTransport {
+    Tcp,
+    SerialRtu,
+    SerialAscii,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenerStartRequest {
+    pub transport: ListenerTransport,
+    pub bind_address: Option<String>,
+    pub port: Option<u16>,
+    pub unit_id: u8,
+    #[serde(default)]
+    pub response_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub serial_port: Option<String>,
+    #[serde(default)]
+    pub baud_rate: Option<u32>,
+    #[serde(default)]
+    pub data_bits: Option<u8>,
+    #[serde(default)]
+    pub stop_bits: Option<u8>,
+    #[serde(default)]
+    pub parity: Option<String>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenerClientSession {
+    pub id: String,
+    pub endpoint: String,
+    pub connected_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenerClientsResponse {
+    pub active_clients: u32,
+    pub sessions: Vec<ListenerClientSession>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenerStatusPayload {
+    pub status: String,
+    pub details: Option<String>,
+    pub transport: Option<String>,
+    pub bind_target: Option<String>,
+    pub unit_id: Option<u8>,
+    pub active_clients: u32,
+    pub uptime_ms: Option<u64>,
+    pub last_error: Option<String>,
+}
+
+impl TcpConnectRequest {
+    pub fn resolved_connection_timeout_ms(&self) -> u64 {
+        self.connection_timeout_ms
+            .unwrap_or(DEFAULT_TCP_CONNECTION_TIMEOUT_MS)
+            .max(100)
+    }
+
+    pub fn resolved_response_timeout_ms(&self) -> u64 {
+        self.response_timeout_ms
+            .unwrap_or(DEFAULT_TCP_RESPONSE_TIMEOUT_MS)
+            .max(100)
+    }
+
+    pub fn resolved_retry_attempts(&self) -> u8 {
+        self.retry_attempts
+            .unwrap_or(DEFAULT_TCP_RETRY_ATTEMPTS)
+            .min(10)
+    }
+
+    pub fn resolved_retry_backoff_strategy(&self) -> RetryBackoffStrategy {
+        self.retry_backoff_strategy.clone().unwrap_or_default()
+    }
+
+    pub fn resolved_retry_jitter_strategy(&self) -> RetryJitterStrategy {
+        self.retry_jitter_strategy.clone().unwrap_or_default()
+    }
+
+    pub fn resolved_heartbeat_idle_after_ms(&self) -> Option<u64> {
+        match self.heartbeat_idle_after_ms {
+            Some(0) => None,
+            Some(value) => Some(value.max(MIN_TCP_HEARTBEAT_IDLE_AFTER_MS)),
+            None => Some(DEFAULT_TCP_HEARTBEAT_IDLE_AFTER_MS),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SerialConnectRequest {
+    pub port: String,
+    pub baud_rate: u32,
+    pub data_bits: u8,
+    pub stop_bits: u8,
+    pub parity: String,
+    pub slave_id: u8,
+    pub timeout_ms: Option<u64>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DisconnectRequest {
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectionStatus {
+    Disconnected,
+    Connecting,
+    Reconnecting,
+    ConnectedTcp,
+    ConnectedSerialRtu,
+    ConnectedSerialAscii,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionStatusPayload {
+    pub status: ConnectionStatus,
+    pub details: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandAck {
+    pub ok: bool,
+    pub message: String,
+    pub status: ConnectionStatusPayload,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ErrorCode {
+    InvalidRequest,
+    ConnectionConflict,
+    NotImplementedYet,
+    NotConnected,
+    BackendFailure,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiError {
+    pub code: ErrorCode,
+    pub message: String,
+    pub details: Option<String>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+impl ApiError {
+    pub fn invalid_request(
+        message: impl Into<String>,
+        analytics: Option<AnalyticsContext>,
+    ) -> Self {
+        Self {
+            code: ErrorCode::InvalidRequest,
+            message: message.into(),
+            details: None,
+            analytics,
+        }
+    }
+
+    pub fn conflict(message: impl Into<String>, analytics: Option<AnalyticsContext>) -> Self {
+        Self {
+            code: ErrorCode::ConnectionConflict,
+            message: message.into(),
+            details: None,
+            analytics,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn not_implemented(
+        feature: impl Into<String>,
+        analytics: Option<AnalyticsContext>,
+    ) -> Self {
+        let feature = feature.into();
+        Self {
+            code: ErrorCode::NotImplementedYet,
+            message: format!("{feature} is scaffolded and will be implemented in next phase."),
+            details: None,
+            analytics,
+        }
+    }
+
+    pub fn not_connected(message: impl Into<String>, analytics: Option<AnalyticsContext>) -> Self {
+        Self {
+            code: ErrorCode::NotConnected,
+            message: message.into(),
+            details: None,
+            analytics,
+        }
+    }
+
+    pub fn backend_failure(
+        message: impl Into<String>,
+        details: Option<String>,
+        analytics: Option<AnalyticsContext>,
+    ) -> Self {
+        Self {
+            code: ErrorCode::BackendFailure,
+            message: message.into(),
+            details,
+            analytics,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BackendEventLevel {
+    Info,
+    Warn,
+    Error,
+    Traffic,
+}
+
+// ── Coil operation DTOs ───────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadCoilsRequest {
+    pub start_address: u16,
+    pub quantity: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteCoilRequest {
+    pub address: u16,
+    pub value: bool,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoilEntry {
+    pub address: u16,
+    pub value: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadCoilsResponse {
+    pub coils: Vec<CoilEntry>,
+    pub start_address: u16,
+    pub quantity: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadDiscreteInputsRequest {
+    pub start_address: u16,
+    pub quantity: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscreteInputEntry {
+    pub address: u16,
+    pub value: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadDiscreteInputsResponse {
+    pub inputs: Vec<DiscreteInputEntry>,
+    pub start_address: u16,
+    pub quantity: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadHoldingRegistersRequest {
+    pub start_address: u16,
+    pub quantity: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadInputRegistersRequest {
+    pub start_address: u16,
+    pub quantity: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterEntry {
+    pub address: u16,
+    pub value: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadHoldingRegistersResponse {
+    pub registers: Vec<RegisterEntry>,
+    pub start_address: u16,
+    pub quantity: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadInputRegistersResponse {
+    pub registers: Vec<RegisterEntry>,
+    pub start_address: u16,
+    pub quantity: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteCoilResponse {
+    pub address: u16,
+    pub value: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteHoldingRegisterRequest {
+    pub address: u16,
+    pub value: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteHoldingRegisterResponse {
+    pub address: u16,
+    pub value: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteMassCoilsRequest {
+    pub coils: Vec<CoilEntry>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoilWriteFailure {
+    pub address: u16,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteMassCoilsResponse {
+    pub written_count: usize,
+    pub total_count: usize,
+    pub failures: Vec<CoilWriteFailure>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteMassHoldingRegistersRequest {
+    pub registers: Vec<RegisterEntry>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterWriteFailure {
+    pub address: u16,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteMassHoldingRegistersResponse {
+    pub written_count: usize,
+    pub total_count: usize,
+    pub failures: Vec<RegisterWriteFailure>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CustomFrameMode {
+    FunctionPayload,
+    RawBytes,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFrameRequest {
+    pub mode: CustomFrameMode,
+    pub function_code: Option<u8>,
+    pub payload_hex: Option<String>,
+    pub raw_hex: Option<String>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFrameResponse {
+    pub mode: CustomFrameMode,
+    pub function_code: u8,
+    pub function_name: String,
+    pub request_hex: String,
+    pub response_hex: String,
+    pub response_ascii: Option<String>,
+    pub request_summary: String,
+    pub response_summary: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendEvent {
+    pub level: BackendEventLevel,
+    pub topic: String,
+    pub message: String,
+    pub status: Option<ConnectionStatusPayload>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+// ── Diagnostics DTOs (FC07/08/11/12/17/43) ─────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadExceptionStatusResponse {
+    pub status: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticRequest {
+    pub subfunction: u16,
+    pub data: Vec<u8>,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticResponse {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetComEventCounterResponse {
+    pub status: u16,
+    pub event_count: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComEventLogEntry {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetComEventLogResponse {
+    pub entries: Vec<ComEventLogEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetComEventLogRequest {
+    pub start: u16,
+    pub count: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportServerIdResponse {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadDeviceIdentificationRequest {
+    pub level: u8,
+    pub object_id: u8,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceIdObject {
+    pub id: u8,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadDeviceIdentificationResponse {
+    pub conformity: Option<u8>,
+    pub objects: Vec<DeviceIdObject>,
+}

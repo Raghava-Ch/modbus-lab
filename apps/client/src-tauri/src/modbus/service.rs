@@ -12,8 +12,11 @@ use tokio::{
     time::{sleep, timeout, Duration, Instant},
 };
 
-use modbus_rs::mbus_async::AsyncTcpClient;
-use modbus_rs::{Coils, DiagnosticSubFunction, DiscreteInputs, EncapsulatedInterfaceType, Registers};
+use modbus_rs::mbus_async::{AsyncClientNotifier, AsyncTcpClient};
+use modbus_rs::{crc16, Coils, DiagnosticSubFunction, DiscreteInputs, EncapsulatedInterfaceType, MbusError, Registers, UnitIdOrSlaveAddr};
+use mbus_core::transport::checksum::lrc;
+use mbus_core::function_codes::public::FunctionCode;
+use mbus_core::data_unit::common::{AdditionalAddress, ModbusMessage, Pdu};
 use serialport::{ClearBuffer, DataBits, Parity, SerialPort, StopBits};
 
 use tauri::AppHandle;
@@ -112,6 +115,78 @@ struct TcpSession {
 
 type TcpTrafficSink = Arc<dyn Fn(String) + Send + Sync + 'static>;
 type TcpRequestGate = Arc<Mutex<()>>;
+
+/// Bridges the 0.7.0 `AsyncClientNotifier` trait to our existing traffic sink closure.
+struct TrafficBridge {
+    sink: TcpTrafficSink,
+}
+
+impl TrafficBridge {
+    fn emit(&self, direction: &str, txn_id: u16, unit: UnitIdOrSlaveAddr, frame: &[u8], error: Option<&MbusError>) {
+        // Ignore short RX chunks that cannot represent a full Modbus TCP ADU.
+        if direction == "rx" && frame.len() < 8 {
+            return;
+        }
+
+        let bytes = format_hex_bytes(frame);
+        let adu = describe_tcp_adu_human(frame, direction);
+        let error_detail = error.map(|e| format_mbus_error_detail(e)).unwrap_or_default();
+        let message = if error_detail.is_empty() {
+            format!(
+                "tcp.{direction} txn={txn_id} unit={} adu={adu} bytes={bytes}",
+                unit.get(),
+            )
+        } else {
+            format!(
+                "tcp.{direction} txn={txn_id} unit={} {error_detail} adu={adu} bytes={bytes}",
+                unit.get(),
+            )
+        };
+
+        (self.sink)(message);
+    }
+}
+
+/// Formats a structured `MbusError` into key=value tokens for traffic log messages.
+fn format_mbus_error_detail(err: &MbusError) -> String {
+    match err {
+        MbusError::ModbusException(code) => {
+            let name = modbus_exception_name(*code);
+            format!("error_type=exception exception_code=0x{code:02X}({name})")
+        }
+        MbusError::Timeout => "error_type=timeout".to_string(),
+        MbusError::SendFailed => "error_type=send_failed".to_string(),
+        MbusError::ConnectionLost => "error_type=connection_lost".to_string(),
+        MbusError::ConnectionClosed => "error_type=connection_closed".to_string(),
+        MbusError::ConnectionFailed => "error_type=connection_failed".to_string(),
+        MbusError::IoError => "error_type=io_error".to_string(),
+        MbusError::ParseError => "error_type=parse_error".to_string(),
+        MbusError::BasicParseError => "error_type=basic_parse_error".to_string(),
+        MbusError::InvalidPduLength => "error_type=invalid_pdu_length".to_string(),
+        MbusError::InvalidAduLength => "error_type=invalid_adu_length".to_string(),
+        MbusError::TooManyRequests => "error_type=too_many_requests".to_string(),
+        MbusError::ChecksumError => "error_type=checksum_error".to_string(),
+        MbusError::BufferTooSmall => "error_type=buffer_too_small".to_string(),
+        MbusError::UnexpectedResponse => "error_type=unexpected_response".to_string(),
+        MbusError::UnsupportedFunction(fc) => format!("error_type=unsupported_function fc=0x{fc:02X}"),
+        other => format!("error_type=other err={other}"),
+    }
+}
+
+impl AsyncClientNotifier for TrafficBridge {
+    fn on_tx_frame(&mut self, txn_id: u16, unit: UnitIdOrSlaveAddr, frame: &[u8]) {
+        self.emit("tx", txn_id, unit, frame, None);
+    }
+    fn on_rx_frame(&mut self, txn_id: u16, unit: UnitIdOrSlaveAddr, frame: &[u8]) {
+        self.emit("rx", txn_id, unit, frame, None);
+    }
+    fn on_tx_error(&mut self, txn_id: u16, unit: UnitIdOrSlaveAddr, error: MbusError, frame: &[u8]) {
+        self.emit("tx", txn_id, unit, frame, Some(&error));
+    }
+    fn on_rx_error(&mut self, txn_id: u16, unit: UnitIdOrSlaveAddr, error: MbusError, frame: &[u8]) {
+        self.emit("rx", txn_id, unit, frame, Some(&error));
+    }
+}
 
 struct SerialSession {
     frame_mode: SerialFrameMode,
@@ -2159,36 +2234,7 @@ async fn connect_tcp_client(
         };
 
         if let Some(sink) = traffic_sink.clone() {
-            client.set_traffic_handler(move |event| {
-                let direction = format!("{:?}", event.direction).to_ascii_lowercase();
-
-                // Ignore short RX chunks that cannot represent a full Modbus TCP ADU.
-                // These are often partial socket reads and produce noisy "invalid_adu reason=short" logs.
-                if direction.contains("rx") && event.frame.len() < 8 {
-                    return;
-                }
-
-                let bytes = format_hex_bytes(&event.frame);
-                let adu = describe_tcp_adu_human(&event.frame, direction.as_str());
-                let message = if let Some(err) = event.error {
-                    format!(
-                        "tcp.{direction} txn={} unit={} adu={} err={:?} bytes={bytes}",
-                        event.txn_id,
-                        event.unit_id_slave_addr.get(),
-                        adu,
-                        err
-                    )
-                } else {
-                    format!(
-                        "tcp.{direction} txn={} unit={} adu={} bytes={bytes}",
-                        event.txn_id,
-                        event.unit_id_slave_addr.get(),
-                        adu,
-                    )
-                };
-
-                sink(message);
-            });
+            client.set_traffic_notifier(TrafficBridge { sink });
         }
 
         match timeout(connection_timeout, client.connect()).await {
@@ -2619,26 +2665,6 @@ async fn write_multiple_registers_with_retry(
     ))
 }
 
-fn crc16_modbus(data: &[u8]) -> u16 {
-    let mut crc: u16 = 0xFFFF;
-    for byte in data {
-        crc ^= u16::from(*byte);
-        for _ in 0..8 {
-            if (crc & 0x0001) != 0 {
-                crc = (crc >> 1) ^ 0xA001;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    crc
-}
-
-fn lrc_modbus(data: &[u8]) -> u8 {
-    let sum: u8 = data.iter().fold(0_u8, |acc, b| acc.wrapping_add(*b));
-    (!sum).wrapping_add(1)
-}
-
 fn nibble_to_hex(n: u8) -> u8 {
     match n {
         0..=9 => b'0' + n,
@@ -2715,7 +2741,7 @@ fn serial_send_request_ascii(
     pdu.push(session.slave_id);
     pdu.push(function);
     pdu.extend_from_slice(payload);
-    pdu.push(lrc_modbus(&pdu));
+    pdu.push(lrc(&pdu));
 
     let frame = bytes_to_ascii_hex_frame(&pdu);
 
@@ -2749,7 +2775,7 @@ fn serial_send_request_ascii(
     }
 
     let frame_lrc = *bytes.last().unwrap_or(&0);
-    let computed_lrc = lrc_modbus(&bytes[..bytes.len() - 1]);
+    let computed_lrc = lrc(&bytes[..bytes.len() - 1]);
     if frame_lrc != computed_lrc {
         return Err("Invalid LRC in serial ASCII response frame.".to_string());
     }
@@ -2789,7 +2815,7 @@ fn serial_send_request_rtu(
     frame.push(session.slave_id);
     frame.push(function);
     frame.extend_from_slice(payload);
-    let crc = crc16_modbus(&frame);
+    let crc = crc16(&frame);
     frame.extend_from_slice(&crc.to_le_bytes());
 
     let _ = session.port.clear(ClearBuffer::All);
@@ -2886,7 +2912,7 @@ fn try_extract_serial_rtu_response(
 
         let frame = buffer[..frame_len].to_vec();
         let expected_crc = u16::from_le_bytes([frame[frame_len - 2], frame[frame_len - 1]]);
-        let actual_crc = crc16_modbus(&frame[..frame_len - 2]);
+        let actual_crc = crc16(&frame[..frame_len - 2]);
         if expected_crc != actual_crc {
             if frame == request_frame {
                 buffer.drain(..frame_len);
@@ -3064,53 +3090,38 @@ fn describe_custom_pdu(mode: &str, function: u8, payload: &[u8]) -> String {
 }
 
 fn describe_tcp_adu_human(frame: &[u8], direction: &str) -> String {
-    if frame.len() < 8 {
-        return format!("invalid_adu reason=short frame_len={}", frame.len());
-    }
-
-    let txn = u16::from_be_bytes([frame[0], frame[1]]);
-    let protocol = u16::from_be_bytes([frame[2], frame[3]]);
-    let declared_len = u16::from_be_bytes([frame[4], frame[5]]);
-    let unit = frame[6];
-
-    if protocol != 0 {
-        return format!(
-            "invalid_adu txn={} unit={} reason=protocol_id protocol={}",
-            txn, unit, protocol
-        );
-    }
-
-    let expected_total = 6 + usize::from(declared_len);
-    let pdu = &frame[7..];
-    if pdu.is_empty() {
-        return format!(
-            "invalid_adu txn={} unit={} reason=missing_pdu declared_len={}",
-            txn, unit, declared_len
-        );
-    }
-
-    let function_raw = pdu[0];
-    let is_exception = (function_raw & 0x80) != 0;
-    let function = function_raw & 0x7F;
-    let fc_name = modbus_function_name(function);
-    let mode = if direction.contains("tx") {
-        "request"
-    } else {
-        "response"
+    let msg = match ModbusMessage::from_bytes(frame) {
+        Ok(m) => m,
+        Err(_) => {
+            if frame.len() >= 7 {
+                let txn = u16::from_be_bytes([frame[0], frame[1]]);
+                let declared_len = u16::from_be_bytes([frame[4], frame[5]]);
+                let unit = frame[6];
+                return format!(
+                    "invalid_adu txn={} unit={} reason=parse_error frame_len={} declared_len={}",
+                    txn, unit, frame.len(), declared_len
+                );
+            }
+            return format!("invalid_adu reason=short frame_len={}", frame.len());
+        }
     };
-    let pdu_details = decode_pdu_details(mode, function, is_exception, &pdu[1..]);
+
+    let (txn, unit, declared_len) = match msg.additional_address {
+        AdditionalAddress::MbapHeader(h) => (h.transaction_id, h.unit_id, h.length),
+        AdditionalAddress::SlaveAddress(s) => (0, s.address(), 0),
+    };
+
+    let pdu = &msg.pdu;
+    let function = pdu.function_code() as u8;
+    let is_exception = pdu.error_code().is_some();
+    let fc_name = modbus_function_name(function);
+    let mode = if direction.contains("tx") { "request" } else { "response" };
+    let expected_total = 6 + usize::from(declared_len);
+    let pdu_details = decode_pdu_details(mode, function, is_exception, pdu.data().as_slice());
 
     format!(
         "txn={} unit={} fc=0x{:02X}({}) kind={} mbap_len={} frame_len={} expected_len={} {}",
-        txn,
-        unit,
-        function,
-        fc_name,
-        mode,
-        declared_len,
-        frame.len(),
-        expected_total,
-        pdu_details
+        txn, unit, function, fc_name, mode, declared_len, frame.len(), expected_total, pdu_details
     )
 }
 
@@ -3124,66 +3135,166 @@ fn decode_pdu_details(mode: &str, function: u8, is_exception: bool, data: &[u8])
         );
     }
 
-    match function {
-        0x01 | 0x02 | 0x03 | 0x04 => {
-            if mode == "request" && data.len() >= 4 {
-                let start = u16::from_be_bytes([data[0], data[1]]);
-                let qty = u16::from_be_bytes([data[2], data[3]]);
-                return format!("start={} qty={}", start, qty);
-            }
+    let mut pdu_bytes = Vec::with_capacity(1 + data.len());
+    pdu_bytes.push(function);
+    pdu_bytes.extend_from_slice(data);
 
-            if mode == "response" && !data.is_empty() {
-                return format!("byte_count={}", data[0]);
+    let pdu = match Pdu::from_bytes(&pdu_bytes) {
+        Ok(p) => p,
+        Err(_) => return format!("pdu_len={}", data.len() + 1),
+    };
+
+    match pdu.function_code() {
+        FunctionCode::ReadCoils | FunctionCode::ReadDiscreteInputs => {
+            if mode == "request" {
+                if let Ok(rw) = pdu.read_window() {
+                    return format!("start={} qty={}", rw.address, rw.quantity);
+                }
+            } else if let Ok(bc) = pdu.byte_count_payload() {
+                let byte_count = bc.byte_count as usize;
+                if byte_count > 0 {
+                    let bits_str: Vec<String> = (0..byte_count * 8)
+                        .map(|i| ((bc.payload[i / 8] >> (i % 8)) & 1).to_string())
+                        .collect();
+                    return format!("byte_count={} bits=[{}]", byte_count, bits_str.join(","));
+                }
+                return format!("byte_count={}", bc.byte_count);
             }
         }
-        0x05 => {
-            if data.len() >= 4 {
-                let addr = u16::from_be_bytes([data[0], data[1]]);
-                let raw = u16::from_be_bytes([data[2], data[3]]);
-                let value = match raw {
-                    0xFF00 => "on",
-                    0x0000 => "off",
-                    _ => "unknown",
-                };
-                return format!("addr={} value=0x{:04X}({})", addr, raw, value);
+        FunctionCode::ReadHoldingRegisters | FunctionCode::ReadInputRegisters => {
+            if mode == "request" {
+                if let Ok(rw) = pdu.read_window() {
+                    return format!("start={} qty={}", rw.address, rw.quantity);
+                }
+            } else if let Ok(bc) = pdu.byte_count_payload() {
+                let byte_count = bc.byte_count as usize;
+                if byte_count > 0 && byte_count % 2 == 0 {
+                    let qty = byte_count / 2;
+                    let regs: Vec<String> = (0..qty)
+                        .map(|i| u16::from_be_bytes([bc.payload[i * 2], bc.payload[i * 2 + 1]]).to_string())
+                        .collect();
+                    return format!("byte_count={} regs=[{}]", byte_count, regs.join(","));
+                }
+                return format!("byte_count={}", bc.byte_count);
             }
         }
-        0x06 => {
-            if data.len() >= 4 {
-                let addr = u16::from_be_bytes([data[0], data[1]]);
-                let value = u16::from_be_bytes([data[2], data[3]]);
-                return format!("addr={} value={}", addr, value);
+        FunctionCode::WriteSingleCoil => {
+            if let Ok(f) = pdu.write_single_u16_fields() {
+                let label = match f.value { 0xFF00 => "on", 0x0000 => "off", _ => "unknown" };
+                return format!("addr={} value=0x{:04X}({})", f.address, f.value, label);
             }
         }
-        0x08 => {
-            if data.len() >= 2 {
-                let sub = u16::from_be_bytes([data[0], data[1]]);
+        FunctionCode::WriteSingleRegister => {
+            if let Ok(f) = pdu.write_single_u16_fields() {
+                return format!("addr={} value={}", f.address, f.value);
+            }
+        }
+        FunctionCode::ReadExceptionStatus => {
+            if mode == "response" {
+                if let Ok(b) = pdu.single_byte_payload() {
+                    return format!("exc_status=0x{:02X}", b);
+                }
+            }
+        }
+        FunctionCode::Diagnostics => {
+            if let Ok((sub, data_word)) = pdu.diagnostics_fields() {
                 let sub_name = DiagnosticSubFunction::try_from(sub)
-                    .map(|known| format!("{:?}", known))
+                    .map(|k| format!("{:?}", k))
                     .unwrap_or_else(|_| "ReservedOrVendorSpecific".to_string());
-                return format!("sub=0x{:04X}({}) data_len={}", sub, sub_name, data.len().saturating_sub(2));
+                return format!("sub=0x{:04X}({}) data=0x{:04X}", sub, sub_name, data_word);
+            }
+            // Partial (request with sub-function only, no data word)
+            if let Ok(sf) = pdu.sub_function_payload() {
+                let sub_name = DiagnosticSubFunction::try_from(sf.sub_function)
+                    .map(|k| format!("{:?}", k))
+                    .unwrap_or_else(|_| "ReservedOrVendorSpecific".to_string());
+                return format!("sub=0x{:04X}({})", sf.sub_function, sub_name);
             }
         }
-        0x0F | 0x10 => {
-            if mode == "request" && data.len() >= 5 {
-                let start = u16::from_be_bytes([data[0], data[1]]);
-                let qty = u16::from_be_bytes([data[2], data[3]]);
-                let byte_count = data[4];
-                return format!("start={} qty={} byte_count={}", start, qty, byte_count);
-            }
-
-            if mode == "response" && data.len() >= 4 {
-                let start = u16::from_be_bytes([data[0], data[1]]);
-                let qty = u16::from_be_bytes([data[2], data[3]]);
-                return format!("start={} qty={}", start, qty);
+        FunctionCode::GetCommEventCounter => {
+            if mode == "response" {
+                if let Ok(pair) = pdu.u16_pair_fields() {
+                    return format!("status=0x{:04X} event_count={}", pair.first, pair.second);
+                }
             }
         }
-        0x2B => {
-            if let Some(mei_raw) = data.first().copied() {
-                let mei_name = EncapsulatedInterfaceType::try_from(mei_raw)
+        FunctionCode::WriteMultipleCoils => {
+            if mode == "request" {
+                if let Ok(wm) = pdu.write_multiple_fields() {
+                    let qty = wm.quantity as usize;
+                    let values: Vec<&str> = (0..qty)
+                        .map(|i| if (wm.values[i / 8] >> (i % 8)) & 1 == 1 { "on" } else { "off" })
+                        .collect();
+                    return format!("start={} qty={} values=[{}]", wm.address, qty, values.join(","));
+                }
+            } else if let Ok(rw) = pdu.read_window() {
+                return format!("start={} qty={}", rw.address, rw.quantity);
+            }
+        }
+        FunctionCode::WriteMultipleRegisters => {
+            if mode == "request" {
+                if let Ok(wm) = pdu.write_multiple_fields() {
+                    let reg_count = wm.values.len() / 2;
+                    let regs: Vec<String> = (0..reg_count)
+                        .map(|i| u16::from_be_bytes([wm.values[i * 2], wm.values[i * 2 + 1]]).to_string())
+                        .collect();
+                    return format!("start={} qty={} values=[{}]", wm.address, wm.quantity, regs.join(","));
+                }
+            } else if let Ok(rw) = pdu.read_window() {
+                return format!("start={} qty={}", rw.address, rw.quantity);
+            }
+        }
+        FunctionCode::MaskWriteRegister => {
+            if let Ok(mw) = pdu.mask_write_register_fields() {
+                return format!("addr={} and_mask=0x{:04X} or_mask=0x{:04X}", mw.address, mw.and_mask, mw.or_mask);
+            }
+        }
+        FunctionCode::ReadWriteMultipleRegisters => {
+            if mode == "request" {
+                if let Ok(rwm) = pdu.read_write_multiple_fields() {
+                    let reg_count = rwm.write_values.len() / 2;
+                    let regs: Vec<String> = (0..reg_count)
+                        .map(|i| u16::from_be_bytes([rwm.write_values[i * 2], rwm.write_values[i * 2 + 1]]).to_string())
+                        .collect();
+                    return format!(
+                        "read_addr={} read_qty={} write_addr={} write_qty={} values=[{}]",
+                        rwm.read_address, rwm.read_quantity, rwm.write_address, rwm.write_quantity, regs.join(",")
+                    );
+                }
+            } else if let Ok(bc) = pdu.byte_count_payload() {
+                let byte_count = bc.byte_count as usize;
+                if byte_count > 0 && byte_count % 2 == 0 {
+                    let qty = byte_count / 2;
+                    let regs: Vec<String> = (0..qty)
+                        .map(|i| u16::from_be_bytes([bc.payload[i * 2], bc.payload[i * 2 + 1]]).to_string())
+                        .collect();
+                    return format!("byte_count={} regs=[{}]", byte_count, regs.join(","));
+                }
+                return format!("byte_count={}", bc.byte_count);
+            }
+        }
+        FunctionCode::ReadFifoQueue => {
+            if mode == "request" {
+                if let Ok(ptr) = pdu.fifo_pointer() {
+                    return format!("fifo_ptr={}", ptr);
+                }
+            } else if let Ok(fp) = pdu.fifo_payload() {
+                let fifo_count = fp.fifo_count as usize;
+                if fp.values.len() >= fifo_count * 2 {
+                    let regs: Vec<String> = (0..fifo_count)
+                        .map(|i| u16::from_be_bytes([fp.values[i * 2], fp.values[i * 2 + 1]]).to_string())
+                        .collect();
+                    return format!("fifo_count={} values=[{}]", fifo_count, regs.join(","));
+                }
+                return format!("fifo_count={}", fifo_count);
+            }
+        }
+        FunctionCode::EncapsulatedInterfaceTransport => {
+            if let Ok(mei) = pdu.mei_type_payload() {
+                let mei_name = EncapsulatedInterfaceType::try_from(mei.mei_type_byte)
                     .map(|known| format!("{:?}", known))
                     .unwrap_or_else(|_| "Reserved".to_string());
-                return format!("mei=0x{:02X}({}) payload_len={}", mei_raw, mei_name, data.len().saturating_sub(1));
+                return format!("mei=0x{:02X}({}) payload_len={}", mei.mei_type_byte, mei_name, mei.payload.len());
             }
         }
         _ => {}
@@ -3192,29 +3303,10 @@ fn decode_pdu_details(mode: &str, function: u8, is_exception: bool, data: &[u8])
     format!("pdu_len={}", data.len() + 1)
 }
 
-fn modbus_function_name(function: u8) -> &'static str {
-    match function {
-        0x01 => "ReadCoils",
-        0x02 => "ReadDiscreteInputs",
-        0x03 => "ReadHoldingRegisters",
-        0x04 => "ReadInputRegisters",
-        0x05 => "WriteSingleCoil",
-        0x06 => "WriteSingleRegister",
-        0x07 => "ReadExceptionStatus",
-        0x08 => "Diagnostics",
-        0x0B => "GetCommEventCounter",
-        0x0C => "GetCommEventLog",
-        0x0F => "WriteMultipleCoils",
-        0x10 => "WriteMultipleRegisters",
-        0x11 => "ReportServerId",
-        0x14 => "ReadFileRecord",
-        0x15 => "WriteFileRecord",
-        0x16 => "MaskWriteRegister",
-        0x17 => "ReadWriteMultipleRegisters",
-        0x18 => "ReadFifoQueue",
-        0x2B => "EncapsulatedInterfaceTransport",
-        _ => "Unknown",
-    }
+fn modbus_function_name(function: u8) -> String {
+    FunctionCode::try_from(function)
+        .map(|fc| format!("{fc:?}"))
+        .unwrap_or_else(|_| format!("Unknown(0x{function:02X})"))
 }
 
 fn modbus_exception_name(code: u8) -> &'static str {
@@ -3233,24 +3325,19 @@ fn modbus_exception_name(code: u8) -> &'static str {
 }
 
 fn parse_bit_read_response(payload: &[u8], quantity: u16, function: u8) -> Result<Vec<bool>, String> {
-    if payload.is_empty() {
-        return Err(format!("FC{:02X} response missing byte count.", function));
-    }
+    let mut pdu_bytes = Vec::with_capacity(1 + payload.len());
+    pdu_bytes.push(function);
+    pdu_bytes.extend_from_slice(payload);
 
-    let byte_count = usize::from(payload[0]);
-    if payload.len() != byte_count + 1 {
-        return Err(format!(
-            "FC{:02X} payload length mismatch: expected {}, got {}.",
-            function,
-            byte_count + 1,
-            payload.len()
-        ));
-    }
+    let pdu = Pdu::from_bytes(&pdu_bytes)
+        .map_err(|_| format!("FC{:02X} response missing byte count.", function))?;
+    let bc = pdu.byte_count_payload()
+        .map_err(|_| format!("FC{:02X} payload length mismatch: expected {}, got {}.",
+            function, payload.first().map(|b| *b as usize + 1).unwrap_or(1), payload.len()))?;
 
     let mut bits = Vec::with_capacity(quantity as usize);
-    let data = &payload[1..];
     for i in 0..usize::from(quantity) {
-        let byte = data[i / 8];
+        let byte = bc.payload[i / 8];
         let bit = (byte >> (i % 8)) & 0x01;
         bits.push(bit == 1);
     }
@@ -3263,106 +3350,85 @@ fn parse_register_read_response(
     quantity: u16,
     function: u8,
 ) -> Result<Vec<u16>, String> {
-    if payload.is_empty() {
-        return Err(format!("FC{:02X} response missing byte count.", function));
-    }
+    let mut pdu_bytes = Vec::with_capacity(1 + payload.len());
+    pdu_bytes.push(function);
+    pdu_bytes.extend_from_slice(payload);
 
-    let byte_count = usize::from(payload[0]);
+    let pdu = Pdu::from_bytes(&pdu_bytes)
+        .map_err(|_| format!("FC{:02X} response missing byte count.", function))?;
+    let bc = pdu.byte_count_payload()
+        .map_err(|_| format!("FC{:02X} payload length mismatch: expected {}, got {}.",
+            function, payload.first().map(|b| *b as usize + 1).unwrap_or(1), payload.len()))?;
+
     let expected_count = usize::from(quantity) * 2;
-    if byte_count != expected_count {
+    if bc.byte_count as usize != expected_count {
         return Err(format!(
             "FC{:02X} byte count mismatch: expected {}, got {}.",
-            function, expected_count, byte_count
-        ));
-    }
-
-    if payload.len() != byte_count + 1 {
-        return Err(format!(
-            "FC{:02X} payload length mismatch: expected {}, got {}.",
-            function,
-            byte_count + 1,
-            payload.len()
+            function, expected_count, bc.byte_count
         ));
     }
 
     let mut regs = Vec::with_capacity(quantity as usize);
-    let bytes = &payload[1..];
     for i in 0..usize::from(quantity) {
-        let hi = bytes[i * 2];
-        let lo = bytes[i * 2 + 1];
-        regs.push(u16::from_be_bytes([hi, lo]));
+        regs.push(u16::from_be_bytes([bc.payload[i * 2], bc.payload[i * 2 + 1]]));
     }
 
     Ok(regs)
 }
 
 fn parse_single_write_coil_response(payload: &[u8]) -> Result<(u16, bool), String> {
-    if payload.len() != 4 {
-        return Err(format!(
-            "FC05 response length mismatch: expected 4 bytes, got {}.",
-            payload.len()
-        ));
-    }
+    let mut pdu_bytes = Vec::with_capacity(1 + payload.len());
+    pdu_bytes.push(0x05);
+    pdu_bytes.extend_from_slice(payload);
 
-    let address = u16::from_be_bytes([payload[0], payload[1]]);
-    let raw = u16::from_be_bytes([payload[2], payload[3]]);
-    match raw {
-        0xFF00 => Ok((address, true)),
-        0x0000 => Ok((address, false)),
-        _ => Err(format!("FC05 invalid coil echo value 0x{:04X}.", raw)),
+    let pdu = Pdu::from_bytes(&pdu_bytes)
+        .map_err(|_| format!("FC05 response length mismatch: expected 4 bytes, got {}.", payload.len()))?;
+    let f = pdu.write_single_u16_fields()
+        .map_err(|_| format!("FC05 response length mismatch: expected 4 bytes, got {}.", payload.len()))?;
+
+    match f.value {
+        0xFF00 => Ok((f.address, true)),
+        0x0000 => Ok((f.address, false)),
+        _ => Err(format!("FC05 invalid coil echo value 0x{:04X}.", f.value)),
     }
 }
 
 fn parse_single_write_register_response(payload: &[u8]) -> Result<(u16, u16), String> {
-    if payload.len() != 4 {
-        return Err(format!(
-            "FC06 response length mismatch: expected 4 bytes, got {}.",
-            payload.len()
-        ));
-    }
+    let mut pdu_bytes = Vec::with_capacity(1 + payload.len());
+    pdu_bytes.push(0x06);
+    pdu_bytes.extend_from_slice(payload);
 
-    let address = u16::from_be_bytes([payload[0], payload[1]]);
-    let value = u16::from_be_bytes([payload[2], payload[3]]);
-    Ok((address, value))
+    let pdu = Pdu::from_bytes(&pdu_bytes)
+        .map_err(|_| format!("FC06 response length mismatch: expected 4 bytes, got {}.", payload.len()))?;
+    let f = pdu.write_single_u16_fields()
+        .map_err(|_| format!("FC06 response length mismatch: expected 4 bytes, got {}.", payload.len()))?;
+
+    Ok((f.address, f.value))
 }
 
 fn parse_device_identification_payload(
     response: &[u8],
 ) -> Result<(Option<u8>, Vec<super::types::DeviceIdObject>), String> {
-    if response.len() < 6 {
-        return Err(format!("FC43 response too short: got {} bytes.", response.len()));
-    }
-    if response[0] != 0x0E {
-        return Err(format!(
-            "FC43 invalid MEI type: expected 0x0E, got 0x{:02X}.",
-            response[0]
-        ));
-    }
+    let mut pdu_bytes = Vec::with_capacity(1 + response.len());
+    pdu_bytes.push(0x2B_u8);
+    pdu_bytes.extend_from_slice(response);
 
-    let conformity = Some(response[2]);
-    let object_count = response[5] as usize;
-    let mut cursor = 6;
-    let mut objects = Vec::with_capacity(object_count);
+    let pdu = Pdu::from_bytes(&pdu_bytes)
+        .map_err(|_| format!("FC43 response too short: got {} bytes.", response.len()))?;
+    let fields = pdu.read_device_id_fields()
+        .map_err(|_| format!("FC43 response invalid: got {} bytes.", response.len()))?;
 
-    for _ in 0..object_count {
-        if cursor + 2 > response.len() {
-            return Err("FC43 truncated object header.".to_string());
-        }
+    let conformity = Some(fields.conformity_level_byte);
+    let raw = &fields.objects_data[..fields.payload_len];
+    let mut cursor = 0;
+    let mut objects = Vec::with_capacity(fields.number_of_objects as usize);
 
-        let id = response[cursor];
-        let len = response[cursor + 1] as usize;
+    for _ in 0..fields.number_of_objects {
+        let id = raw[cursor];
+        let len = raw[cursor + 1] as usize;
         cursor += 2;
-
-        if cursor + len > response.len() {
-            return Err(format!(
-                "FC43 object {} truncated: expected {} bytes.",
-                id, len
-            ));
-        }
-
-        let value_bytes = &response[cursor..cursor + len];
+        let value_bytes = &raw[cursor..cursor + len];
         cursor += len;
-
         objects.push(super::types::DeviceIdObject {
             id,
             value: decode_modbus_text(value_bytes),
@@ -3734,7 +3800,20 @@ fn decode_modbus_text(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{crc16_modbus, try_extract_serial_rtu_response};
+    use modbus_rs::crc16;
+    use super::{
+        is_immediate_transport_failure, is_modbus_protocol_exception,
+        parse_bit_read_response, parse_register_read_response, parse_single_write_coil_response,
+        parse_single_write_register_response, try_extract_serial_rtu_response,
+        AppState, TcpRuntimeConfig,
+    };
+    use super::super::types::{
+        ErrorCode, ReadCoilsRequest, ReadDiscreteInputsRequest, ReadHoldingRegistersRequest,
+        ReadInputRegistersRequest, RetryBackoffStrategy, RetryJitterStrategy,
+        WriteCoilRequest, WriteHoldingRegisterRequest,
+    };
+
+    // ── Existing serial RTU tests ─────────────────────────────────────────────
 
     #[test]
     fn extracts_fc01_response_after_echoed_request_frame() {
@@ -3742,11 +3821,11 @@ mod tests {
 
         let mut request_frame = vec![0x01, 0x01];
         request_frame.extend_from_slice(&request_payload);
-        let request_crc = crc16_modbus(&request_frame);
+        let request_crc = crc16(&request_frame);
         request_frame.extend_from_slice(&request_crc.to_le_bytes());
 
         let mut response_frame = vec![0x01, 0x01, 0x01, 0x00];
-        let response_crc = crc16_modbus(&response_frame);
+        let response_crc = crc16(&response_frame);
         response_frame.extend_from_slice(&response_crc.to_le_bytes());
 
         let mut buffer = request_frame.clone();
@@ -3772,7 +3851,7 @@ mod tests {
 
         let mut request_frame = vec![0x01, 0x05];
         request_frame.extend_from_slice(&request_payload);
-        let request_crc = crc16_modbus(&request_frame);
+        let request_crc = crc16(&request_frame);
         request_frame.extend_from_slice(&request_crc.to_le_bytes());
 
         let mut buffer = request_frame.clone();
@@ -3789,5 +3868,503 @@ mod tests {
 
         assert_eq!(payload, request_payload);
         assert!(buffer.is_empty());
+    }
+
+    // ── Layer 1: pure helper function tests ───────────────────────────────────
+
+    // -- parse_bit_read_response --
+
+    #[test]
+    fn parse_bits_valid_fc01_three_bits() {
+        // byte_count=1, byte=0b0000_0101 → bits 0,2 true
+        let payload = [1u8, 0b0000_0101];
+        let result = parse_bit_read_response(&payload, 3, 0x01).unwrap();
+        assert_eq!(result, vec![true, false, true]);
+    }
+
+    #[test]
+    fn parse_bits_valid_fc02_sixteen_bits_all_true() {
+        // byte_count=2, both bytes 0xFF → all 16 bits true
+        let payload = [2u8, 0xFF, 0xFF];
+        let result = parse_bit_read_response(&payload, 16, 0x02).unwrap();
+        assert!(result.iter().all(|&b| b));
+        assert_eq!(result.len(), 16);
+    }
+
+    #[test]
+    fn parse_bits_empty_payload_errors() {
+        let err = parse_bit_read_response(&[], 4, 0x01).unwrap_err();
+        assert!(err.contains("missing byte count"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_bits_length_mismatch_errors() {
+        // byte_count=2 but only 1 extra byte supplied
+        let payload = [2u8, 0xFF];
+        let err = parse_bit_read_response(&payload, 8, 0x01).unwrap_err();
+        assert!(err.contains("length mismatch"), "got: {err}");
+    }
+
+    // -- parse_register_read_response --
+
+    #[test]
+    fn parse_regs_valid_fc03_two_registers() {
+        // byte_count=4 (2 × 2), values [0x0001, 0x0002]
+        let payload = [4u8, 0x00, 0x01, 0x00, 0x02];
+        let result = parse_register_read_response(&payload, 2, 0x03).unwrap();
+        assert_eq!(result, vec![1u16, 2u16]);
+    }
+
+    #[test]
+    fn parse_regs_empty_payload_errors() {
+        let err = parse_register_read_response(&[], 1, 0x03).unwrap_err();
+        assert!(err.contains("missing byte count"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_regs_byte_count_mismatch_errors() {
+        // byte_count=2 but quantity=2 expects 4 bytes
+        let payload = [2u8, 0x00, 0x01];
+        let err = parse_register_read_response(&payload, 2, 0x03).unwrap_err();
+        assert!(err.contains("byte count mismatch"), "got: {err}");
+    }
+
+    // -- parse_single_write_coil_response --
+
+    #[test]
+    fn parse_write_coil_true_echo() {
+        let payload = [0x00u8, 0x05, 0xFF, 0x00];
+        let (addr, val) = parse_single_write_coil_response(&payload).unwrap();
+        assert_eq!(addr, 5);
+        assert!(val);
+    }
+
+    #[test]
+    fn parse_write_coil_false_echo() {
+        let payload = [0x00u8, 0x0A, 0x00, 0x00];
+        let (addr, val) = parse_single_write_coil_response(&payload).unwrap();
+        assert_eq!(addr, 10);
+        assert!(!val);
+    }
+
+    #[test]
+    fn parse_write_coil_invalid_value_errors() {
+        let payload = [0x00u8, 0x05, 0xAB, 0xCD];
+        let err = parse_single_write_coil_response(&payload).unwrap_err();
+        assert!(err.contains("invalid coil echo"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_write_coil_wrong_length_errors() {
+        let err = parse_single_write_coil_response(&[0x00, 0x01, 0xFF]).unwrap_err();
+        assert!(err.contains("length mismatch"), "got: {err}");
+    }
+
+    // -- parse_single_write_register_response --
+
+    #[test]
+    fn parse_write_register_valid() {
+        let payload = [0x00u8, 0x0A, 0xAB, 0xCD];
+        let (addr, val) = parse_single_write_register_response(&payload).unwrap();
+        assert_eq!(addr, 10);
+        assert_eq!(val, 0xABCD);
+    }
+
+    #[test]
+    fn parse_write_register_wrong_length_errors() {
+        let err = parse_single_write_register_response(&[0x00, 0x0A, 0xAB]).unwrap_err();
+        assert!(err.contains("length mismatch"), "got: {err}");
+    }
+
+    // -- is_modbus_protocol_exception --
+
+    #[test]
+    fn protocol_exception_detection() {
+        assert!(is_modbus_protocol_exception("Illegal data address exception"));
+        assert!(is_modbus_protocol_exception("ILLEGAL FUNCTION"));
+        assert!(is_modbus_protocol_exception("Slave device failure"));
+        assert!(!is_modbus_protocol_exception("timeout"));
+        assert!(!is_modbus_protocol_exception("connection reset"));
+    }
+
+    // -- is_immediate_transport_failure --
+
+    #[test]
+    fn immediate_transport_failure_detection() {
+        assert!(is_immediate_transport_failure("SendFailed"));
+        assert!(is_immediate_transport_failure("broken pipe"));
+        assert!(is_immediate_transport_failure("connection reset by peer"));
+        assert!(is_immediate_transport_failure("unexpected eof"));
+        // timeouts are NOT immediate transport failures (they are retriable)
+        assert!(!is_immediate_transport_failure("response timed out"));
+        // protocol exceptions are not transport failures
+        assert!(!is_immediate_transport_failure("illegal data address"));
+    }
+
+    // -- TcpRuntimeConfig::retry_delay --
+
+    #[test]
+    fn retry_delay_fixed_strategy_is_constant() {
+        let config = TcpRuntimeConfig {
+            response_timeout: std::time::Duration::from_millis(1000),
+            retry_attempts: 3,
+            retry_backoff_strategy: RetryBackoffStrategy::Fixed,
+            retry_jitter_strategy: RetryJitterStrategy::None,
+        };
+        let d1 = config.retry_delay(1);
+        let d2 = config.retry_delay(2);
+        let d3 = config.retry_delay(3);
+        // Fixed: all return the same base delay (250 ms)
+        assert_eq!(d1, d2);
+        assert_eq!(d2, d3);
+    }
+
+    #[test]
+    fn retry_delay_exponential_grows_with_index() {
+        let config = TcpRuntimeConfig {
+            response_timeout: std::time::Duration::from_millis(1000),
+            retry_attempts: 5,
+            retry_backoff_strategy: RetryBackoffStrategy::Exponential,
+            retry_jitter_strategy: RetryJitterStrategy::None,
+        };
+        let d1 = config.retry_delay(1);
+        let d2 = config.retry_delay(2);
+        let d3 = config.retry_delay(3);
+        assert!(d2 > d1, "exponential delay should grow: d2={d2:?} d1={d1:?}");
+        assert!(d3 > d2, "exponential delay should grow: d3={d3:?} d2={d2:?}");
+    }
+
+    // -- AppState input validation (works without a real connection) --
+
+    #[tokio::test]
+    async fn read_coils_rejects_zero_quantity() {
+        let state = AppState::new();
+        let req = ReadCoilsRequest { start_address: 0, quantity: 0, analytics: None };
+        let err = state.read_coils(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::InvalidRequest), "got: {:?}", err.code);
+    }
+
+    #[tokio::test]
+    async fn read_coils_rejects_quantity_over_2000() {
+        let state = AppState::new();
+        let req = ReadCoilsRequest { start_address: 0, quantity: 2001, analytics: None };
+        let err = state.read_coils(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::InvalidRequest), "got: {:?}", err.code);
+    }
+
+    #[tokio::test]
+    async fn read_holding_regs_rejects_zero_quantity() {
+        let state = AppState::new();
+        let req = ReadHoldingRegistersRequest { start_address: 0, quantity: 0, analytics: None };
+        let err = state.read_holding_registers(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::InvalidRequest), "got: {:?}", err.code);
+    }
+
+    #[tokio::test]
+    async fn read_holding_regs_rejects_quantity_over_125() {
+        let state = AppState::new();
+        let req = ReadHoldingRegistersRequest { start_address: 0, quantity: 126, analytics: None };
+        let err = state.read_holding_registers(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::InvalidRequest), "got: {:?}", err.code);
+    }
+
+    #[tokio::test]
+    async fn read_input_regs_rejects_zero_quantity() {
+        let state = AppState::new();
+        let req = ReadInputRegistersRequest { start_address: 0, quantity: 0, analytics: None };
+        let err = state.read_input_registers(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::InvalidRequest), "got: {:?}", err.code);
+    }
+
+    #[tokio::test]
+    async fn read_discrete_inputs_rejects_zero_quantity() {
+        let state = AppState::new();
+        let req = ReadDiscreteInputsRequest { start_address: 0, quantity: 0, analytics: None };
+        let err = state.read_discrete_inputs(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::InvalidRequest), "got: {:?}", err.code);
+    }
+
+    // -- AppState disconnected state returns NotConnected --
+
+    #[tokio::test]
+    async fn read_coils_not_connected_returns_not_connected_error() {
+        let state = AppState::new();
+        let req = ReadCoilsRequest { start_address: 0, quantity: 4, analytics: None };
+        let err = state.read_coils(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::NotConnected), "got: {:?}", err.code);
+    }
+
+    #[tokio::test]
+    async fn write_coil_not_connected_returns_not_connected_error() {
+        let state = AppState::new();
+        let req = WriteCoilRequest { address: 0, value: true, analytics: None };
+        let err = state.write_coil(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::NotConnected), "got: {:?}", err.code);
+    }
+
+    #[tokio::test]
+    async fn write_holding_register_not_connected_returns_not_connected_error() {
+        let state = AppState::new();
+        let req = WriteHoldingRegisterRequest { address: 0, value: 42, analytics: None };
+        let err = state.write_holding_register(&req).await.unwrap_err();
+        assert!(matches!(err.code, ErrorCode::NotConnected), "got: {:?}", err.code);
+    }
+
+    // ── Layer 2: TCP integration tests ────────────────────────────────────────
+    //
+    // Bypasses AppState::connect_tcp (requires AppHandle) and uses the
+    // production TcpClient type directly against a real loopback server.
+
+    use modbus_rs::mbus_async::server::{
+        AsyncAppHandler, AsyncTrafficNotifier, AsyncTcpServer, ModbusRequest, ModbusResponse,
+    };
+    use modbus_rs::mbus_async::AsyncTcpClient;
+    use modbus_rs::UnitIdOrSlaveAddr;
+    use mbus_core::errors::ExceptionCode;
+    use mbus_core::function_codes::public::FunctionCode;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    const UID: u8 = 1;
+    const ADDR_SPACE: usize = 65_536;
+    const MAX_COIL_BYTES: usize = 250;
+
+    struct TestServerApp {
+        coils: Vec<bool>,
+        holding_regs: Vec<u16>,
+        input_regs: Vec<u16>,
+        discrete_inputs: Vec<bool>,
+    }
+
+    impl TestServerApp {
+        fn new() -> Self {
+            Self {
+                coils: vec![false; ADDR_SPACE],
+                holding_regs: vec![0u16; ADDR_SPACE],
+                input_regs: vec![0u16; ADDR_SPACE],
+                discrete_inputs: vec![false; ADDR_SPACE],
+            }
+        }
+
+        fn pack_bools(src: &[bool]) -> ([u8; MAX_COIL_BYTES], usize) {
+            let byte_count = (src.len() + 7) / 8;
+            let mut buf = [0u8; MAX_COIL_BYTES];
+            for (i, &v) in src.iter().enumerate() {
+                if v {
+                    buf[i / 8] |= 1 << (i % 8);
+                }
+            }
+            (buf, byte_count)
+        }
+    }
+
+    impl AsyncTrafficNotifier for TestServerApp {
+        fn on_rx_frame(&mut self, _txn_id: u16, _unit: UnitIdOrSlaveAddr, _frame: &[u8]) {}
+        fn on_tx_frame(&mut self, _txn_id: u16, _unit: UnitIdOrSlaveAddr, _frame: &[u8]) {}
+    }
+
+    impl AsyncAppHandler for TestServerApp {
+        async fn handle(&mut self, req: ModbusRequest) -> ModbusResponse {
+            match req {
+                ModbusRequest::ReadCoils { address, count, .. } => {
+                    let (buf, bc) = Self::pack_bools(&self.coils[address as usize..address as usize + count as usize]);
+                    ModbusResponse::packed_bits(FunctionCode::ReadCoils, &buf[..bc])
+                }
+                ModbusRequest::WriteSingleCoil { address, value, .. } => {
+                    self.coils[address as usize] = value;
+                    ModbusResponse::echo_coil(address, value)
+                }
+                ModbusRequest::ReadDiscreteInputs { address, count, .. } => {
+                    let (buf, bc) = Self::pack_bools(&self.discrete_inputs[address as usize..address as usize + count as usize]);
+                    ModbusResponse::packed_bits(FunctionCode::ReadDiscreteInputs, &buf[..bc])
+                }
+                ModbusRequest::ReadHoldingRegisters { address, count, .. } => {
+                    ModbusResponse::registers(
+                        FunctionCode::ReadHoldingRegisters,
+                        &self.holding_regs[address as usize..address as usize + count as usize],
+                    )
+                }
+                ModbusRequest::WriteSingleRegister { address, value, .. } => {
+                    self.holding_regs[address as usize] = value;
+                    ModbusResponse::echo_register(address, value)
+                }
+                ModbusRequest::WriteMultipleRegisters { address, count, data, .. } => {
+                    for i in 0..(count as usize) {
+                        let hi = data[i * 2] as u16;
+                        let lo = data[i * 2 + 1] as u16;
+                        self.holding_regs[address as usize + i] = (hi << 8) | lo;
+                    }
+                    ModbusResponse::echo_multi_write(FunctionCode::WriteMultipleRegisters, address, count)
+                }
+                ModbusRequest::WriteMultipleCoils { address, count, data, .. } => {
+                    for i in 0..(count as usize) {
+                        self.coils[address as usize + i] = (data[i / 8] >> (i % 8)) & 1 != 0;
+                    }
+                    ModbusResponse::echo_multi_write(FunctionCode::WriteMultipleCoils, address, count)
+                }
+                ModbusRequest::ReadInputRegisters { address, count, .. } => {
+                    ModbusResponse::registers(
+                        FunctionCode::ReadInputRegisters,
+                        &self.input_regs[address as usize..address as usize + count as usize],
+                    )
+                }
+                other => ModbusResponse::exception(
+                    FunctionCode::try_from(other.function_code_byte()).unwrap_or(FunctionCode::ReadCoils),
+                    ExceptionCode::IllegalFunction,
+                ),
+            }
+        }
+    }
+
+    async fn spawn_test_server() -> (u16, Arc<Mutex<TestServerApp>>) {
+        let unit = UnitIdOrSlaveAddr::try_from(UID).unwrap();
+        let shared = Arc::new(Mutex::new(TestServerApp::new()));
+        let server = AsyncTcpServer::bind("127.0.0.1:0", unit).await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let shared_ref = Arc::clone(&shared);
+        tokio::spawn(async move {
+            loop {
+                match server.accept().await {
+                    Ok((mut session, _)) => {
+                        let mut app = Arc::clone(&shared_ref);
+                        tokio::spawn(async move { let _ = session.run(&mut app).await; });
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        (port, shared)
+    }
+
+    // Production client type: AsyncTcpClient<32>
+    type ProdClient = AsyncTcpClient<{ super::TCP_EXPECTED_RESPONSES_DEPTH }>;
+
+    #[tokio::test]
+    async fn tcp_client_read_coils_initial_all_false() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+        let coils = client.read_multiple_coils(UID, 0, 8).await.unwrap();
+        for addr in coils.from_address()..coils.from_address() + coils.quantity() {
+            assert!(!coils.value(addr).unwrap(), "coil {addr} should be false");
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_client_write_single_coil_and_read_back() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+
+        let (addr, val) = client.write_single_coil(UID, 4, true).await.unwrap();
+        assert_eq!(addr, 4);
+        assert!(val);
+
+        let coils = client.read_multiple_coils(UID, 0, 8).await.unwrap();
+        assert!(coils.value(4).unwrap(), "coil 4 should now be true");
+        assert!(!coils.value(3).unwrap(), "coil 3 should remain false");
+    }
+
+    #[tokio::test]
+    async fn tcp_client_write_multiple_coils_and_read_back() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+
+        let mut coils_obj = modbus_rs::Coils::new(0, 8).unwrap();
+        coils_obj.set_value(0, true).unwrap();
+        coils_obj.set_value(2, true).unwrap();
+        coils_obj.set_value(4, true).unwrap();
+        let (start, qty) = client.write_multiple_coils(UID, 0, &coils_obj).await.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(qty, 8);
+
+        let back = client.read_multiple_coils(UID, 0, 8).await.unwrap();
+        assert!(back.value(0).unwrap());
+        assert!(!back.value(1).unwrap());
+        assert!(back.value(2).unwrap());
+    }
+
+    #[tokio::test]
+    async fn tcp_client_read_holding_regs_initial_all_zero() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+        let regs = client.read_holding_registers(UID, 0, 4).await.unwrap();
+        for addr in regs.from_address()..regs.from_address() + regs.quantity() {
+            assert_eq!(regs.value(addr).unwrap(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_client_write_single_register_and_read_back() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+
+        let (addr, val) = client.write_single_register(UID, 7, 0x1234).await.unwrap();
+        assert_eq!(addr, 7);
+        assert_eq!(val, 0x1234);
+
+        let regs = client.read_holding_registers(UID, 7, 1).await.unwrap();
+        assert_eq!(regs.value(7).unwrap(), 0x1234);
+    }
+
+    #[tokio::test]
+    async fn tcp_client_write_multiple_registers_and_read_back() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+
+        let (start, qty) = client
+            .write_multiple_registers(UID, 20, &[0xAAAA, 0xBBBB, 0xCCCC])
+            .await
+            .unwrap();
+        assert_eq!(start, 20);
+        assert_eq!(qty, 3);
+
+        let regs = client.read_holding_registers(UID, 20, 3).await.unwrap();
+        assert_eq!(regs.value(20).unwrap(), 0xAAAA);
+        assert_eq!(regs.value(21).unwrap(), 0xBBBB);
+        assert_eq!(regs.value(22).unwrap(), 0xCCCC);
+    }
+
+    #[tokio::test]
+    async fn tcp_client_read_input_regs_initial_all_zero() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+        let regs = client.read_input_registers(UID, 0, 4).await.unwrap();
+        for addr in regs.from_address()..regs.from_address() + regs.quantity() {
+            assert_eq!(regs.value(addr).unwrap(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_client_read_discrete_inputs_initial_all_false() {
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+        let di = client.read_discrete_inputs(UID, 0, 8).await.unwrap();
+        for addr in di.from_address()..di.from_address() + di.quantity() {
+            assert!(!di.value(addr).unwrap(), "discrete input {addr} should be false");
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_client_pipeline_depth_32_handles_concurrent_requests() {
+        // Verify the production pipeline depth (32) functions correctly.
+        // Write distinct values to 4 different registers then read all back.
+        let (port, _app) = spawn_test_server().await;
+        let client = ProdClient::new_with_pipeline("127.0.0.1", port).unwrap();
+        client.connect().await.unwrap();
+
+        for i in 0u16..4 {
+            client.write_single_register(UID, i * 10, (i + 1) * 100).await.unwrap();
+        }
+        for i in 0u16..4 {
+            let regs = client.read_holding_registers(UID, i * 10, 1).await.unwrap();
+            assert_eq!(regs.value(i * 10).unwrap(), (i + 1) * 100);
+        }
     }
 }

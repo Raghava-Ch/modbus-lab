@@ -308,6 +308,17 @@
   let singleWriteAddressInput = $state("");
   let singleWriteDesired = $state(false);
 
+  function parseSingleCoilAddress(raw: string): number | null {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) return null;
+    if (parsed < 0 || parsed > 65535) return null;
+    return parsed;
+  }
+
+  const singleCoilAddress = $derived(parseSingleCoilAddress(singleWriteAddressInput));
+
   function beginEdit(address: number, current: string): void {
     editingAddress = address;
     editLabelVal = current;
@@ -396,10 +407,8 @@
   }
 
   async function executeSingleWrite(): Promise<void> {
-    const parsed = Number(singleWriteAddressInput.trim());
-    if (!Number.isFinite(parsed)) return;
-    const addr = Math.floor(parsed);
-    if (addr < 0 || addr > 65535) return;
+    if (singleCoilAddress === null) return;
+    const addr = singleCoilAddress;
 
     addExclusiveCoil(addr);
     setCoilValue(addr, singleWriteDesired);
@@ -723,7 +732,13 @@
                 </div>
               </div>
 
-              <button class="btn btn-sm btn-write" type="button" disabled={!connected} onclick={() => { void executeSingleWrite(); }}>
+              <button
+                class="btn btn-sm btn-write"
+                type="button"
+                disabled={!connected || singleCoilAddress === null}
+                title={singleCoilAddress === null ? "Enter a valid address (0-65535)" : undefined}
+                onclick={() => { void executeSingleWrite(); }}
+              >
                 <Zap size={12} />
                 Write
               </button>

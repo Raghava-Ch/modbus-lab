@@ -512,7 +512,7 @@ export async function readAllDiscreteInputs(options?: { trace?: boolean; markPen
             if (markPending) {
               entry.pending = false;
             }
-            entry.readError = "Address not available";
+            entry.readError = reason;
           }
         }
         addLog(

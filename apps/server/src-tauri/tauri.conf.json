@@ -1,8 +1,8 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ModbusLab Server",
-  "version": "0.1.0",
-  "identifier": "com.modbuslab.server",
+  "version": "0.0.4",
+  "identifier": "com.modbuslab.Server",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -21,8 +21,8 @@
         "fullscreen": false,
         "resizable": true,
         "title": "ModbusLab Server",
-        "width": 1100,
-        "height": 760,
+        "width": 800,
+        "height": 600,
         "visible": true,
         "center": true,
         "focus": true,
