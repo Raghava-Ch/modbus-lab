@@ -38,6 +38,7 @@
   import InputRegistersPage from "../pages/InputRegistersPage.svelte";
   import FileRecordsPage from "../pages/FileRecordsPage.svelte";
   import FifoPage from "../pages/FifoPage.svelte";
+  import TrafficPage from "../pages/TrafficPage.svelte";
   import DiagnosticsPage from "../pages/DiagnosticsPage.svelte";
   import CustomFramePage from "../pages/CustomFramePage.svelte";
   import SettingsPage from "../pages/SettingsPage.svelte";
@@ -86,7 +87,12 @@
   }
 </script>
 
-<div class="app-shell" class:force-mobile={settingsState.forcedLayoutMode === "mobile"} class:force-desktop={settingsState.forcedLayoutMode === "desktop"}>
+<div
+  class="app-shell"
+  class:force-mobile={settingsState.forcedLayoutMode === "mobile"}
+  class:force-desktop={settingsState.forcedLayoutMode === "desktop"}
+  style:--log-panel-height="{layoutState.logCollapsed ? 52 : layoutState.logHeight}px"
+>
   <StatusBar onShowAbout={() => (showAbout = true)} />
   <AppNotifications />
   <NavPanel />
@@ -107,11 +113,13 @@
     {:else if navigationState.activeTab === "fifo-queue"}
       <FifoPage />
     {:else if navigationState.activeTab === "traffic"}
-      <DiagnosticsPage />
+      <TrafficPage />
     {:else if navigationState.activeTab === "custom-frame"}
       <CustomFramePage />
-    {:else}
+    {:else if navigationState.activeTab === "settings"}
       <SettingsPage />
+    {:else}
+      <DiagnosticsPage />
     {/if}
   </main>
 

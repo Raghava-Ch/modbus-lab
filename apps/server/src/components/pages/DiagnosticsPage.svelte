@@ -1,55 +1,135 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import { onMount } from "svelte";
   import PageShell from "./PageShell.svelte";
-  import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
-
-  import {
-    initDiagnosticsState,
-    diagnosticsState,
-    readExceptionStatus,
-    runDiagnostic,
-    getComEventCounter,
-    getComEventLog,
-    reportServerId,
-    readDeviceIdentification,
-    cancelDiagnosticsRead,
-    setDiagnosticsPollActive,
-    setDiagnosticsPollInterval,
-  } from "../../state/diagnostics.svelte";
-  import { connectionState } from "../../state/connection.svelte";
+  import SectionHeader from "../shared/SectionHeader.svelte";
   import { getCurrentDeviceHealthSnapshot } from "../../state/connection-health.svelte";
+  import { connectionState } from "../../state/connection.svelte";
+  import { logState, type LogEntry } from "../../state/logs.svelte";
+  import { formatLogTimestamp } from "../../state/settings.svelte";
 
-  const isTcp = $derived(connectionState.protocol === "tcp");
+  interface DiagnosticsFcMeta {
+    code: number;
+    hex: string;
+    name: string;
+    category: "serial" | "cross-protocol";
+  }
 
-  let fc08Subfunction = $state(0);
-  let fc08Payload = $state("");
-  let comLogStart = $state(0);
-  let comLogCount = $state(50);
-  // ReadDeviceIdCode: 1=Basic, 2=Regular, 3=Extended, 4=Individual
-  let deviceIdLevel = $state(1);
-  let deviceIdObject = $state<number | null>(null);
+  interface DiagnosticsBucket extends DiagnosticsFcMeta {
+    total: number;
+    rx: number;
+    tx: number;
+    exceptions: number;
+    lastAt: number | null;
+  }
 
-  const connected = $derived(connectionState.status === "connected");
+  const DIAGNOSTIC_FUNCTIONS: DiagnosticsFcMeta[] = [
+    { code: 0x07, hex: "07", name: "Read Exception Status", category: "serial" },
+    { code: 0x08, hex: "08", name: "Diagnostics", category: "serial" },
+    { code: 0x0b, hex: "0B", name: "Get Com Event Counter", category: "serial" },
+    { code: 0x0c, hex: "0C", name: "Get Com Event Log", category: "serial" },
+    { code: 0x11, hex: "11", name: "Report Server ID", category: "serial" },
+    { code: 0x2b, hex: "2B", name: "Read Device Identification", category: "cross-protocol" },
+  ];
+
+  function parseFcCode(message: string): number | null {
+    const m = message.match(/\bfc=0x([0-9A-Fa-f]{2})\b/);
+    if (!m) return null;
+    const parsed = Number.parseInt(m[1], 16);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  }
+
+  function parseDirection(message: string): "rx" | "tx" | "other" {
+    const first = message.replace(/^\[.*?\]\s*/, "").split(" ")[0] ?? "";
+    if (first.includes(".rx")) return "rx";
+    if (first.includes(".tx")) return "tx";
+    return "other";
+  }
+
+  function isDiagnosticTraffic(entry: LogEntry): boolean {
+    if (entry.level !== "traffic") return false;
+    const code = parseFcCode(entry.message);
+    if (code == null) return false;
+    const baseCode = code & 0x7f;
+    return DIAGNOSTIC_FUNCTIONS.some((fc) => fc.code === baseCode);
+  }
+
+  function buildBuckets(entries: LogEntry[]): DiagnosticsBucket[] {
+    return DIAGNOSTIC_FUNCTIONS.map((fc) => {
+      const matching = entries.filter((entry) => {
+        const code = parseFcCode(entry.message);
+        if (code == null) return false;
+        return (code & 0x7f) === fc.code;
+      });
+
+      const rx = matching.filter((entry) => parseDirection(entry.message) === "rx").length;
+      const tx = matching.filter((entry) => parseDirection(entry.message) === "tx").length;
+      const exceptions = matching.filter((entry) => entry.message.includes("exception=")).length;
+
+      return {
+        ...fc,
+        total: matching.length,
+        rx,
+        tx,
+        exceptions,
+        lastAt: matching.length > 0 ? matching[matching.length - 1].timestamp : null,
+      };
+    });
+  }
+
+  const diagnosticsTraffic = $derived(logState.entries.filter(isDiagnosticTraffic));
   const health = $derived(getCurrentDeviceHealthSnapshot());
+  const diagnosticsBuckets = $derived(buildBuckets(diagnosticsTraffic));
+  const serialBuckets = $derived(diagnosticsBuckets.filter((fc) => fc.category === "serial"));
+  const fc43Bucket = $derived(diagnosticsBuckets.find((fc) => fc.code === 0x2b) ?? null);
+  const recentDiagnosticsTraffic = $derived(diagnosticsTraffic.slice(-80).reverse());
 
-  onMount(() => {
-    initDiagnosticsState();
+  const diagnosticsOverview = $derived({
+    total: diagnosticsTraffic.length,
+    rx: diagnosticsTraffic.filter((entry) => parseDirection(entry.message) === "rx").length,
+    tx: diagnosticsTraffic.filter((entry) => parseDirection(entry.message) === "tx").length,
+    exceptions: diagnosticsTraffic.filter((entry) => entry.message.includes("exception=")).length,
   });
 </script>
 
-<PageShell title="Traffic" feature="Request/error analytics" icon="stethoscope">
+<PageShell title="Diagnostics" feature="Server-side diagnostics from observed traffic" icon="activity">
   {#snippet children()}
     {#if connectionState.status === "disconnected"}
       <div class="disconnected-banner" role="alert">
-        <span class="banner-icon">⚠</span>
-        <span class="banner-text">Server not running — go to <strong>Listener</strong> and start the server to accept client connections.</span>
+        <span class="banner-icon">!</span>
+        <span class="banner-text">Server not running. Start it in <strong>Listener</strong> to capture diagnostics traffic.</span>
       </div>
     {/if}
 
-    <section>
+    <section class="diag-section">
+      <SectionHeader title="Server Diagnostics Overview" subtitle="Passive view: counts are derived from received/sent server traffic, not active probe commands" />
+      <PanelFrame>
+        {#snippet children()}
+          <div class="overview-grid">
+            <article class="overview-card">
+              <div class="label">Total Diagnostic Frames</div>
+              <div class="value">{diagnosticsOverview.total}</div>
+            </article>
+            <article class="overview-card">
+              <div class="label">RX Frames</div>
+              <div class="value">{diagnosticsOverview.rx}</div>
+            </article>
+            <article class="overview-card">
+              <div class="label">TX Frames</div>
+              <div class="value">{diagnosticsOverview.tx}</div>
+            </article>
+            <article class="overview-card">
+              <div class="label">Exception Responses</div>
+              <div class="value warn">{diagnosticsOverview.exceptions}</div>
+            </article>
+          </div>
+        {/snippet}
+      </PanelFrame>
+    </section>
+
+    <section class="diag-section">
       <SectionHeader title="Connection Health" subtitle="RTT, timeout/retry pressure, exception histogram, and quality hints" />
       <PanelFrame>
         {#snippet children()}
@@ -65,17 +145,18 @@
             </div>
 
             <div class="health-card">
+              <div class="health-label">Requests</div>
+              <div class="health-value">{health.totalRequests} total | {health.successfulRequests} success | {health.failedRequests} failed</div>
+            </div>
+
+            <div class="health-card">
               <div class="health-label">RTT</div>
-              <div class="health-value">
-                latest {health.latestRttMs ?? "-"} ms | median {health.medianRttMs ?? "-"} ms | p95 {health.p95RttMs ?? "-"} ms
-              </div>
+              <div class="health-value">latest {health.latestRttMs ?? "-"} ms | median {health.medianRttMs ?? "-"} ms | p95 {health.p95RttMs ?? "-"} ms</div>
             </div>
 
             <div class="health-card">
               <div class="health-label">Rates</div>
-              <div class="health-value">
-                timeout {(health.timeoutRate * 100).toFixed(1)}% | retry {(health.retryRate * 100).toFixed(1)}% | reconnects {health.reconnectCount}
-              </div>
+              <div class="health-value">timeout {(health.timeoutRate * 100).toFixed(1)}% | retry {(health.retryRate * 100).toFixed(1)}% | reconnects {health.reconnectCount}</div>
             </div>
 
             <div class="health-card health-wide">
@@ -109,163 +190,63 @@
     </section>
 
     <section class="diag-section">
-      <SectionHeader title="Exception Status (FC07)" subtitle="Read single-byte device exception status" />
-      {#if isTcp}
-        <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
-      {/if}
+      <SectionHeader title="Serial-only Diagnostics" subtitle="FC07, FC08, FC11, FC12, FC17" />
+      <div class="protocol-note" role="note">These function codes are serial-line diagnostics in Modbus. On TCP, values are shown only if a peer still sends them.</div>
       <PanelFrame>
         {#snippet children()}
-          <div class="diag-actions wide-gap">
-            <button onclick={() => void readExceptionStatus()} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read</button>
-            <button onclick={() => cancelDiagnosticsRead()} disabled={!diagnosticsState.readInProgress}>Cancel</button>
-            <label class="diag-inline-label offset">Poll
-              <input
-                type="checkbox"
-                checked={diagnosticsState.pollActive}
-                disabled={!connected || isTcp}
-                onchange={(event) => setDiagnosticsPollActive((event.currentTarget as HTMLInputElement).checked)}
-              />
-            </label>
-            <label class="diag-inline-label">
-              Interval (ms)
-              <input
-                type="number"
-                min="100"
-                value={diagnosticsState.pollInterval}
-                disabled={!connected || isTcp}
-                onchange={(event) => setDiagnosticsPollInterval(Number((event.currentTarget as HTMLInputElement).value))}
-              />
-            </label>
+          <div class="bucket-grid">
+            {#each serialBuckets as item}
+              <article class="bucket-card">
+                <div class="bucket-head">
+                  <span class="fc-chip">FC{item.hex}</span>
+                  <span class="bucket-title">{item.name}</span>
+                </div>
+                <div class="bucket-row">total <strong>{item.total}</strong></div>
+                <div class="bucket-row">rx <strong>{item.rx}</strong> | tx <strong>{item.tx}</strong></div>
+                <div class="bucket-row">exceptions <strong>{item.exceptions}</strong></div>
+                <div class="bucket-row">last seen <strong>{item.lastAt ? formatLogTimestamp(item.lastAt) : "-"}</strong></div>
+              </article>
+            {/each}
           </div>
-
-          {#if diagnosticsState.exceptionStatus}
-            <div class="diag-result">
-              <strong>Parsed:</strong>
-              <pre>{JSON.stringify(diagnosticsState.exceptionStatus.parsed, null, 2)}</pre>
-              <strong>Hex:</strong> <code>{diagnosticsState.exceptionStatus.rawHex}</code>
-              {#if diagnosticsState.exceptionStatus.ascii}
-                <div><strong>ASCII:</strong> {diagnosticsState.exceptionStatus.ascii}</div>
-              {/if}
-            </div>
-          {/if}
         {/snippet}
       </PanelFrame>
     </section>
 
     <section class="diag-section">
-      <SectionHeader title="Diagnostics (FC08)" subtitle="Support for various subfunctions; enter subfunction and optional payload" />
-      {#if isTcp}
-        <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
-      {/if}
+      <SectionHeader title="FC43 Device Identification" subtitle="TCP + Serial" />
       <PanelFrame>
         {#snippet children()}
-          <div class="diag-actions">
-            <label class="diag-inline-label">Subfunction <input type="number" class="diag-input-field" bind:value={fc08Subfunction} min="0" max="255" /></label>
-            <label class="diag-inline-label">Payload (hex) <input type="text" class="diag-input-field" bind:value={fc08Payload} placeholder="DE AD BE EF" /></label>
-            <button onclick={() => void runDiagnostic(Number(fc08Subfunction), fc08Payload)} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Run</button>
-          </div>
-
-          {#if diagnosticsState.lastDiagnostic}
-            <div class="diag-result">
-              <strong>Info:</strong>
-              <pre>{JSON.stringify(diagnosticsState.lastDiagnostic.parsed, null, 2)}</pre>
-              <strong>Hex:</strong> <code>{diagnosticsState.lastDiagnostic.rawHex}</code>
-              {#if diagnosticsState.lastDiagnostic.ascii}
-                <div><strong>ASCII:</strong> {diagnosticsState.lastDiagnostic.ascii}</div>
-              {/if}
+          {#if fc43Bucket}
+            <div class="single-row">
+              <span class="fc-chip">FC{fc43Bucket.hex}</span>
+              <span class="bucket-title">{fc43Bucket.name}</span>
+              <span class="stat">total <strong>{fc43Bucket.total}</strong></span>
+              <span class="stat">rx <strong>{fc43Bucket.rx}</strong></span>
+              <span class="stat">tx <strong>{fc43Bucket.tx}</strong></span>
+              <span class="stat">exceptions <strong>{fc43Bucket.exceptions}</strong></span>
+              <span class="stat">last seen <strong>{fc43Bucket.lastAt ? formatLogTimestamp(fc43Bucket.lastAt) : "-"}</strong></span>
             </div>
+          {:else}
+            <p class="empty-note">No FC43 traffic observed yet.</p>
           {/if}
         {/snippet}
       </PanelFrame>
     </section>
 
-    <section class="diag-section">
-      <SectionHeader title="Get Com Event Counter (FC11)" />
-      {#if isTcp}
-        <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
-      {/if}
+    <section class="diag-section diag-last">
+      <SectionHeader title="Recent Diagnostic Traffic" subtitle="Latest FC07/08/11/12/17/43 frames from traffic log" />
       <PanelFrame>
         {#snippet children()}
-          <div class="diag-actions wide-gap">
-            <button onclick={() => void getComEventCounter()} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read Counter</button>
-          </div>
-          {#if diagnosticsState.comEventCounter}
-            <div class="diag-result">
-              <pre>{JSON.stringify(diagnosticsState.comEventCounter.parsed, null, 2)}</pre>
-              <strong>Hex:</strong> <code>{diagnosticsState.comEventCounter.rawHex}</code>
-            </div>
-          {/if}
-        {/snippet}
-      </PanelFrame>
-    </section>
-
-    <section class="diag-section">
-      <SectionHeader title="Get Com Event Log (FC12)" subtitle="Paged event entries" />
-      {#if isTcp}
-        <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
-      {/if}
-      <PanelFrame>
-        {#snippet children()}
-          <div class="diag-actions">
-            <label class="diag-inline-label">Start <input type="number" class="diag-input-field" bind:value={comLogStart} min="0" /></label>
-            <label class="diag-inline-label">Count <input type="number" class="diag-input-field" bind:value={comLogCount} min="1" /></label>
-            <button onclick={() => void getComEventLog(Number(comLogStart), Number(comLogCount))} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read Log</button>
-          </div>
-          {#if diagnosticsState.comEventLog.length > 0}
-            <div class="diag-result">
-              <ul class="diag-list">
-                {#each diagnosticsState.comEventLog as entry, idx}
-                  <li><strong>#{idx + 1}</strong> <code>{entry.rawHex}</code> {entry.ascii ? ` — ${entry.ascii}` : ""}</li>
-                {/each}
-              </ul>
-            </div>
-          {/if}
-        {/snippet}
-      </PanelFrame>
-    </section>
-
-    <section class="diag-section">
-      <SectionHeader title="Report Server ID (FC17)" />
-      {#if isTcp}
-        <div class="serial-only-note" role="note">Serial line only — defined for serial connections per Modbus spec. Support over TCP varies by device.</div>
-      {/if}
-      <PanelFrame>
-        {#snippet children()}
-          <div class="diag-actions wide-gap">
-            <button onclick={() => void reportServerId()} disabled={!connected || isTcp || diagnosticsState.readInProgress}>Read Server ID</button>
-          </div>
-          {#if diagnosticsState.serverId}
-            <div class="diag-result">
-              <pre>{JSON.stringify(diagnosticsState.serverId.parsed, null, 2)}</pre>
-              <code>{diagnosticsState.serverId.rawHex}</code>
-            </div>
-          {/if}
-        {/snippet}
-      </PanelFrame>
-    </section>
-
-    <section class="diag-section diag-section-last">
-      <SectionHeader title="Read Device Identification (FC43)" subtitle="Read device id objects — TCP and Serial" />
-      <PanelFrame>
-        {#snippet children()}
-          <div class="diag-actions">
-            <label class="diag-inline-label">
-              Code
-              <select class="diag-input-field" bind:value={deviceIdLevel}>
-                <option value={1}>1 — Basic</option>
-                <option value={2}>2 — Regular</option>
-                <option value={3}>3 — Extended</option>
-                <option value={4}>4 — Individual (needs Object ID)</option>
-              </select>
-            </label>
-            <label class="diag-inline-label">Object ID <input type="number" class="diag-input-field" bind:value={deviceIdObject} min="0" max="255" placeholder="0" /></label>
-            <button onclick={() => void readDeviceIdentification(Number(deviceIdLevel), deviceIdObject ?? undefined)} disabled={!connected || diagnosticsState.readInProgress}>Read</button>
-          </div>
-
-          {#if diagnosticsState.deviceIdentification}
-            <div class="diag-result">
-              <strong>Objects</strong>
-              <pre>{JSON.stringify(diagnosticsState.deviceIdentification.parsed, null, 2)}</pre>
+          {#if recentDiagnosticsTraffic.length === 0}
+            <p class="empty-note">No diagnostic traffic observed yet.</p>
+          {:else}
+            <div class="traffic-list" role="list">
+              {#each recentDiagnosticsTraffic as entry (entry.id)}
+                <div class="traffic-row" role="listitem">
+                  <span class="time">{formatLogTimestamp(entry.timestamp)}</span>
+                  <span class="msg">{entry.message}</span>
+                </div>
+              {/each}
             </div>
           {/if}
         {/snippet}
@@ -279,87 +260,8 @@
     margin-top: 18px;
   }
 
-  .diag-section-last {
+  .diag-last {
     margin-bottom: 24px;
-  }
-
-  .diag-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .diag-actions.wide-gap {
-    gap: 12px;
-  }
-
-  .diag-actions button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    min-height: 30px;
-    padding: 0 10px;
-    border: 1px solid color-mix(in srgb, var(--c-border) 78%, var(--c-surface-3));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--c-surface-1) 72%, var(--c-surface-2));
-    color: var(--c-text-1);
-    font: inherit;
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: border-color 120ms ease, background 120ms ease;
-  }
-
-  .diag-actions button:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--c-border-strong) 68%, var(--c-surface-3));
-    background: color-mix(in srgb, var(--c-surface-3) 62%, var(--c-surface-2));
-  }
-
-  .diag-actions button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .diag-inline-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.74rem;
-    color: var(--c-text-2);
-  }
-
-  .diag-inline-label.offset {
-    margin-left: 12px;
-  }
-
-  .diag-result {
-    margin-top: 12px;
-    display: grid;
-    gap: 6px;
-  }
-
-  .diag-result pre {
-    margin: 0;
-    padding: 8px;
-    border: 1px solid color-mix(in srgb, var(--c-border) 72%, transparent);
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
-    color: var(--c-text-1);
-    font-size: 0.75rem;
-    overflow-x: auto;
-  }
-
-  .diag-result code {
-    font-size: 0.74rem;
-    color: var(--c-text-1);
-  }
-
-  .diag-list {
-    margin: 0;
-    padding-left: 18px;
-    display: grid;
-    gap: 4px;
   }
 
   .disconnected-banner {
@@ -385,41 +287,16 @@
     color: var(--c-accent);
   }
 
-  .diag-input-field {
-    width: 120px;
-    padding: 6px 8px;
-    background: var(--c-surface-2);
-    border: 1px solid var(--c-border);
-    border-radius: 6px;
-    color: var(--c-text-1);
-    font: inherit;
-    font-size: 0.95rem;
-  }
-
-  .diag-input-field:focus {
-    outline: none;
-    border-color: var(--c-accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 25%, transparent);
-  }
-
-  .serial-only-note {
+  .protocol-note {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
+    padding: 7px 10px;
     margin-bottom: 4px;
     border-radius: 6px;
     border: 1px solid color-mix(in srgb, var(--c-border) 80%, transparent);
     background: color-mix(in srgb, var(--c-surface-3) 60%, transparent);
     font-size: 0.78rem;
     color: var(--c-text-2);
-  }
-
-  .serial-only-note::before {
-    content: "ℹ";
-    flex-shrink: 0;
-    font-size: 0.9rem;
-    color: var(--c-border-strong);
   }
 
   .health-grid {
@@ -498,5 +375,149 @@
     gap: 4px;
     font-size: 0.8rem;
     color: var(--c-text-2);
+  }
+
+  .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+  }
+
+  .overview-card {
+    border: 1px solid color-mix(in srgb, var(--c-border) 72%, transparent);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+  }
+
+  .label {
+    font-size: 0.66rem;
+    color: var(--c-text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .value {
+    font-size: 1rem;
+    color: var(--c-text-1);
+    margin-top: 4px;
+    font-weight: 700;
+  }
+
+  .value.warn {
+    color: var(--c-warn);
+  }
+
+  .bucket-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 8px;
+  }
+
+  .bucket-card {
+    border: 1px solid color-mix(in srgb, var(--c-border) 72%, transparent);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+    display: grid;
+    gap: 3px;
+  }
+
+  .bucket-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .fc-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    height: 20px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--c-accent) 35%, var(--c-border));
+    background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2));
+    color: var(--c-text-1);
+    font-size: 0.68rem;
+    font-weight: 600;
+  }
+
+  .bucket-title {
+    color: var(--c-text-1);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
+  .bucket-row {
+    font-size: 0.75rem;
+    color: var(--c-text-2);
+  }
+
+  .bucket-row strong {
+    color: var(--c-text-1);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-weight: 700;
+  }
+
+  .single-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+    font-size: 0.76rem;
+  }
+
+  .stat {
+    color: var(--c-text-2);
+  }
+
+  .stat strong {
+    color: var(--c-text-1);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-weight: 700;
+  }
+
+  .traffic-list {
+    display: grid;
+    gap: 6px;
+    max-height: 280px;
+    overflow: auto;
+  }
+
+  .traffic-row {
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 72%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--c-surface-2) 52%, transparent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.74rem;
+  }
+
+  .time {
+    color: var(--c-text-2);
+  }
+
+  .msg {
+    color: var(--c-text-1);
+    line-height: 1.35;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .empty-note {
+    margin: 0;
+    color: var(--c-text-2);
+    font-size: 0.78rem;
+  }
+
+  @media (max-width: 720px) {
+    .traffic-row {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

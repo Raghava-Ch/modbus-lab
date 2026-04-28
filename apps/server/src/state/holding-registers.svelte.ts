@@ -1,16 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
+import { getSettingsSnapshot } from "./settings.svelte";
 import { connectionState } from "./connection.svelte";
-import {
-  getGlobalPollingMaxAddressCount,
-  getSettingsSnapshot,
-  isPollingAllowedForCount,
-} from "./settings.svelte";
 
 export type HoldingRegisterView = "table" | "cards";
 export type HoldingRegisterFilter = "all" | "non-zero" | "zero";
 export type HoldingRegisterOrigin = "range" | "custom";
+
+export type HoldingRegRule = {
+  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle";
+  intervalMs: number;
+  minValue: number;
+  maxValue: number;
+  step: number;
+  periodMs: number;
+};
 export type HoldingRegisterAddressFilter =
   | "all"
   | "required-range"
@@ -29,28 +34,7 @@ export interface HoldingRegisterEntry {
   lastWriteAt: number | null;
   label: string;
   origin: HoldingRegisterOrigin;
-}
-
-interface BackendReadHoldingRegistersResponse {
-  registers: Array<{ address: number; value: number }>;
-  startAddress: number;
-  quantity: number;
-}
-
-interface BackendWriteHoldingRegisterResponse {
-  address: number;
-  value: number;
-}
-
-interface BackendWriteMassHoldingRegistersResponse {
-  writtenCount: number;
-  totalCount: number;
-  failures: Array<{ address: number; code: string; message: string }>;
-}
-
-interface AddressSection {
-  start: number;
-  quantity: number;
+  rule: HoldingRegRule;
 }
 
 function parseInvokeError(err: unknown): string {
@@ -75,97 +59,128 @@ function parseInvokeError(err: unknown): string {
   return "Unknown error";
 }
 
-function isTransientTransportError(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("too many requests")
-    || lower.includes("expected responses buffer is full")
-    || lower.includes("timeout")
-    || lower.includes("timed out")
-    || lower.includes("not connected")
-    || lower.includes("reconnecting")
-    || lower.includes("broken pipe")
-    || lower.includes("connection reset")
-    || lower.includes("transport")
-    || lower.includes("send failed")
-    || lower.includes("io error")
-    || lower.includes("connection closed")
-  );
-}
-
 function warnLocal(message: string): void {
   addLog("warn", message);
   notifyWarning(message);
 }
 
-function buildAddressSections(addresses: number[]): AddressSection[] {
-  if (addresses.length === 0) return [];
-
-  const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
-  const sections: AddressSection[] = [];
-
-  let sectionStart = uniqueSorted[0];
-  let prev = uniqueSorted[0];
-
-  for (let i = 1; i < uniqueSorted.length; i += 1) {
-    const current = uniqueSorted[i];
-    if (current === prev + 1) {
-      prev = current;
-      continue;
-    }
-
-    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
-    sectionStart = current;
-    prev = current;
-  }
-
-  sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
-  return sections;
-}
-
-function formatSectionPreview(sections: AddressSection[], max = 4): string {
-  if (sections.length === 0) return "-";
-  const preview = sections
-    .slice(0, max)
-    .map((section) => `[${section.start}..${section.start + section.quantity - 1}]`)
-    .join(",");
-  return sections.length > max ? `${preview},...` : preview;
-}
-
-function estimateReadOps(sections: AddressSection[], chunkMax: number): number {
-  return sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
+function defaultHoldingRegRule(): HoldingRegRule {
+  return {
+    type: "none",
+    intervalMs: 1000,
+    minValue: 0,
+    maxValue: 100,
+    step: 1,
+    periodMs: 4000,
+  };
 }
 
 const HOLDING_VIEW_KEY = "Modbus-Lab.holdingView";
 const HOLDING_MAX_COUNT = 65536;
 const HOLDING_ADDRESS_MIN = 0;
 const HOLDING_ADDRESS_MAX = HOLDING_MAX_COUNT - 1;
-const HOLDING_READ_CHUNK_MAX = 125;
-const HOLDING_WRITE_BATCH_CHUNK_MAX = 120;
 const HOLDING_PERF_WARN_THRESHOLD = 5000;
+const HOLDING_UI_SYNC_INTERVAL_MS = 400;
 let largeDatasetWarned = false;
-let pollClampWarnedForInterval: number | null = null;
+let uiSyncTimer: ReturnType<typeof setInterval> | null = null;
+let uiSyncInFlight = false;
 
-function getPracticalHoldingPollIntervalMs(count: number): number {
-  if (count >= 5000) return 5000;
-  if (count >= 2000) return 2000;
-  if (count >= 512) return 1000;
-  return 500;
+type StoreReadU16Entry = {
+  address: number;
+  value: number;
+};
+
+function normalizeU16(value: number, fallback = 0): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(65535, Math.floor(value)));
 }
 
-function enforcePracticalHoldingPollInterval(): void {
-  const practicalMin = getPracticalHoldingPollIntervalMs(holdingRegisterState.entries.length);
-  if (holdingRegisterState.pollInterval < practicalMin) {
-    holdingRegisterState.pollInterval = practicalMin;
-    if (pollClampWarnedForInterval !== practicalMin) {
-      warnLocal(
-        `Polling interval auto-adjusted to ${practicalMin} ms for ${holdingRegisterState.entries.length} registers to keep updates practical.`,
-      );
-      pollClampWarnedForInterval = practicalMin;
-    }
-  } else if (pollClampWarnedForInterval !== null && holdingRegisterState.pollInterval >= practicalMin) {
-    pollClampWarnedForInterval = null;
+function normalizeRule(rule: HoldingRegRule): HoldingRegRule {
+  const minValue = normalizeU16(rule.minValue, 0);
+  const maxValue = normalizeU16(rule.maxValue, 100);
+  const lo = Math.min(minValue, maxValue);
+  const hi = Math.max(minValue, maxValue);
+  return {
+    type: rule.type,
+    intervalMs: Math.max(100, Math.floor(rule.intervalMs)),
+    minValue: lo,
+    maxValue: hi,
+    step: Math.max(1, normalizeU16(rule.step, 1)),
+    periodMs: Math.max(200, Math.floor(rule.periodMs)),
+  };
+}
+
+async function writeHoldingRegisterValue(address: number, value: number): Promise<void> {
+  const entry = holdingRegisterState.entries.find((e) => e.address === address);
+  if (!entry) return;
+  if (entry.pending) return;
+
+  const normalized = normalizeU16(value, entry.desiredValue);
+  entry.pending = true;
+  entry.writeError = null;
+  try {
+    await invoke("store_write_holding_reg", { address, value: normalized });
+    entry.slaveValue = normalized;
+    entry.pending = false;
+    entry.writeError = null;
+    entry.lastWriteAt = Date.now();
+  } catch (err) {
+    entry.pending = false;
+    const message = parseInvokeError(err);
+    entry.writeError = message;
   }
+}
+
+async function runHoldingRegisterUiSyncTick(): Promise<void> {
+  if (connectionState.listenerStatus !== "running") return;
+  if (uiSyncInFlight) return;
+  const addresses = holdingRegisterState.entries.map((e) => e.address);
+  if (addresses.length === 0) return;
+
+  uiSyncInFlight = true;
+  try {
+    const rows = await invoke<StoreReadU16Entry[]>("store_read_holding_regs", { addresses });
+    const valueByAddress = new Map(rows.map((row) => [row.address, row.value]));
+    const now = Date.now();
+    for (const entry of holdingRegisterState.entries) {
+      if (entry.pending) continue;
+      const nextValue = valueByAddress.get(entry.address);
+      if (nextValue === undefined) continue;
+      const preserveDesired = entry.desiredValue !== entry.slaveValue;
+      const normalized = normalizeU16(nextValue, entry.slaveValue);
+      entry.slaveValue = normalized;
+      if (!preserveDesired) {
+        entry.desiredValue = normalized;
+      }
+      entry.lastReadAt = now;
+      entry.readError = null;
+    }
+  } catch (err) {
+    const msg = parseInvokeError(err);
+    for (const entry of holdingRegisterState.entries) {
+      entry.readError = msg;
+    }
+  } finally {
+    uiSyncInFlight = false;
+  }
+}
+
+function startHoldingRegisterUiSync(): void {
+  if (uiSyncTimer) {
+    clearInterval(uiSyncTimer);
+    uiSyncTimer = null;
+  }
+
+  void runHoldingRegisterUiSyncTick();
+  uiSyncTimer = setInterval(() => {
+    void runHoldingRegisterUiSyncTick();
+  }, HOLDING_UI_SYNC_INTERVAL_MS);
+}
+
+export function stopHoldingRegisterUiSync(): void {
+  if (!uiSyncTimer) return;
+  clearInterval(uiSyncTimer);
+  uiSyncTimer = null;
 }
 
 function warnLargeDatasetConsequences(count: number): void {
@@ -194,6 +209,7 @@ function generateRegisters(startAddress: number, count: number): HoldingRegister
     lastWriteAt: null,
     label: "",
     origin: "range",
+    rule: defaultHoldingRegRule(),
   }));
 }
 
@@ -207,15 +223,7 @@ export const holdingRegisterState = $state({
   entries: [] as HoldingRegisterEntry[],
   startAddress: 0,
   registerCount: 16,
-  readInProgress: false,
-  cancelReadRequested: false,
-  pollActive: false,
-  pollInterval: 1000,
 });
-
-let pollTimer: ReturnType<typeof setInterval> | null = null;
-let readAllQueuedRuns = 0;
-const READ_ALL_QUEUE_DEPTH_MAX = 6;
 
 export function initHoldingRegisterState(): void {
   const settings = getSettingsSnapshot();
@@ -239,7 +247,7 @@ export function initHoldingRegisterState(): void {
     }
   }
 
-  setHoldingRegisterPollInterval(settings.polling.defaultIntervalMs);
+  startHoldingRegisterUiSync();
 }
 
 export function setHoldingRegisterView(view: HoldingRegisterView): void {
@@ -280,371 +288,19 @@ export function setHoldingRegisterLabel(address: number, label: string): void {
 export function setHoldingRegisterDesiredValue(address: number, value: number): void {
   const entry = holdingRegisterState.entries.find((e) => e.address === address);
   if (!entry) return;
-  const normalized = Math.max(0, Math.min(65535, Math.floor(value)));
+  const previous = entry.desiredValue;
+  const normalized = normalizeU16(value, entry.desiredValue);
   entry.desiredValue = normalized;
   entry.writeError = null;
-}
-
-export function setAllHoldingRegisterDesiredFromRead(): number {
-  let changed = 0;
-  for (const entry of holdingRegisterState.entries) {
-    if (entry.desiredValue !== entry.slaveValue || entry.writeError !== null) {
-      changed += 1;
-    }
-    entry.desiredValue = entry.slaveValue;
-    entry.writeError = null;
+  if (previous !== normalized) {
+    addLog("info", `HR.store.set ok addr=${address} val=${normalized}`);
   }
-  return changed;
-}
-
-export async function readHoldingRegister(address: number): Promise<void> {
-  const entry = holdingRegisterState.entries.find((e) => e.address === address);
-  if (!entry) return;
-  entry.pending = true;
-
-  try {
-    const response = await invoke<BackendReadHoldingRegistersResponse>("read_holding_registers", {
-      request: { startAddress: address, quantity: 1 },
-    });
-
-    const reg = response.registers.find((r) => r.address === address);
-    if (reg) {
-      entry.slaveValue = reg.value;
-      // Successful read means address is available; clear stale availability error.
-      entry.readError = null;
-      entry.writeError = null;
-      entry.lastReadAt = Date.now();
-    } else {
-      entry.readError = "Address not available";
-    }
-  } catch (err) {
-    entry.readError = "Address not available";
-    addLog("error", `fc03.read err addr=${address} msg=${parseInvokeError(err)}`);
-  } finally {
-    entry.pending = false;
-  }
-}
-
-async function readHoldingRange(
-  startAddress: number,
-  quantity: number,
-): Promise<BackendReadHoldingRegistersResponse> {
-  return invoke<BackendReadHoldingRegistersResponse>("read_holding_registers", {
-    request: { startAddress, quantity },
-  });
-}
-
-export async function readAllHoldingRegisters(options?: { markPending?: boolean; queueIfBusy?: boolean }): Promise<void> {
-  if (holdingRegisterState.entries.length === 0) return;
-  // Do not issue reads while the transport layer is recovering.
-  if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") return;
-
-  const queueIfBusy = options?.queueIfBusy ?? true;
-  if (holdingRegisterState.readInProgress) {
-    if (queueIfBusy && readAllQueuedRuns < READ_ALL_QUEUE_DEPTH_MAX) {
-      readAllQueuedRuns += 1;
-    }
-    return;
-  }
-
-  holdingRegisterState.readInProgress = true;
-  holdingRegisterState.cancelReadRequested = false;
-
-  const markPending = options?.markPending ?? true;
-
-  const sections = buildAddressSections(holdingRegisterState.entries.map((entry) => entry.address));
-  if (sections.length === 0) {
-    holdingRegisterState.readInProgress = false;
-    holdingRegisterState.cancelReadRequested = false;
-    return;
-  }
-
-  if (markPending) {
-    addLog(
-      "info",
-      `fc03.read plan total=${holdingRegisterState.entries.length} sections=${sections.length} ops=${estimateReadOps(sections, HOLDING_READ_CHUNK_MAX)} chunkMax=${HOLDING_READ_CHUNK_MAX} sample=${formatSectionPreview(sections)}`,
-    );
-  }
-
-  const startAddress = sections[0].start;
-  const quantity = holdingRegisterState.entries.length;
-  const endAddress = sections[sections.length - 1].start + sections[sections.length - 1].quantity - 1;
-
-  if (markPending) {
-    for (const entry of holdingRegisterState.entries) {
-      entry.pending = true;
-    }
-  }
-
-  try {
-    const entryByAddress = new Map<number, HoldingRegisterEntry>(
-      holdingRegisterState.entries.map((entry) => [entry.address, entry]),
-    );
-
-    let okCount = 0;
-    let missingCount = 0;
-    const failedRanges: Array<{ start: number; end: number; quantity: number }> = [];
-
-    for (const section of sections) {
-      if (holdingRegisterState.cancelReadRequested) {
-        break;
-      }
-
-      if (section.quantity === 1) {
-        try {
-          const response = await readHoldingRange(section.start, 1);
-          const single = response.registers.find((reg) => reg.address === section.start);
-          const entry = entryByAddress.get(section.start);
-          if (entry) {
-            if (single) {
-              entry.slaveValue = single.value;
-              entry.writeError = null;
-              entry.lastReadAt = Date.now();
-              okCount += 1;
-            } else {
-              entry.writeError = "Address not available";
-              missingCount += 1;
-            }
-            if (markPending) {
-              entry.pending = false;
-            }
-          }
-        } catch (singleErr) {
-          const reason = parseInvokeError(singleErr);
-          if (isTransientTransportError(reason)) {
-            const entry = entryByAddress.get(section.start);
-            if (entry && markPending) {
-              entry.pending = false;
-            }
-            addLog("warn", `fc03.read transient start=${section.start} qty=1 msg=${reason}`);
-            continue;
-          }
-
-          const entry = entryByAddress.get(section.start);
-          if (entry) {
-            entry.writeError = "Address not available";
-            if (markPending) {
-              entry.pending = false;
-            }
-          }
-          failedRanges.push({ start: section.start, end: section.start, quantity: 1 });
-          missingCount += 1;
-        }
-        continue;
-      }
-
-      const sectionEnd = section.start + section.quantity - 1;
-      for (let chunkStart = section.start; chunkStart <= sectionEnd; chunkStart += HOLDING_READ_CHUNK_MAX) {
-        if (holdingRegisterState.cancelReadRequested) {
-          break;
-        }
-
-        const chunkQty = Math.min(HOLDING_READ_CHUNK_MAX, sectionEnd - chunkStart + 1);
-        const chunkEnd = chunkStart + chunkQty - 1;
-        try {
-          const response = await readHoldingRange(chunkStart, chunkQty);
-          const valueMap = new Map<number, number>(response.registers.map((reg) => [reg.address, reg.value]));
-
-          for (let address = chunkStart; address <= chunkEnd; address += 1) {
-            const entry = entryByAddress.get(address);
-            if (!entry) continue;
-
-            if (valueMap.has(address)) {
-              entry.slaveValue = valueMap.get(address) ?? entry.slaveValue;
-              entry.writeError = null;
-              entry.lastReadAt = Date.now();
-              okCount += 1;
-            } else {
-              entry.writeError = "Address not available";
-              missingCount += 1;
-            }
-
-            if (markPending) {
-              entry.pending = false;
-            }
-          }
-        } catch (chunkErr) {
-          const reason = parseInvokeError(chunkErr);
-          if (isTransientTransportError(reason)) {
-            for (let address = chunkStart; address <= chunkEnd; address += 1) {
-              const entry = entryByAddress.get(address);
-              if (entry && markPending) {
-                entry.pending = false;
-              }
-            }
-            addLog("warn", `fc03.read transient start=${chunkStart} qty=${chunkQty} msg=${reason}`);
-            continue;
-          }
-
-          failedRanges.push({ start: chunkStart, end: chunkEnd, quantity: chunkQty });
-
-          for (let address = chunkStart; address <= chunkEnd; address += 1) {
-            const entry = entryByAddress.get(address);
-            if (!entry) continue;
-            entry.writeError = "Address not available";
-            missingCount += 1;
-            if (markPending) {
-              entry.pending = false;
-            }
-          }
-        }
-      }
-    }
-
-    if (holdingRegisterState.cancelReadRequested) {
-      if (markPending) {
-        for (const entry of holdingRegisterState.entries) {
-          entry.pending = false;
-        }
-      }
-      addLog(
-        "warn",
-        `fc03.read cancel start=${startAddress} qty=${quantity} end=${endAddress}`,
-      );
-      return;
-    }
-
-    if (okCount > 0) {
-      addLog("info", `fc03.read ok total=${holdingRegisterState.entries.length} ok=${okCount} sections=${sections.length}`);
-    }
-
-    if (missingCount > 0 && markPending) {
-      if (failedRanges.length > 0) {
-        const preview = failedRanges
-          .slice(0, 3)
-          .map((range) => `[${range.start}..${range.end}]`)
-          .join(", ");
-        addLog(
-          "warn",
-          `fc03.read fail ranges=${failedRanges.length} sample=${preview}${failedRanges.length > 3 ? ",..." : ""}`,
-        );
-      }
-      addLog(
-        "warn",
-        `fc03.read miss count=${missingCount}`,
-      );
-    }
-  } catch (err) {
-    if (markPending) {
-      for (const entry of holdingRegisterState.entries) {
-        entry.pending = false;
-      }
-    }
-    addLog("error", `fc03.read err msg=${parseInvokeError(err)}`);
-  } finally {
-    holdingRegisterState.readInProgress = false;
-    holdingRegisterState.cancelReadRequested = false;
-    if (readAllQueuedRuns > 0) {
-      readAllQueuedRuns -= 1;
-      void readAllHoldingRegisters({ markPending: false, queueIfBusy: false });
-    }
-  }
-}
-
-export function cancelHoldingRegisterRead(): void {
-  if (!holdingRegisterState.readInProgress) return;
-  holdingRegisterState.cancelReadRequested = true;
-
-  if (holdingRegisterState.pollActive) {
-    setHoldingRegisterPollActive(false);
-  }
-}
-
-async function runHoldingRegisterPollTick(): Promise<void> {
-  await readAllHoldingRegisters({ markPending: false, queueIfBusy: true });
 }
 
 export async function writeHoldingRegister(address: number): Promise<void> {
   const entry = holdingRegisterState.entries.find((e) => e.address === address);
   if (!entry) return;
-
-  entry.pending = true;
-  entry.writeError = null;
-
-  try {
-    const response = await invoke<BackendWriteHoldingRegisterResponse>("write_holding_register", {
-      request: { address, value: entry.desiredValue },
-    });
-
-    entry.slaveValue = response.value;
-    entry.pending = false;
-    entry.writeError = null;
-    entry.lastWriteAt = Date.now();
-    addLog("info", `fc06.write ok addr=${address} val=${response.value}`);
-  } catch (err) {
-    entry.pending = false;
-    entry.writeError = parseInvokeError(err);
-    addLog("error", `fc06.write err addr=${address} msg=${entry.writeError}`);
-  }
-}
-
-export async function writePendingHoldingRegisters(): Promise<number> {
-  const pending = holdingRegisterState.entries.filter((e) => e.desiredValue !== e.slaveValue);
-  if (pending.length === 0) return 0;
-
-  const sections = buildAddressSections(pending.map((entry) => entry.address));
-  const chunkCount = Math.ceil(pending.length / HOLDING_WRITE_BATCH_CHUNK_MAX);
-  addLog(
-    "info",
-    `fc16.write plan req=${pending.length} chunks=${chunkCount} chunkMax=${HOLDING_WRITE_BATCH_CHUNK_MAX} sections=${sections.length} sample=${formatSectionPreview(sections)}`,
-  );
-
-  for (const entry of pending) {
-    entry.pending = true;
-    entry.writeError = null;
-  }
-
-  let writtenTotal = 0;
-  let chunkFailureMessage: string | null = null;
-  const failureMap = new Map<number, string>();
-
-  // Use safe FC16-sized chunks to avoid oversized write payloads.
-  for (let i = 0; i < pending.length; i += HOLDING_WRITE_BATCH_CHUNK_MAX) {
-    const chunk = pending.slice(i, i + HOLDING_WRITE_BATCH_CHUNK_MAX);
-    try {
-      const response = await invoke<BackendWriteMassHoldingRegistersResponse>("write_holding_registers_batch", {
-        request: {
-          registers: chunk.map((entry) => ({
-            address: entry.address,
-            value: entry.desiredValue,
-          })),
-        },
-      });
-
-      writtenTotal += response.writtenCount;
-      for (const failure of response.failures) {
-        failureMap.set(failure.address, `${failure.code}: ${failure.message}`);
-      }
-    } catch (err) {
-      const message = parseInvokeError(err);
-      chunkFailureMessage = message;
-      for (const entry of chunk) {
-        failureMap.set(entry.address, message);
-      }
-    }
-  }
-
-  for (const entry of pending) {
-    entry.pending = false;
-    const failure = failureMap.get(entry.address);
-    if (failure) {
-      entry.writeError = failure;
-    } else {
-      entry.slaveValue = entry.desiredValue;
-      entry.writeError = null;
-      entry.lastWriteAt = Date.now();
-    }
-  }
-
-  if (chunkFailureMessage) {
-    addLog("error", `fc16.write err req=${pending.length} msg=${chunkFailureMessage}`);
-  }
-
-  if (pending.length > HOLDING_WRITE_BATCH_CHUNK_MAX) {
-    addLog("info", `fc16.write ok req=${pending.length} ok=${writtenTotal} chunks=${chunkCount}`);
-  }
-
-  return writtenTotal;
+  await writeHoldingRegisterValue(address, entry.desiredValue);
 }
 
 export function applyHoldingRegisterRange(startAddress: number, count: number): void {
@@ -679,6 +335,7 @@ export function applyHoldingRegisterRange(startAddress: number, count: number): 
       entry.lastWriteAt = prev.lastWriteAt;
       entry.label = prev.label;
       entry.origin = prev.origin;
+      entry.rule = prev.rule;
     }
   }
 
@@ -702,16 +359,7 @@ export function applyHoldingRegisterRange(startAddress: number, count: number): 
   next.sort((a, b) => a.address - b.address);
   holdingRegisterState.entries = next;
 
-  const maxCount = getGlobalPollingMaxAddressCount();
-  if (holdingRegisterState.pollActive && holdingRegisterState.entries.length > maxCount) {
-    setHoldingRegisterPollActive(false);
-    warnLocal(
-      `Polling disabled for ranges larger than ${maxCount} holding registers. Use Read once for bulk refresh.`,
-    );
-  }
-
   warnLargeDatasetConsequences(holdingRegisterState.entries.length);
-  enforcePracticalHoldingPollInterval();
   syncHoldingRegAddressesToBackend();
 }
 
@@ -748,16 +396,7 @@ export function addHoldingRegisterRange(startAddress: number, count: number): vo
 
   holdingRegisterState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
 
-  const maxCount = getGlobalPollingMaxAddressCount();
-  if (holdingRegisterState.pollActive && holdingRegisterState.entries.length > maxCount) {
-    setHoldingRegisterPollActive(false);
-    warnLocal(
-      `Polling disabled for ranges larger than ${maxCount} holding registers. Use Read once for bulk refresh.`,
-    );
-  }
-
   warnLargeDatasetConsequences(holdingRegisterState.entries.length);
-  enforcePracticalHoldingPollInterval();
   syncHoldingRegAddressesToBackend();
 }
 
@@ -789,21 +428,13 @@ export function addExclusiveHoldingRegister(address: number): boolean {
     lastWriteAt: null,
     label: "",
     origin: "custom",
+    rule: defaultHoldingRegRule(),
   };
 
   holdingRegisterState.entries = [...holdingRegisterState.entries, customEntry]
     .sort((a, b) => a.address - b.address);
 
-  const maxCount = getGlobalPollingMaxAddressCount();
-  if (holdingRegisterState.pollActive && holdingRegisterState.entries.length > maxCount) {
-    setHoldingRegisterPollActive(false);
-    warnLocal(
-      `Polling disabled for ranges larger than ${maxCount} holding registers. Use Read once for bulk refresh.`,
-    );
-  }
-
   warnLargeDatasetConsequences(holdingRegisterState.entries.length);
-  enforcePracticalHoldingPollInterval();
   // Register the new address in the Rust data store
   void invoke("store_write_holding_reg", { address: normalized, value: 0 });
 
@@ -835,61 +466,121 @@ export function generateRandomExclusiveHoldingRegisterAddress(): number | null {
 }
 
 export function removeHoldingRegister(address: number): void {
+  setHoldingRegisterRule(address, defaultHoldingRegRule());
   holdingRegisterState.entries = holdingRegisterState.entries.filter((entry) => entry.address !== address);
   void invoke("store_remove_holding_reg", { address });
 }
 
 export function removeAllHoldingRegisters(): void {
+  clearAllHoldingRegisterRules();
   holdingRegisterState.entries = [];
-  if (holdingRegisterState.pollActive) {
-    setHoldingRegisterPollActive(false);
-  }
   void invoke("store_clear_holding_regs", {});
 }
 
 export function syncHoldingRegAddressesToBackend(): void {
   const addresses = holdingRegisterState.entries.map((e) => e.address);
   void invoke("store_sync_holding_reg_addresses", { addresses });
+  void runHoldingRegisterUiSyncTick();
 }
 
-export function setHoldingRegisterPollInterval(ms: number): void {
-  const practicalMin = getPracticalHoldingPollIntervalMs(holdingRegisterState.entries.length);
-  const clamped = Math.max(practicalMin, Math.floor(ms));
-  if (clamped !== Math.floor(ms)) {
-    warnLocal(
-      `Selected polling interval is too fast for ${holdingRegisterState.entries.length} registers. Minimum practical interval is ${practicalMin} ms.`,
-    );
+
+const RULE_INTERVAL_OPTIONS: { ms: number; label: string }[] = [
+  { ms: 500, label: "500 ms" },
+  { ms: 1000, label: "1 s" },
+  { ms: 2000, label: "2 s" },
+  { ms: 5000, label: "5 s" },
+  { ms: 10000, label: "10 s" },
+  { ms: 30000, label: "30 s" },
+];
+export { RULE_INTERVAL_OPTIONS };
+
+const ruleTimers = new Map<number, ReturnType<typeof setInterval>>();
+
+export function setHoldingRegisterRule(address: number, rule: HoldingRegRule): void {
+  const entry = holdingRegisterState.entries.find((e) => e.address === address);
+  if (!entry) return;
+
+  const existing = ruleTimers.get(address);
+  if (existing !== undefined) {
+    clearInterval(existing);
+    ruleTimers.delete(address);
   }
 
-  holdingRegisterState.pollInterval = clamped;
-  if (holdingRegisterState.pollActive) {
-    setHoldingRegisterPollActive(true);
+  entry.rule = normalizeRule(rule);
+
+  if (entry.rule.type === "cycle") {
+    let writeMinNext = false;
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const nextValue = writeMinNext ? current.rule.minValue : current.rule.maxValue;
+      writeMinNext = !writeMinNext;
+      current.desiredValue = nextValue;
+      void writeHoldingRegisterValue(address, nextValue);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "sawtooth") {
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = current.slaveValue + current.rule.step > current.rule.maxValue
+        ? current.rule.minValue
+        : current.slaveValue + current.rule.step;
+      current.desiredValue = next;
+      void writeHoldingRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "triangle") {
+    let direction: 1 | -1 = 1;
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      let next = current.slaveValue + direction * current.rule.step;
+      if (next >= current.rule.maxValue) {
+        next = current.rule.maxValue;
+        direction = -1;
+      } else if (next <= current.rule.minValue) {
+        next = current.rule.minValue;
+        direction = 1;
+      }
+
+      current.desiredValue = next;
+      void writeHoldingRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "sine") {
+    const startAt = Date.now();
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const elapsed = Date.now() - startAt;
+      const phase = (elapsed % current.rule.periodMs) / current.rule.periodMs;
+      const radians = phase * Math.PI * 2;
+      const center = (current.rule.minValue + current.rule.maxValue) / 2;
+      const amplitude = (current.rule.maxValue - current.rule.minValue) / 2;
+      const nextValue = normalizeU16(Math.round(center + amplitude * Math.sin(radians)), current.slaveValue);
+      current.desiredValue = nextValue;
+      void writeHoldingRegisterValue(address, nextValue);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
   }
 }
 
-export function setHoldingRegisterPollActive(active: boolean): void {
-  const maxCount = getGlobalPollingMaxAddressCount();
-  if (active && !isPollingAllowedForCount(holdingRegisterState.entries.length)) {
-    warnLocal(
-      `Polling disabled for ranges larger than ${maxCount} holding registers. Use Read once for bulk refresh.`,
-    );
-    holdingRegisterState.pollActive = false;
-    return;
+export function clearAllHoldingRegisterRules(): void {
+  for (const timer of ruleTimers.values()) {
+    clearInterval(timer);
   }
-
-  holdingRegisterState.pollActive = active;
-
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-
-  if (active) {
-    void runHoldingRegisterPollTick();
-    pollTimer = setInterval(() => {
-      void runHoldingRegisterPollTick();
-    }, holdingRegisterState.pollInterval);
-  }
+  ruleTimers.clear();
 }
 
 export function getFilteredHoldingRegisters(): HoldingRegisterEntry[] {

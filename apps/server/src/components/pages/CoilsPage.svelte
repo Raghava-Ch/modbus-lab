@@ -48,6 +48,7 @@
   import { connectionState } from "../../state/connection.svelte";
   import { formatAddressWithSettings } from "../../state/settings.svelte";
   import { notifyWarning } from "../../state/notifications.svelte";
+  import { containViewportScroll } from "../../lib/scroll-lock";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
   import ToggleSwitch from "../shared/ToggleSwitch.svelte";
@@ -62,10 +63,6 @@
       clearAllRules();
     };
   });
-
-  // On the server all operations target the local Rust data store which is
-  // always available — no TCP connection required to read/write values.
-  const connected = $derived(true);
 
   // ── Local panel open/close state ────────────────────────────────────────────
   let readPanelOpen = $state(false);
@@ -297,28 +294,7 @@
   }
 
   function handleScrollChain(e: WheelEvent): void {
-    const target = e.currentTarget as HTMLElement;
-    const delta = e.deltaY;
-    if (delta === 0) return;
-
-    const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1;
-    const atTop = target.scrollTop <= 1;
-
-    // If at boundary and trying to scroll past it, scroll parent instead
-    if ((delta > 0 && atBottom) || (delta < 0 && atTop)) {
-      const parent = document.querySelector(".main-content") as HTMLElement | null;
-      if (parent) {
-        const canScrollDown = parent.scrollTop + parent.clientHeight < parent.scrollHeight - 1;
-        const canScrollUp = parent.scrollTop > 1;
-        const shouldDelegate = (delta > 0 && canScrollDown) || (delta < 0 && canScrollUp);
-
-        if (!shouldDelegate) return;
-
-        const delegatedDelta = Math.sign(delta) * Math.min(48, Math.abs(delta) * 0.3);
-        parent.scrollBy({ top: delegatedDelta, left: 0, behavior: "auto" });
-        e.preventDefault();
-      }
-    }
+    containViewportScroll(e);
   }
 
   async function executeSingleWrite(): Promise<void> {
@@ -934,7 +910,6 @@
               >
                 <TableRow
                   {entry}
-                  {connected}
                   {editingAddress}
                   {editLabelVal}
                   {addrFmt}
@@ -1000,7 +975,6 @@
                   pending={entry.pending}
                   readValue={entry.slaveValue}
                   toggleValue={entry.desiredValue}
-                  {connected}
                   showStateChip={false}
                   cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
                   {editingAddress}
@@ -1191,19 +1165,6 @@
     border-color: var(--c-error);
     background: color-mix(in srgb, var(--c-error) 22%, var(--c-surface-2));
     color: var(--c-text-1);
-  }
-
-  /* ── Page-unique: failed write badge ────────────────────────────────────── */
-  .pending-chip-failed {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--c-danger) 16%, var(--c-surface-3));
-    color: var(--c-danger);
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
   }
 
   /* ── Page-unique: table column layout ───────────────────────────────────── */

@@ -19,6 +19,7 @@ use super::types::{
     WriteCoilResponse, WriteHoldingRegisterRequest, WriteHoldingRegisterResponse,
     WriteMassCoilsRequest, WriteMassCoilsResponse, WriteMassHoldingRegistersRequest,
     WriteMassHoldingRegistersResponse,
+    StoreReadBoolEntry, StoreReadU16Entry,
 };
 
 fn format_error_message(err: &ApiError) -> String {
@@ -1417,6 +1418,66 @@ pub async fn store_sync_holding_reg_addresses(state: State<'_, AppState>, addres
         handle.app.lock().await.sync_holding_reg_addresses(&addresses);
     }
     Ok(())
+}
+
+// ── Store-read commands (Option A: server UI reads values back from its own store) ──
+
+/// Read coil values directly from the server's in-memory store.
+/// Works even when the listener is stopped — returns false for all addresses in that case.
+#[tauri::command]
+pub async fn store_read_coils(
+    state: State<'_, AppState>,
+    addresses: Vec<u16>,
+) -> ApiResult<Vec<StoreReadBoolEntry>> {
+    let locked = state.listener_handle.lock().await;
+    match locked.as_ref() {
+        None => Ok(addresses.into_iter().map(|address| StoreReadBoolEntry { address, value: false }).collect()),
+        Some(handle) => {
+            let app = handle.app.lock().await;
+            Ok(app.get_coil_values(&addresses)
+                .into_iter()
+                .map(|(address, value)| StoreReadBoolEntry { address, value })
+                .collect())
+        }
+    }
+}
+
+/// Read discrete input values directly from the server's in-memory store.
+#[tauri::command]
+pub async fn store_read_discrete_inputs(
+    state: State<'_, AppState>,
+    addresses: Vec<u16>,
+) -> ApiResult<Vec<StoreReadBoolEntry>> {
+    let locked = state.listener_handle.lock().await;
+    match locked.as_ref() {
+        None => Ok(addresses.into_iter().map(|address| StoreReadBoolEntry { address, value: false }).collect()),
+        Some(handle) => {
+            let app = handle.app.lock().await;
+            Ok(app.get_discrete_input_values(&addresses)
+                .into_iter()
+                .map(|(address, value)| StoreReadBoolEntry { address, value })
+                .collect())
+        }
+    }
+}
+
+/// Read holding register values directly from the server's in-memory store.
+#[tauri::command]
+pub async fn store_read_holding_regs(
+    state: State<'_, AppState>,
+    addresses: Vec<u16>,
+) -> ApiResult<Vec<StoreReadU16Entry>> {
+    let locked = state.listener_handle.lock().await;
+    match locked.as_ref() {
+        None => Ok(addresses.into_iter().map(|address| StoreReadU16Entry { address, value: 0 }).collect()),
+        Some(handle) => {
+            let app = handle.app.lock().await;
+            Ok(app.get_holding_reg_values(&addresses)
+                .into_iter()
+                .map(|(address, value)| StoreReadU16Entry { address, value })
+                .collect())
+        }
+    }
 }
 
 #[tauri::command]

@@ -6,11 +6,14 @@
   import { clearRegisterDetails, registerDetailsState } from "../../../state/register-details.svelte";
   import {
     holdingRegisterState,
-    readHoldingRegister,
     writeHoldingRegister,
     setHoldingRegisterDesiredValue,
   } from "../../../state/holding-registers.svelte";
-  import { inputRegisterState, readInputRegister } from "../../../state/input-registers.svelte";
+  import {
+    inputRegisterState,
+    setInputRegisterDesiredValue,
+    writeInputRegister,
+  } from "../../../state/input-registers.svelte";
   import { formatAddressWithSettings } from "../../../state/settings.svelte";
 
   let { inline = false } = $props<{ inline?: boolean }>();
@@ -28,7 +31,6 @@
   );
 
   const selectedKind = $derived(registerDetailsState.kind);
-  const selectedAddress = $derived(registerDetailsState.address);
 
   const visible = $derived(
     navigationState.activeTab === "holding-registers" || navigationState.activeTab === "input-registers",
@@ -53,25 +55,20 @@
     return new Date(ms).toLocaleTimeString();
   }
 
-  function toggleDesiredBit(bitIndex: number): void {
+  async function toggleDesiredBit(bitIndex: number): Promise<void> {
     if (!selectedHolding) return;
     const bits = getBits(selectedHolding.desiredValue);
     bits[bitIndex] = !bits[bitIndex];
     setHoldingRegisterDesiredValue(selectedHolding.address, bitsToValue(bits));
+    await writeHoldingRegister(selectedHolding.address);
   }
 
-  async function handleRead(): Promise<void> {
-    if (selectedKind === "holding" && selectedAddress !== null) {
-      await readHoldingRegister(selectedAddress);
-    } else if (selectedKind === "input" && selectedAddress !== null) {
-      await readInputRegister(selectedAddress);
-    }
-  }
-
-  async function handleWrite(): Promise<void> {
-    if (selectedKind === "holding" && selectedAddress !== null) {
-      await writeHoldingRegister(selectedAddress);
-    }
+  async function toggleInputDesiredBit(bitIndex: number): Promise<void> {
+    if (!selectedInput) return;
+    const bits = getBits(selectedInput.desiredValue);
+    bits[bitIndex] = !bits[bitIndex];
+    setInputRegisterDesiredValue(selectedInput.address, bitsToValue(bits));
+    await writeInputRegister(selectedInput.address);
   }
 
   let desiredRaw = $state("0");
@@ -147,6 +144,72 @@
     }
   }
 
+  let inputDesiredRaw = $state("0");
+
+  $effect(() => {
+    const addr = selectedInput?.address;
+    const initVal = untrack(() => selectedInput?.desiredValue ?? 0);
+    inputDesiredRaw = String(initVal);
+    void addr;
+  });
+
+  $effect(() => {
+    if (!selectedInput) return;
+    const stateValue = selectedInput.desiredValue;
+    const inputNum = parseInt(inputDesiredRaw, 10);
+    if (!Number.isFinite(inputNum) || inputNum !== stateValue) {
+      inputDesiredRaw = String(stateValue);
+    }
+  });
+
+  function handleInputDesiredInput(e: Event): void {
+    const target = e.currentTarget as HTMLInputElement;
+    const raw = target.value;
+    inputDesiredRaw = raw;
+
+    if (raw.trim() === "") return;
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 0 && n <= 65535 && selectedInput) {
+      setInputRegisterDesiredValue(selectedInput.address, n);
+    }
+  }
+
+  function handleInputDesiredKeydown(e: KeyboardEvent): void {
+    if (!selectedInput) return;
+
+    if (e.key === "Enter") {
+      commitInputDesired();
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const current = parseInt(inputDesiredRaw, 10) || 0;
+      const next = Math.min(65535, current + 1);
+      inputDesiredRaw = String(next);
+      setInputRegisterDesiredValue(selectedInput.address, next);
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const current = parseInt(inputDesiredRaw, 10) || 0;
+      const next = Math.max(0, current - 1);
+      inputDesiredRaw = String(next);
+      setInputRegisterDesiredValue(selectedInput.address, next);
+    }
+  }
+
+  function commitInputDesired(): void {
+    if (!selectedInput) return;
+    const n = parseInt(inputDesiredRaw, 10);
+    if (Number.isFinite(n) && n >= 0 && n <= 65535) {
+      setInputRegisterDesiredValue(selectedInput.address, n);
+    } else {
+      inputDesiredRaw = String(selectedInput.desiredValue);
+    }
+  }
+
   $effect(() => {
     if (registerDetailsState.kind === "holding" && selectedHolding === null) clearRegisterDetails();
     if (registerDetailsState.kind === "input" && selectedInput === null) clearRegisterDetails();
@@ -176,34 +239,8 @@
     </header>
 
     <div class="rdp-body">
-      <!-- READ row -->
       <div class="reg-row">
-        <span class="row-label read-label">READ</span>
-        <div class="row-nums">
-          <span class="num-dec">{h.slaveValue}</span>
-          <span class="num-hex">0x{h.slaveValue.toString(16).toUpperCase().padStart(4, "0")}</span>
-        </div>
-        <div class="row-bits">
-          {#each [0, 1, 2, 3] as nibble}
-            <div class="nibble">
-              {#each [0, 1, 2, 3] as b}
-                {@const idx = nibble * 4 + b}
-                {@const on = getBits(h.slaveValue)[idx]}
-                <div class="bit-led read-led" class:on>
-                  <div class="led-dot"></div>
-                  <span class="bit-num">{15 - idx}</span>
-                </div>
-              {/each}
-            </div>
-          {/each}
-        </div>
-      </div>
-
-      <div class="row-divider"></div>
-
-      <!-- DESIRED row -->
-      <div class="reg-row">
-        <span class="row-label desired-label">DESIRED</span>
+        <span class="row-label value-label">VALUE</span>
         <div class="row-nums">
           <div class="num-input-wrapper">
             <input
@@ -257,7 +294,7 @@
                 {@const idx = nibble * 4 + b}
                 {@const on = getBits(h.desiredValue)[idx]}
                 <button
-                  class="bit-led desired-led clickable has-tip"
+                  class="bit-led value-led clickable has-tip"
                   class:on
                   type="button"
                   aria-label="Toggle bit {15 - idx}"
@@ -285,47 +322,95 @@
           <span class="mv">{formatTimestamp(h.lastWriteAt)}</span>
         </span>
       </div>
-      <div class="act-row">
-        <button class="act-btn read-btn" type="button" onclick={handleRead} disabled={h.pending}>
-          {h.pending ? "…" : "Read FC03"}
-        </button>
-        <button class="act-btn write-btn" type="button" onclick={handleWrite} disabled={h.pending}>
-          Write FC06
-        </button>
-      </div>
     </footer>
 
   {:else if selectedKind === "input" && selectedInput}
     {@const inp = selectedInput}
+    {@const statusOk = !inp.readError && !inp.writeError && inp.desiredValue === inp.value}
+    {@const statusUnsynced = !inp.readError && !inp.writeError && inp.desiredValue !== inp.value}
 
     <header class="rdp-head">
       <span class="type-badge ir-badge">IR</span>
       <span class="addr-text">{formatAddressWithSettings(inp.address)}</span>
       {#if inp.label}<span class="reg-label">{inp.label}</span>{/if}
       <div class="spacer"></div>
-      <span class="status-pill" class:ok={!inp.readError} class:err={!!inp.readError}>
-        {inp.readError ?? "OK"}
+      <span
+        class="status-pill"
+        class:ok={statusOk}
+        class:warn={statusUnsynced}
+        class:err={!!inp.readError || !!inp.writeError}
+      >
+        {inp.readError ?? inp.writeError ?? (statusUnsynced ? "Unsynced" : "OK")}
       </span>
       <button class="close-btn" type="button" onclick={clearRegisterDetails} aria-label="Clear selection">✕</button>
     </header>
 
-    <div class="rdp-body single-block">
-      <div class="reg-block">
-        <div class="block-header">
-          <span class="block-title">Value</span>
-          <span class="num-primary">{inp.value}</span>
-          <span class="num-hex">0x{inp.value.toString(16).toUpperCase().padStart(4, "0")}</span>
+    <div class="rdp-body">
+      <div class="reg-row">
+        <span class="row-label value-label">VALUE</span>
+        <div class="row-nums">
+          <div class="num-input-wrapper">
+            <input
+              class="num-input"
+              type="text"
+              inputmode="numeric"
+              placeholder="0"
+              value={inputDesiredRaw}
+              oninput={handleInputDesiredInput}
+              onblur={commitInputDesired}
+              onkeydown={handleInputDesiredKeydown}
+              spellcheck="false"
+            />
+            <div class="num-spinners">
+              <button
+                class="spinner-btn spinner-up has-tip"
+                type="button"
+                aria-label="Increment"
+                data-tip="Increment (↑)"
+                onclick={() => {
+                  if (selectedInput) {
+                    const current = parseInt(inputDesiredRaw, 10) || 0;
+                    const next = Math.min(65535, current + 1);
+                    inputDesiredRaw = String(next);
+                    setInputRegisterDesiredValue(selectedInput.address, next);
+                  }
+                }}
+              >▲</button>
+              <button
+                class="spinner-btn spinner-down has-tip"
+                type="button"
+                aria-label="Decrement"
+                data-tip="Decrement (↓)"
+                onclick={() => {
+                  if (selectedInput) {
+                    const current = parseInt(inputDesiredRaw, 10) || 0;
+                    const next = Math.max(0, current - 1);
+                    inputDesiredRaw = String(next);
+                    setInputRegisterDesiredValue(selectedInput.address, next);
+                  }
+                }}
+              >▼</button>
+            </div>
+          </div>
+          <span class="num-hex">0x{inp.desiredValue.toString(16).toUpperCase().padStart(4, "0")}</span>
         </div>
-        <div class="bit-strip read-strip" role="group" aria-label="Value bits">
+        <div class="row-bits" role="group" aria-label="Value bits">
           {#each [0, 1, 2, 3] as nibble}
             <div class="nibble">
               {#each [0, 1, 2, 3] as b}
                 {@const idx = nibble * 4 + b}
-                {@const on = getBits(inp.value)[idx]}
-                <div class="bit-led" class:on>
+                {@const on = getBits(inp.desiredValue)[idx]}
+                <button
+                  class="bit-led value-led clickable has-tip"
+                  class:on
+                  type="button"
+                  aria-label="Toggle bit {15 - idx}"
+                  data-tip="Toggle bit {15 - idx}"
+                  onclick={() => { void toggleInputDesiredBit(idx); }}
+                >
                   <div class="led-dot"></div>
                   <span class="bit-num">{15 - idx}</span>
-                </div>
+                </button>
               {/each}
             </div>
           {/each}
@@ -339,11 +424,10 @@
           <span class="mk">Last Read</span>
           <span class="mv">{formatTimestamp(inp.lastReadAt)}</span>
         </span>
-      </div>
-      <div class="act-row">
-        <button class="act-btn read-btn" type="button" onclick={handleRead} disabled={inp.pending}>
-          {inp.pending ? "…" : "Read FC04"}
-        </button>
+        <span class="meta-item">
+          <span class="mk">Last Write</span>
+          <span class="mv">{formatTimestamp(inp.lastWriteAt)}</span>
+        </span>
       </div>
     </footer>
 
@@ -450,7 +534,7 @@
     color: var(--c-text-1);
   }
 
-  /* ── Body: READ on top, DESIRED below ── */
+  /* ── Body ─────────────────────────────── */
   .rdp-body {
     display: flex;
     flex-direction: column;
@@ -475,9 +559,7 @@
     overflow: hidden;
   }
 
-  .row-divider { display: none; }
-
-  /* ── Label (fixed width so bits start at same X in both rows) ── */
+  /* ── Label (fixed width so bits start at same X) ── */
   .row-label {
     flex-shrink: 0;
     width: 58px;
@@ -491,16 +573,10 @@
     line-height: 1;
   }
 
-  .read-label {
-    background: color-mix(in srgb, var(--c-ok) 14%, transparent);
-    color: var(--c-ok);
-    border: 1px solid color-mix(in srgb, var(--c-ok) 30%, transparent);
-  }
-
-  .desired-label {
-    background: color-mix(in srgb, var(--c-warn) 14%, transparent);
-    color: var(--c-warn);
-    border: 1px solid color-mix(in srgb, var(--c-warn) 30%, transparent);
+  .value-label {
+    background: color-mix(in srgb, var(--c-accent) 14%, transparent);
+    color: var(--c-accent);
+    border: 1px solid color-mix(in srgb, var(--c-accent) 30%, transparent);
   }
 
   /* ── Value (fixed width so bits start at same X in both rows) ── */
@@ -510,14 +586,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .num-dec {
-    font-family: monospace;
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: var(--c-text-1);
-    flex-shrink: 0;
   }
 
   .num-hex {
@@ -572,13 +640,7 @@
     transition: background 80ms, box-shadow 80ms, transform 60ms, border-color 80ms;
   }
 
-  .read-led.on .led-dot {
-    background: var(--c-ok);
-    border-color: color-mix(in srgb, var(--c-ok) 60%, transparent);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--c-ok) 55%, transparent);
-  }
-
-  .desired-led.on .led-dot {
+  .value-led.on .led-dot {
     background: var(--c-warn);
     border-color: color-mix(in srgb, var(--c-warn) 60%, transparent);
     box-shadow: 0 0 6px color-mix(in srgb, var(--c-warn) 55%, transparent);
@@ -691,34 +753,6 @@
   }
   .mk { color: var(--c-text-2); }
   .mv { color: var(--c-text-1); font-family: monospace; }
-
-  .act-row { display: flex; gap: 5px; }
-
-  .act-btn {
-    height: 26px;
-    padding: 0 11px;
-    border-radius: 5px;
-    font: inherit;
-    font-size: 0.7rem;
-    font-weight: 600;
-    cursor: pointer;
-    border: 1px solid var(--c-border);
-    transition: background 80ms;
-  }
-
-  .read-btn { background: var(--c-surface-2); color: var(--c-text-1); }
-  .read-btn:hover:not(:disabled) { background: var(--c-surface-3); }
-
-  .write-btn {
-    background: color-mix(in srgb, var(--c-accent) 14%, transparent);
-    color: var(--c-accent);
-    border-color: color-mix(in srgb, var(--c-accent) 35%, transparent);
-  }
-  .write-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--c-accent) 24%, transparent);
-  }
-
-  .act-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* ── Empty states ─────────────────────────────────── */
   .rdp-empty {

@@ -7,6 +7,7 @@ export type TabId =
   | "file-records"
   | "fifo-queue"
   | "traffic"
+  | "diagnostics"
   | "custom-frame"
   | "settings";
 
@@ -38,6 +39,7 @@ export const tabDefs: TabDef[] = [
   { id: "file-records", label: "File Records", icon: "file-text", group: "main", feature: "FC 20/21 (Not Supported)" },
   { id: "fifo-queue", label: "FIFO Queue", icon: "layers", group: "main", feature: "FC 24 (Not Supported)" },
   { id: "traffic", label: "Traffic", icon: "stethoscope", group: "main", feature: "Request/error analytics" },
+  { id: "diagnostics", label: "Diagnostics", icon: "activity", group: "main", feature: "FC07/08/11/12/17/43 tools" },
   { id: "custom-frame", label: "Custom Frame", icon: "file-text", group: "main", feature: "Raw PDU builder" },
   { id: "settings", label: "Settings", icon: "settings", group: "settings", feature: "Server defaults & preferences" },
 ];

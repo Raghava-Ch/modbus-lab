@@ -3,7 +3,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
-import { connectionState } from "./connection.svelte";
 import {
   getGlobalPollingMaxAddressCount,
   getSettingsSnapshot,
@@ -47,10 +46,9 @@ export interface CoilEntry {
   origin: CoilOrigin;
 }
 
-interface BackendReadCoilsResponse {
-  coils: Array<{ address: number; value: boolean }>;
-  startAddress: number;
-  quantity: number;
+interface StoreReadBoolEntry {
+  address: number;
+  value: boolean;
 }
 
 interface BackendWriteCoilResponse {
@@ -84,24 +82,6 @@ function parseInvokeError(err: unknown): string {
     return String(maybe.message);
   }
   return "Unknown error";
-}
-
-function isTransientTransportError(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("too many requests")
-    || lower.includes("expected responses buffer is full")
-    || lower.includes("timeout")
-    || lower.includes("timed out")
-    || lower.includes("not connected")
-    || lower.includes("reconnecting")
-    || lower.includes("broken pipe")
-    || lower.includes("connection reset")
-    || lower.includes("transport")
-    || lower.includes("send failed")
-    || lower.includes("io error")
-    || lower.includes("connection closed")
-  );
 }
 
 function warnLocal(message: string): void {
@@ -154,10 +134,6 @@ function formatSectionPreview(sections: AddressSection[], max = 4): string {
   return sections.length > max ? `${preview},...` : preview;
 }
 
-function estimateReadOps(sections: AddressSection[], chunkMax: number): number {
-  return sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
-}
-
 function generateCoils(startAddress: number, count: number): CoilEntry[] {
   return Array.from({ length: count }, (_, i) => ({
     address: startAddress + i,
@@ -200,8 +176,6 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 export const coilRules = $state<Record<number, CoilRule>>({});
 const ruleTimers = new Map<number, ReturnType<typeof setInterval>>();
 let readAllInFlight = false;
-let readAllQueuedRuns = 0;
-const READ_ALL_QUEUE_DEPTH_MAX = 6;
 let autoToggleWriteInFlight = false;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -261,13 +235,18 @@ export function toggleCoilValue(address: number): void {
   if (!entry) return;
   entry.desiredValue = !entry.desiredValue;
   entry.writeError = null;
+  addLog("info", `CO.store.set ok addr=${address} val=${entry.desiredValue ? 1 : 0}`);
 }
 
 export function setCoilValue(address: number, value: boolean): void {
   const entry = coilState.entries.find((e) => e.address === address);
   if (!entry) return;
+  const changed = entry.desiredValue !== value;
   entry.desiredValue = value;
   entry.writeError = null;
+  if (changed) {
+    addLog("info", `CO.store.set ok addr=${address} val=${value ? 1 : 0}`);
+  }
 }
 
 export function syncAllSlaveToDesired(): number {
@@ -298,7 +277,6 @@ export async function writeCoil(address: number): Promise<void> {
       e.pending = false;
       e.writeError = null;
     }
-    addLog("info", `fc05.write ok addr=${address} val=${response.value ? 1 : 0}`);
   } catch (err) {
     const e = coilState.entries.find((e2) => e2.address === address);
     const message = parseInvokeError(err);
@@ -306,7 +284,6 @@ export async function writeCoil(address: number): Promise<void> {
       e.pending = false;
       e.writeError = message;
     }
-    addLog("error", `fc05.write err addr=${address} msg=${message}`);
   }
 }
 
@@ -323,20 +300,17 @@ export async function readCoil(address: number): Promise<void> {
   if (!entry) return;
   entry.pending = true;
   try {
-    const response = await invoke<BackendReadCoilsResponse>("read_coils", {
-      request: { startAddress: address, quantity: 1 },
-    });
-    const coilVal = response.coils.find((c) => c.address === address);
+    const results = await invoke<StoreReadBoolEntry[]>("store_read_coils", { addresses: [address] });
     const e = coilState.entries.find((e2) => e2.address === address);
-    if (e && coilVal !== undefined) {
-      e.slaveValue = coilVal.value;
-      // Successful read confirms availability; clear stale read/write error chip.
-      e.writeError = null;
-      e.pending = false;
-    } else if (e) {
+    if (e) {
+      const found = results.find((r) => r.address === address);
+      if (found !== undefined) {
+        e.slaveValue = found.value;
+        e.writeError = null;
+      }
       e.pending = false;
     }
-    addLog("info", `fc01.read ok addr=${address} val=${coilVal?.value ? 1 : 0}`);
+    addLog("info", `store.read ok addr=${address} val=${results[0]?.value ? 1 : 0}`);
   } catch (err) {
     const e = coilState.entries.find((e2) => e2.address === address);
     const reason = parseInvokeError(err);
@@ -344,7 +318,7 @@ export async function readCoil(address: number): Promise<void> {
       e.pending = false;
       e.writeError = reason;
     }
-    addLog("error", `fc01.read err addr=${address} msg=${reason}`);
+    addLog("error", `store.read err addr=${address} msg=${reason}`);
   }
 }
 
@@ -462,7 +436,9 @@ async function writeAddressMap(
         e.writeError = message;
       }
     }
-    addLog("error", `${sourceTag} fc15.write err req=${valueMap.size} msg=${message}`);
+    if (/no listener is running/i.test(message)) {
+      addLog("info", `${sourceTag} fc15.write pending req=${valueMap.size}`);
+    }
     return null;
   }
 }
@@ -504,10 +480,6 @@ export function startAutoToggle(): void {
   })();
 
   autoToggleTimer = setInterval(() => {
-    if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") {
-      // Server is down — skip this tick; supervisor will restore the session.
-      return;
-    }
     if (autoToggleWriteInFlight) {
       return;
     }
@@ -714,129 +686,29 @@ export function clearAllRules(): void {
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
-async function readAllCoilsOnce(trace: boolean): Promise<void> {
-  if (coilState.entries.length === 0) return;
-
-  const sections = buildAddressSections(coilState.entries.map((e) => e.address));
-  if (trace) {
-    addLog(
-      "info",
-      `fc01.read plan total=${coilState.entries.length} sections=${sections.length} ops=${estimateReadOps(sections, COIL_MAX_COUNT)} sample=${formatSectionPreview(sections)}`,
-    );
-  }
-
-  const entryByAddress = new Map<number, CoilEntry>(coilState.entries.map((entry) => [entry.address, entry]));
-
-  let okCount = 0;
-
-  for (const section of sections) {
-    try {
-      if (section.quantity === 1) {
-        const response = await invoke<BackendReadCoilsResponse>("read_coils", {
-          request: { startAddress: section.start, quantity: 1 },
-        });
-        const single = response.coils.find((coilVal) => coilVal.address === section.start);
-        const entry = entryByAddress.get(section.start);
-        if (entry) {
-          if (single) {
-            entry.slaveValue = single.value;
-            entry.writeError = null;
-            okCount += 1;
-          } else {
-            entry.writeError = "Address not available";
-          }
-        }
-        continue;
+export async function readAllCoils(): Promise<void> {
+  if (readAllInFlight) return;
+  readAllInFlight = true;
+  try {
+    if (coilState.entries.length === 0) return;
+    const addresses = coilState.entries.map((e) => e.address);
+    const results = await invoke<StoreReadBoolEntry[]>("store_read_coils", { addresses });
+    const resultMap = new Map(results.map((r) => [r.address, r.value]));
+    let okCount = 0;
+    for (const entry of coilState.entries) {
+      if (resultMap.has(entry.address)) {
+        entry.slaveValue = resultMap.get(entry.address) ?? entry.slaveValue;
+        entry.writeError = null;
+        okCount += 1;
       }
-
-      for (let chunkStart = section.start; chunkStart < section.start + section.quantity; chunkStart += COIL_MAX_COUNT) {
-        const chunkQty = Math.min(COIL_MAX_COUNT, section.start + section.quantity - chunkStart);
-        const response = await invoke<BackendReadCoilsResponse>("read_coils", {
-          request: { startAddress: chunkStart, quantity: chunkQty },
-        });
-
-        for (const coilVal of response.coils) {
-          const entry = entryByAddress.get(coilVal.address);
-          if (!entry) continue;
-          entry.slaveValue = coilVal.value;
-          entry.writeError = null;
-          okCount += 1;
-        }
-
-        const chunkEnd = chunkStart + chunkQty - 1;
-        const seen = new Set(response.coils.map((coilVal) => coilVal.address));
-        for (let address = chunkStart; address <= chunkEnd; address += 1) {
-          const entry = entryByAddress.get(address);
-          if (!entry) continue;
-          if (!seen.has(address)) {
-            entry.writeError = "Address not available";
-          }
-        }
-      }
-    } catch (err) {
-      const reason = parseInvokeError(err);
-      if (isTransientTransportError(reason)) {
-        addLog(
-          "warn",
-          `fc01.read transient start=${section.start} qty=${section.quantity} msg=${reason}`,
-        );
-        continue;
-      }
-
-      const sectionEnd = section.start + section.quantity - 1;
-      for (let address = section.start; address <= sectionEnd; address += 1) {
-        const entry = entryByAddress.get(address);
-        if (!entry) continue;
-        entry.writeError = "Address not available";
-      }
-      addLog(
-        "error",
-        `fc01.read err start=${section.start} qty=${section.quantity} end=${sectionEnd} msg=${reason}`,
-      );
     }
-  }
-
-  if (okCount > 0) {
-    addLog("info", `fc01.read ok total=${coilState.entries.length} ok=${okCount} sections=${sections.length}`);
+    addLog("info", `store.read ok total=${coilState.entries.length} ok=${okCount}`);
+  } catch (err) {
+    addLog("error", `store.read err msg=${parseInvokeError(err)}`);
+  } finally {
+    readAllInFlight = false;
   }
 }
-
-export async function readAllCoils(options?: { trace?: boolean; queueIfBusy?: boolean }): Promise<void> {
-  // Do not issue reads while the transport layer is recovering — avoids
-  // flooding the queue with requests that will all fail.
-  if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") return;
-  const trace = options?.trace ?? true;
-  const queueIfBusy = options?.queueIfBusy ?? true;
-
-  if (readAllInFlight) {
-    if (queueIfBusy && readAllQueuedRuns < READ_ALL_QUEUE_DEPTH_MAX) {
-      readAllQueuedRuns += 1;
-    }
-    return;
-  }
-
-  while (true) {
-    readAllInFlight = true;
-    try {
-      await readAllCoilsOnce(trace);
-    } finally {
-      readAllInFlight = false;
-    }
-
-    if (readAllQueuedRuns === 0) {
-      break;
-    }
-
-    readAllQueuedRuns -= 1;
-    // Clear any pending queue runs if connectivity was lost during the run.
-    const backendStatus = connectionState.backendStatus.toLowerCase();
-    if (backendStatus === "reconnecting" || backendStatus === "disconnected" || backendStatus === "idle" || backendStatus === "error") {
-      readAllQueuedRuns = 0;
-      break;
-    }
-  }
-}
-
 export function setPollActive(active: boolean): void {
   if (active && !isPollingAllowedForCount(coilState.entries.length)) {
     warnLocal(
@@ -852,8 +724,8 @@ export function setPollActive(active: boolean): void {
     pollTimer = null;
   }
   if (active) {
-    void readAllCoils({ trace: false, queueIfBusy: true });
-    pollTimer = setInterval(() => { void readAllCoils({ trace: false, queueIfBusy: true }); }, coilState.pollInterval);
+    void readAllCoils();
+    pollTimer = setInterval(() => { void readAllCoils(); }, coilState.pollInterval);
   }
 }
 

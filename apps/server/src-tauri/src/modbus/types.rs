@@ -2,6 +2,24 @@ use serde::{Deserialize, Serialize};
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
+// ── Store-read response types ─────────────────────────────────────────────────
+
+/// A single coil or discrete input value read directly from the server store.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreReadBoolEntry {
+    pub address: u16,
+    pub value: bool,
+}
+
+/// A single holding or input register value read directly from the server store.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreReadU16Entry {
+    pub address: u16,
+    pub value: u16,
+}
+
 pub const DEFAULT_TCP_CONNECTION_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RESPONSE_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_TCP_RETRY_ATTEMPTS: u8 = 2;

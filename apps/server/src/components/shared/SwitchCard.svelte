@@ -22,7 +22,6 @@
     pending,
     readValue,
     toggleValue,
-    connected,
     cardDirty = false,
     editingAddress,
     editLabelVal,
@@ -47,7 +46,6 @@
     pending: boolean;
     readValue: boolean;
     toggleValue: boolean;
-    connected: boolean;
     cardDirty?: boolean;
     editingAddress: number | null;
     editLabelVal: string;
@@ -68,7 +66,7 @@
     deleteButtonTitle?: string;
   }>();
 
-  const effectiveReadTitle = $derived(readButtonTitle ?? (connected ? "Read from device" : "Connect to device first"));
+  const effectiveReadTitle = $derived(readButtonTitle ?? "Read from store");
 
   const hasRuleControls = $derived(rule !== undefined && onRuleChange !== undefined);
 
@@ -197,7 +195,6 @@
     <button
       class="read-mini has-tip"
       type="button"
-      disabled={!connected}
       onclick={() => onRead(address)}
       data-tip={effectiveReadTitle}
     >
@@ -210,9 +207,8 @@
       <button
         class="write-mini has-tip"
         type="button"
-        disabled={!connected}
         onclick={() => onWrite?.(address)}
-        data-tip={connected ? "Write value" : "Connect to device first"}
+        data-tip="Write value"
       >
         <Check size={11} />
         Write

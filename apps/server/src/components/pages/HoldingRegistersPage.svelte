@@ -5,49 +5,41 @@
   import {
     Table2,
     LayoutGrid,
-    RefreshCw,
-    Play,
     SlidersHorizontal,
     ChevronDown,
     ChevronUp,
     LoaderCircle,
-    Timer,
-    X,
   } from "lucide-svelte";
   import {
     addHoldingRegisterRange,
     addExclusiveHoldingRegister,
+    clearAllHoldingRegisterRules,
     generateRandomExclusiveHoldingRegisterAddress,
     getFilteredHoldingRegisters,
+    type HoldingRegRule,
     type HoldingRegisterAddressFilter,
     holdingRegisterState,
     initHoldingRegisterState,
-    readAllHoldingRegisters,
-    readHoldingRegister,
     removeAllHoldingRegisters,
     removeHoldingRegister,
-    setAllHoldingRegisterDesiredFromRead,
     setHoldingRegisterAddressFilter,
     setHoldingRegisterAddressList,
     setHoldingRegisterAddressRange,
     setHoldingRegisterDesiredValue,
     setHoldingRegisterFilter,
     setHoldingRegisterLabel,
-    setHoldingRegisterPollActive,
-    setHoldingRegisterPollInterval,
+    setHoldingRegisterRule,
     setHoldingRegisterView,
+    stopHoldingRegisterUiSync,
     writeHoldingRegister,
-    writePendingHoldingRegisters,
   } from "../../state/holding-registers.svelte";
   import { connectionState } from "../../state/connection.svelte";
-  import { estimateFrameMs } from "../../lib/frame-timing";
   import {
     formatAddressWithSettings,
     formatWordValueWithSettings,
-    getGlobalPollingMaxAddressCount,
   } from "../../state/settings.svelte";
-  import { notifyWarning } from "../../state/notifications.svelte";
   import { registerDetailsState, selectRegisterDetails } from "../../state/register-details.svelte";
+  import { containViewportScroll } from "../../lib/scroll-lock";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
   import RegisterTableRow from "../shared/RegisterTableRow.svelte";
@@ -56,79 +48,17 @@
   $effect(() => {
     untrack(() => initHoldingRegisterState());
     return () => {
-      setHoldingRegisterPollActive(false);
+      stopHoldingRegisterUiSync();
     };
   });
-
-  $effect(() => {
-    if (connectionState.status !== "connected" && holdingRegisterState.pollActive) {
-      setHoldingRegisterPollActive(false);
-    }
-  });
-
-  const connected = $derived(connectionState.status === "connected");
 
   let readPanelOpen = $state(false);
   let rangeStart = $state(holdingRegisterState.startAddress);
   let rangeCount = $state(holdingRegisterState.registerCount);
   let rangeApplyPending = $state(false);
   const RANGE_APPLY_MIN_SPINNER_MS = 250;
-  const HOLDING_READ_CHUNK_MAX = 125;
-  const HOLDING_WRITE_CHUNK_MAX = 120;
-
-  interface AddressSection {
-    start: number;
-    quantity: number;
-  }
-
-  function buildAddressSections(addresses: number[]): AddressSection[] {
-    if (addresses.length === 0) return [];
-
-    const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
-    const sections: AddressSection[] = [];
-    let sectionStart = uniqueSorted[0];
-    let prev = uniqueSorted[0];
-
-    for (let i = 1; i < uniqueSorted.length; i += 1) {
-      const current = uniqueSorted[i];
-      if (current === prev + 1) {
-        prev = current;
-        continue;
-      }
-
-      sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
-      sectionStart = current;
-      prev = current;
-    }
-
-    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
-    return sections;
-  }
-
-  function buildRequestPlan(
-    addresses: number[],
-    chunkMax: number,
-    responsePayloadBytes: number,
-  ): { frames: number; cycleMs: number } {
-    const sections = buildAddressSections(addresses);
-    const frames = sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
-    const { protocol, serial, tcp } = connectionState;
-    const frameMs = estimateFrameMs(
-      responsePayloadBytes,
-      protocol,
-      serial.baudRate,
-      serial.dataBits,
-      serial.parity,
-      serial.stopBits,
-      tcp.responseTimeoutMs,
-    );
-    return { frames, cycleMs: frames * frameMs };
-  }
 
   const filtered = $derived(getFilteredHoldingRegisters());
-  const readPlan = $derived(
-    buildRequestPlan(holdingRegisterState.entries.map((entry) => entry.address), HOLDING_READ_CHUNK_MAX, 250),
-  );
   const LARGE_DATASET_THRESHOLD = 5000;
   const VIRTUAL_ROW_HEIGHT = 34;
   const VIRTUAL_OVERSCAN = 10;
@@ -271,26 +201,10 @@
   );
   const nonZeroCount = $derived(holdingRegisterState.entries.filter((e) => e.slaveValue !== 0).length);
   const zeroCount = $derived(holdingRegisterState.entries.filter((e) => e.slaveValue === 0).length);
-  const pendingWriteCount = $derived(
-    holdingRegisterState.entries.filter((e) => e.desiredValue !== e.slaveValue).length,
-  );
-  const writePlan = $derived(
-    buildRequestPlan(
-      holdingRegisterState.entries
-        .filter((entry) => entry.desiredValue !== entry.slaveValue)
-        .map((entry) => entry.address),
-      HOLDING_WRITE_CHUNK_MAX,
-      4,
-    ),
-  );
   const anyAddressFilterActive = $derived(holdingRegisterState.addressFilter !== "all");
   const anyFilterActive = $derived(
     holdingRegisterState.filter !== "all" || holdingRegisterState.addressFilter !== "all",
   );
-  const failedWriteCount = $derived(
-    holdingRegisterState.entries.filter((e) => e.desiredValue !== e.slaveValue && e.writeError !== null).length,
-  );
-
   let editingAddress: number | null = $state(null);
   let editLabelVal = $state("");
   let addAddressInput = $state("");
@@ -298,32 +212,6 @@
   let addressRangeStart = $state(holdingRegisterState.addressRangeStart);
   let addressRangeEnd = $state(holdingRegisterState.addressRangeEnd);
   let addressListInput = $state(holdingRegisterState.addressList.join(","));
-
-  const pollIntervals: { ms: number; label: string }[] = [
-    { ms: 500, label: "500 ms" },
-    { ms: 1000, label: "1 s" },
-    { ms: 2000, label: "2 s" },
-    { ms: 5000, label: "5 s" },
-  ];
-
-  const practicalMinPollIntervalMs = $derived(
-    holdingRegisterState.entries.length >= 5000
-      ? 5000
-      : holdingRegisterState.entries.length >= 2000
-        ? 2000
-        : holdingRegisterState.entries.length >= 512
-          ? 1000
-          : 500,
-  );
-
-  const practicalMinPollLabel = $derived(
-    practicalMinPollIntervalMs >= 1000
-      ? `${practicalMinPollIntervalMs / 1000} s`
-      : `${practicalMinPollIntervalMs} ms`,
-  );
-
-  const pollMaxCount = $derived(getGlobalPollingMaxAddressCount());
-  const pollDisabledByCount = $derived(holdingRegisterState.entries.length > pollMaxCount);
 
   function beginEdit(address: number, current: string): void {
     editingAddress = address;
@@ -344,16 +232,6 @@
   function onLabelKeydown(e: KeyboardEvent): void {
     if (e.key === "Enter") commitEdit();
     else if (e.key === "Escape") cancelEdit();
-  }
-
-  function handleManualReadAllHoldingRegisters(): void {
-    if (holdingRegisterState.pollActive) {
-      notifyWarning("Polling is already in progress. Stop polling to use manual refresh.");
-      return;
-    }
-
-    // Keep table/card visuals stable during manual refresh.
-    void readAllHoldingRegisters({ markPending: false });
   }
 
   async function handleApplyRange(): Promise<void> {
@@ -388,28 +266,7 @@
   }
 
   function handleScrollChain(e: WheelEvent): void {
-    const target = e.currentTarget as HTMLElement;
-    const delta = e.deltaY;
-    if (delta === 0) return;
-
-    const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1;
-    const atTop = target.scrollTop <= 1;
-
-    // If at boundary and trying to scroll past it, scroll parent instead
-    if ((delta > 0 && atBottom) || (delta < 0 && atTop)) {
-      const parent = document.querySelector(".main-content") as HTMLElement | null;
-      if (parent) {
-        const canScrollDown = parent.scrollTop + parent.clientHeight < parent.scrollHeight - 1;
-        const canScrollUp = parent.scrollTop > 1;
-        const shouldDelegate = (delta > 0 && canScrollDown) || (delta < 0 && canScrollUp);
-
-        if (!shouldDelegate) return;
-
-        const delegatedDelta = Math.sign(delta) * Math.min(48, Math.abs(delta) * 0.3);
-        parent.scrollBy({ top: delegatedDelta, left: 0, behavior: "auto" });
-        e.preventDefault();
-      }
-    }
+    containViewportScroll(e);
   }
 
   function addrFmt(n: number): string {
@@ -485,57 +342,6 @@
     subtitle="Server-hosted holding registers (FC 03/06/16) — clients read and write these values"
   >
     {#snippet actions()}
-      <div class="poll-controls">
-        <select
-          class="ctrl-select has-tip"
-          value={holdingRegisterState.pollInterval}
-          onchange={(e) => setHoldingRegisterPollInterval(Math.max(Number(e.currentTarget.value), practicalMinPollIntervalMs))}
-          data-tip="Poll interval"
-          disabled={pollDisabledByCount}
-        >
-          {#each pollIntervals as pi}
-            <option value={pi.ms} disabled={pi.ms < practicalMinPollIntervalMs}>{pi.label}</option>
-          {/each}
-        </select>
-        <button
-          class="ctrl-btn poll-btn has-tip"
-          class:active={holdingRegisterState.pollActive}
-          data-tip={pollDisabledByCount ? "Polling disabled when list has more than 125 registers" : holdingRegisterState.pollActive ? "Stop polling" : "Start polling"}
-          type="button"
-          disabled={!connected || pollDisabledByCount}
-          onclick={() => setHoldingRegisterPollActive(!holdingRegisterState.pollActive)}
-        >
-          {#if holdingRegisterState.pollActive}
-            <Timer size={14} />
-            <span>Polling</span>
-          {:else}
-            <Play size={14} />
-            <span>Poll</span>
-          {/if}
-        </button>
-        <button class="ctrl-btn icon-only has-tip" data-tip="Read once" type="button" disabled={!connected}
-          onclick={handleManualReadAllHoldingRegisters}>
-          <RefreshCw size={14} />
-        </button>
-        {#if practicalMinPollIntervalMs > 500}
-          <span class="pending-chip has-tip" data-tip="Auto-limited for practical polling at current dataset size">
-            Min poll: {practicalMinPollLabel}
-          </span>
-        {/if}
-        {#if pollDisabledByCount}
-          <span class="pending-chip has-tip" data-tip={`Polling is limited to at most ${pollMaxCount} holding registers`}>
-            Poll disabled: list &gt; {pollMaxCount}
-          </span>
-        {/if}
-        {#if holdingRegisterState.entries.length > 0}
-          <span class="plan-chip has-tip" data-tip="Estimated FC03 frames and cycle time per read-all run">
-            Read {readPlan.frames}f ~{readPlan.cycleMs}ms
-          </span>
-        {/if}
-      </div>
-
-      <div class="divider-v"></div>
-
       <div class="view-toggle">
         <button
           class="ctrl-btn icon-only"
@@ -604,31 +410,6 @@
           Large set: {filtered.length}
         </span>
       {/if}
-      {#if pendingWriteCount > 0}
-        <span class="pending-chip" title="Estimated FC16 frames and cycle time for pending writes">
-          Write plan: {writePlan.frames}f ~{writePlan.cycleMs}ms
-        </span>
-        <button
-          class="pending-chip pending-chip-action"
-          type="button"
-          disabled={!connected}
-          onclick={() => { void writePendingHoldingRegisters(); }}
-          title={connected ? "Write all pending registers" : "Connect to device first"}
-        >
-          Pending write: {pendingWriteCount}
-          {#if failedWriteCount > 0}
-            <span class="pending-chip-failed">Failed: {failedWriteCount}</span>
-          {/if}
-        </button>
-      {/if}
-      <button
-        class="ctrl-btn"
-        type="button"
-        onclick={() => { setAllHoldingRegisterDesiredFromRead(); }}
-        title="Copy all current read values into desired values"
-      >
-        <span>Read → Desired</span>
-      </button>
 
       <button
         class="ctrl-btn"
@@ -802,11 +583,9 @@
         <div class="register-table">
           <div class="rt-header">
             <span>Label</span>
-            <span>Status</span>
             <span>Addr</span>
-            <span>Read</span>
             <span>Desired</span>
-            <span>Operation</span>
+            <span>Rule</span>
             <span>Delete</span>
           </div>
           <div
@@ -845,7 +624,6 @@
               >
                 <RegisterTableRow
                   {entry}
-                  {connected}
                   {editingAddress}
                   {editLabelVal}
                   {addrFmt}
@@ -856,8 +634,8 @@
                   {onLabelKeydown}
                   onEditLabelValChange={(next: string) => { editLabelVal = next; }}
                   onDesiredChange={(address: number, value: number) => setHoldingRegisterDesiredValue(address, value)}
-                  onRead={(address: number) => { void readHoldingRegister(address); }}
                   onWrite={(address: number) => { void writeHoldingRegister(address); }}
+                  onRuleChange={(address: number, rule: HoldingRegRule) => setHoldingRegisterRule(address, rule)}
                   onDelete={(address: number) => removeHoldingRegister(address)}
                 />
               </div>
@@ -908,11 +686,9 @@
                   address={entry.address}
                   label={entry.label}
                   pending={entry.pending}
-                  slaveValue={entry.slaveValue}
-                  {valueFmt}
                   desiredValue={entry.desiredValue}
-                  {connected}
                   cardDirty={entry.desiredValue !== entry.slaveValue || entry.readError !== null || entry.writeError !== null}
+                  rule={entry.rule}
                   {editingAddress}
                   {editLabelVal}
                   {addrFmt}
@@ -922,8 +698,8 @@
                   {onLabelKeydown}
                   onEditLabelValChange={(next: string) => { editLabelVal = next; }}
                   onDesiredChange={(address: number, value: number) => setHoldingRegisterDesiredValue(address, value)}
-                  onRead={(address: number) => { void readHoldingRegister(address); }}
                   onWrite={(address: number) => { void writeHoldingRegister(address); }}
+                  onRuleChange={(address: number, rule: HoldingRegRule) => setHoldingRegisterRule(address, rule)}
                   onDelete={(address: number) => removeHoldingRegister(address)}
                 />
               </div>
@@ -943,19 +719,7 @@
 <style>
   /* ── Page-unique: table column layout ───────────────────────────────────── */
   .rt-header {
-    grid-template-columns: minmax(140px, 1fr) 92px 64px 88px 110px 182px 52px;
+    grid-template-columns: minmax(140px, 1fr) 64px 110px 160px 52px;
   }
 
-  /* ── Page-unique: failed write badge ────────────────────────────────────── */
-  .pending-chip-failed {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--c-danger) 16%, var(--c-surface-3));
-    color: var(--c-danger);
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-  }
 </style>

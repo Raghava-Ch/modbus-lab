@@ -1,4 +1,4 @@
-// Input Registers state — FC 04 (Read) · Read-only
+// Input Registers state — FC 04 (Read) + Store-backed value updates
 
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
@@ -13,6 +13,14 @@ import {
 export type InputRegisterView = "table" | "cards";
 export type InputRegisterFilter = "all" | "non-zero" | "zero";
 export type InputRegisterOrigin = "range" | "custom";
+export type InputRegRule = {
+  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle";
+  intervalMs: number;
+  minValue: number;
+  maxValue: number;
+  step: number;
+  periodMs: number;
+};
 export type InputRegisterAddressFilter =
   | "all"
   | "required-range"
@@ -23,11 +31,15 @@ export type InputRegisterAddressFilter =
 export interface InputRegisterEntry {
   address: number;
   value: number;
+  desiredValue: number;
   pending: boolean;
   readError: string | null;
+  writeError: string | null;
   lastReadAt: number | null;
+  lastWriteAt: number | null;
   label: string;
   origin: InputRegisterOrigin;
+  rule: InputRegRule;
 }
 
 interface BackendReadInputRegistersResponse {
@@ -84,6 +96,37 @@ function isTransientTransportError(message: string): boolean {
 function warnLocal(message: string): void {
   addLog("warn", message);
   notifyWarning(message);
+}
+
+function defaultInputRegRule(): InputRegRule {
+  return {
+    type: "none",
+    intervalMs: 1000,
+    minValue: 0,
+    maxValue: 100,
+    step: 1,
+    periodMs: 4000,
+  };
+}
+
+function normalizeU16(value: number, fallback = 0): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(65535, Math.floor(value)));
+}
+
+function normalizeRule(rule: InputRegRule): InputRegRule {
+  const minValue = normalizeU16(rule.minValue, 0);
+  const maxValue = normalizeU16(rule.maxValue, 100);
+  const lo = Math.min(minValue, maxValue);
+  const hi = Math.max(minValue, maxValue);
+  return {
+    type: rule.type,
+    intervalMs: Math.max(100, Math.floor(rule.intervalMs)),
+    minValue: lo,
+    maxValue: hi,
+    step: Math.max(1, normalizeU16(rule.step, 1)),
+    periodMs: Math.max(200, Math.floor(rule.periodMs)),
+  };
 }
 
 function buildAddressSections(addresses: number[]): AddressSection[] {
@@ -170,11 +213,15 @@ function generateRegisters(startAddress: number, count: number): InputRegisterEn
   return Array.from({ length: count }, (_, i) => ({
     address: startAddress + i,
     value: 0,
+    desiredValue: 0,
     pending: false,
     readError: null,
+    writeError: null,
     lastReadAt: null,
+    lastWriteAt: null,
     label: "",
     origin: "range" as InputRegisterOrigin,
+    rule: defaultInputRegRule(),
   }));
 }
 
@@ -250,6 +297,45 @@ export function setInputRegisterLabel(address: number, label: string): void {
   entry.label = label;
 }
 
+async function writeInputRegisterValue(address: number, value: number): Promise<void> {
+  const entry = inputRegisterState.entries.find((e) => e.address === address);
+  if (!entry || entry.pending) return;
+
+  const normalized = normalizeU16(value, entry.desiredValue);
+  entry.pending = true;
+  entry.writeError = null;
+  try {
+    await invoke("store_set_input_reg", { address, value: normalized });
+    entry.value = normalized;
+    entry.desiredValue = normalized;
+    entry.pending = false;
+    entry.writeError = null;
+    entry.lastWriteAt = Date.now();
+  } catch (err) {
+    entry.pending = false;
+    const message = parseInvokeError(err);
+    entry.writeError = message;
+  }
+}
+
+export function setInputRegisterDesiredValue(address: number, value: number): void {
+  const entry = inputRegisterState.entries.find((e) => e.address === address);
+  if (!entry) return;
+  const previous = entry.desiredValue;
+  const normalized = normalizeU16(value, entry.desiredValue);
+  entry.desiredValue = normalized;
+  entry.writeError = null;
+  if (previous !== normalized) {
+    addLog("info", `IR.store.set ok addr=${address} val=${normalized}`);
+  }
+}
+
+export async function writeInputRegister(address: number): Promise<void> {
+  const entry = inputRegisterState.entries.find((e) => e.address === address);
+  if (!entry) return;
+  await writeInputRegisterValue(address, entry.desiredValue);
+}
+
 export async function readInputRegister(address: number): Promise<void> {
   const entry = inputRegisterState.entries.find((e) => e.address === address);
   if (!entry) return;
@@ -262,6 +348,7 @@ export async function readInputRegister(address: number): Promise<void> {
     const reg = response.registers.find((r) => r.address === address);
     if (reg) {
       entry.value = reg.value;
+      entry.desiredValue = reg.value;
       entry.readError = null;
       entry.lastReadAt = Date.now();
     }
@@ -343,6 +430,7 @@ export async function readAllInputRegisters(options?: { markPending?: boolean; q
           if (entry) {
             if (single) {
               entry.value = single.value;
+              entry.desiredValue = single.value;
               entry.readError = null;
               entry.lastReadAt = Date.now();
               okCount += 1;
@@ -389,6 +477,7 @@ export async function readAllInputRegisters(options?: { markPending?: boolean; q
             if (!entry) continue;
             if (valueMap.has(address)) {
               entry.value = valueMap.get(address) ?? entry.value;
+              entry.desiredValue = entry.value;
               entry.readError = null;
               entry.lastReadAt = Date.now();
               okCount += 1;
@@ -500,11 +589,15 @@ export function applyInputRegisterRange(startAddress: number, count: number): vo
     const prev = existing.get(entry.address);
     if (prev) {
       entry.value = prev.value;
+      entry.desiredValue = prev.desiredValue;
       entry.pending = false;
       entry.readError = prev.readError;
+      entry.writeError = prev.writeError;
       entry.lastReadAt = prev.lastReadAt;
+      entry.lastWriteAt = prev.lastWriteAt;
       entry.label = prev.label;
       entry.origin = prev.origin;
+      entry.rule = prev.rule;
     }
   }
 
@@ -597,11 +690,15 @@ export function addExclusiveInputRegister(address: number): boolean {
   const customEntry: InputRegisterEntry = {
     address: normalized,
     value: 0,
+    desiredValue: 0,
     pending: false,
     readError: null,
+    writeError: null,
     lastReadAt: null,
+    lastWriteAt: null,
     label: "",
     origin: "custom",
+    rule: defaultInputRegRule(),
   };
 
   inputRegisterState.entries = [...inputRegisterState.entries, customEntry].sort((a, b) => a.address - b.address);
@@ -639,11 +736,13 @@ export function generateRandomExclusiveInputRegisterAddress(): number | null {
 }
 
 export function removeInputRegister(address: number): void {
+  setInputRegisterRule(address, defaultInputRegRule());
   inputRegisterState.entries = inputRegisterState.entries.filter((entry) => entry.address !== address);
   void invoke("store_remove_input_reg", { address });
 }
 
 export function removeAllInputRegisters(): void {
+  clearAllInputRegisterRules();
   inputRegisterState.entries = [];
   if (inputRegisterState.pollActive) {
     setInputRegisterPollActive(false);
@@ -654,6 +753,105 @@ export function removeAllInputRegisters(): void {
 export function syncInputRegAddressesToBackend(): void {
   const addresses = inputRegisterState.entries.map((e) => e.address);
   void invoke("store_sync_input_reg_addresses", { addresses });
+}
+
+const RULE_INTERVAL_OPTIONS: { ms: number; label: string }[] = [
+  { ms: 500, label: "500 ms" },
+  { ms: 1000, label: "1 s" },
+  { ms: 2000, label: "2 s" },
+  { ms: 5000, label: "5 s" },
+  { ms: 10000, label: "10 s" },
+  { ms: 30000, label: "30 s" },
+];
+export { RULE_INTERVAL_OPTIONS };
+
+const ruleTimers = new Map<number, ReturnType<typeof setInterval>>();
+
+export function setInputRegisterRule(address: number, rule: InputRegRule): void {
+  const entry = inputRegisterState.entries.find((e) => e.address === address);
+  if (!entry) return;
+
+  const existing = ruleTimers.get(address);
+  if (existing !== undefined) {
+    clearInterval(existing);
+    ruleTimers.delete(address);
+  }
+
+  entry.rule = normalizeRule(rule);
+
+  if (entry.rule.type === "cycle") {
+    let writeMinNext = false;
+    const timer = setInterval(() => {
+      const current = inputRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const nextValue = writeMinNext ? current.rule.minValue : current.rule.maxValue;
+      writeMinNext = !writeMinNext;
+      current.desiredValue = nextValue;
+      void writeInputRegisterValue(address, nextValue);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "sawtooth") {
+    const timer = setInterval(() => {
+      const current = inputRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = current.value + current.rule.step > current.rule.maxValue
+        ? current.rule.minValue
+        : current.value + current.rule.step;
+      current.desiredValue = next;
+      void writeInputRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "triangle") {
+    let direction: 1 | -1 = 1;
+    const timer = setInterval(() => {
+      const current = inputRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      let next = current.value + direction * current.rule.step;
+      if (next >= current.rule.maxValue) {
+        next = current.rule.maxValue;
+        direction = -1;
+      } else if (next <= current.rule.minValue) {
+        next = current.rule.minValue;
+        direction = 1;
+      }
+
+      current.desiredValue = next;
+      void writeInputRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "sine") {
+    const startAt = Date.now();
+    const timer = setInterval(() => {
+      const current = inputRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const elapsed = Date.now() - startAt;
+      const phase = (elapsed % current.rule.periodMs) / current.rule.periodMs;
+      const radians = phase * Math.PI * 2;
+      const center = (current.rule.minValue + current.rule.maxValue) / 2;
+      const amplitude = (current.rule.maxValue - current.rule.minValue) / 2;
+      const nextValue = normalizeU16(Math.round(center + amplitude * Math.sin(radians)), current.value);
+      current.desiredValue = nextValue;
+      void writeInputRegisterValue(address, nextValue);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+}
+
+export function clearAllInputRegisterRules(): void {
+  for (const timer of ruleTimers.values()) {
+    clearInterval(timer);
+  }
+  ruleTimers.clear();
 }
 
 export function setInputRegisterPollInterval(ms: number): void {

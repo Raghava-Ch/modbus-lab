@@ -336,7 +336,7 @@
                 <label for="baud-rate">Baud Rate</label>
                 <select
                   id="baud-rate"
-                  value={connectionState.serial.baudRate}
+                  value={String(connectionState.serial.baudRate)}
                   onchange={(e) => updateSerialSettings({ baudRate: Number(e.currentTarget.value) })}
                   disabled={!canEdit}
                 >
@@ -357,7 +357,7 @@
                 <label for="data-bits">Data Bits</label>
                 <select
                   id="data-bits"
-                  value={connectionState.serial.dataBits}
+                  value={String(connectionState.serial.dataBits)}
                   onchange={(e) => updateSerialSettings({ dataBits: Number(e.currentTarget.value) as 5 | 6 | 7 | 8 })}
                   disabled={!canEdit}
                 >
@@ -374,7 +374,7 @@
                 <label for="stop-bits">Stop Bits</label>
                 <select
                   id="stop-bits"
-                  value={connectionState.serial.stopBits}
+                  value={String(connectionState.serial.stopBits)}
                   onchange={(e) => updateSerialSettings({ stopBits: Number(e.currentTarget.value) as 1 | 2 })}
                   disabled={!canEdit}
                 >
@@ -575,18 +575,23 @@
   .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    align-items: end;
+    gap: 12px;
+    width: 100%;
   }
 
   .form-group {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 4px;
+    min-width: 0;
   }
 
   .form-group label {
     font-size: 0.72rem;
     color: var(--c-text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .form-group input,
@@ -598,6 +603,18 @@
     background: var(--c-surface-1);
     color: var(--c-text-1);
     padding: 7px 9px;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 0.875rem;
+    appearance: none;
+    flex-shrink: 0;
+  }
+
+  .form-group select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23c9cfda' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 28px;
   }
 
   .btn {

@@ -18,6 +18,7 @@ use modbus_rs::mbus_async::server::{
     AsyncAppHandler, AsyncTrafficNotifier, ModbusRequest, ModbusResponse,
 };
 use modbus_rs::UnitIdOrSlaveAddr;
+use modbus_rs::{heapless::Vec as HeaplessVec, MAX_ADU_FRAME_LEN};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,6 +29,70 @@ const ADDR_SPACE: usize = 65_536;
 const MAX_COIL_BYTES: usize = 250;
 /// Max registers per Modbus PDU (125 × 2 bytes = 250).
 const MAX_REG_WORDS: usize = 125;
+
+const DEVICE_ID_CONFORMITY_LEVEL: u8 = 0x01;
+
+fn device_id_object_value(object_id: u8) -> Option<&'static str> {
+    match object_id {
+        0 => Some("Modbus Lab"),
+        1 => Some("MBL-SERVER"),
+        2 => Some("0.0.4"),
+        3 => Some("https://github.com/Raghava-Ch/modbus-lab"),
+        4 => Some("Modbus Lab Server"),
+        5 => Some("Rust+Tauri"),
+        6 => Some("Server Diagnostics"),
+        _ => None,
+    }
+}
+
+fn collect_device_id_object_ids(read_device_id_code: u8, object_id: u8) -> Result<[u8; 7], ExceptionCode> {
+    match read_device_id_code {
+        // Basic
+        1 => Ok([0, 1, 2, 255, 255, 255, 255]),
+        // Regular / Extended
+        2 | 3 => Ok([0, 1, 2, 3, 4, 5, 6]),
+        // Individual
+        4 => {
+            if device_id_object_value(object_id).is_some() {
+                Ok([object_id, 255, 255, 255, 255, 255, 255])
+            } else {
+                Err(ExceptionCode::IllegalDataAddress)
+            }
+        }
+        _ => Err(ExceptionCode::IllegalDataValue),
+    }
+}
+
+fn encode_device_id_objects(read_device_id_code: u8, object_id: u8) -> Result<HeaplessVec<u8, MAX_ADU_FRAME_LEN>, ExceptionCode> {
+    let ids = collect_device_id_object_ids(read_device_id_code, object_id)?;
+    let mut encoded: HeaplessVec<u8, MAX_ADU_FRAME_LEN> = HeaplessVec::new();
+
+    for id in ids {
+        if id == 255 {
+            continue;
+        }
+
+        let value = match device_id_object_value(id) {
+            Some(v) => v,
+            None => return Err(ExceptionCode::IllegalDataAddress),
+        };
+
+        let value_bytes = value.as_bytes();
+        if value_bytes.len() > u8::MAX as usize {
+            return Err(ExceptionCode::IllegalDataValue);
+        }
+
+        encoded.push(id).map_err(|_| ExceptionCode::IllegalDataValue)?;
+        encoded
+            .push(value_bytes.len() as u8)
+            .map_err(|_| ExceptionCode::IllegalDataValue)?;
+        for byte in value_bytes {
+            encoded.push(*byte).map_err(|_| ExceptionCode::IllegalDataValue)?;
+        }
+    }
+
+    Ok(encoded)
+}
 
 // ---------------------------------------------------------------------------
 // Server data store
@@ -260,6 +325,45 @@ impl ServerApp {
                 self.registered_input_regs[idx] = true;
             }
         }
+    }
+
+    // ── Store-read accessors (for server UI Option A polling) ─────────────────
+
+    /// Read current coil values for the given addresses directly from the store.
+    /// Returns the current value (false for unregistered/out-of-range addresses).
+    pub fn get_coil_values(&self, addresses: &[u16]) -> Vec<(u16, bool)> {
+        addresses
+            .iter()
+            .map(|&addr| {
+                let idx = addr as usize;
+                let value = if idx < ADDR_SPACE { self.coils[idx] } else { false };
+                (addr, value)
+            })
+            .collect()
+    }
+
+    /// Read current discrete input values for the given addresses from the store.
+    pub fn get_discrete_input_values(&self, addresses: &[u16]) -> Vec<(u16, bool)> {
+        addresses
+            .iter()
+            .map(|&addr| {
+                let idx = addr as usize;
+                let value = if idx < ADDR_SPACE { self.discrete_inputs[idx] } else { false };
+                (addr, value)
+            })
+            .collect()
+    }
+
+    /// Read current holding register values for the given addresses from the store.
+    pub fn get_holding_reg_values(&self, addresses: &[u16]) -> Vec<(u16, u16)> {
+        addresses
+            .iter()
+            .map(|&addr| {
+                let idx = addr as usize;
+                let value = if idx < ADDR_SPACE { self.holding_regs[idx] } else { 0 };
+                (addr, value)
+            })
+            .collect()
     }
 }
 
@@ -517,6 +621,46 @@ impl AsyncAppHandler for ServerApp {
                     FunctionCode::ReadWriteMultipleRegisters,
                     &self.holding_regs[rs..re],
                 )
+            }
+
+            // ── FC2B/MEI 0x0E: Read Device Identification ───────────────────
+            ModbusRequest::EncapsulatedInterfaceTransport {
+                mei_type, data, ..
+            } => {
+                if mei_type != 0x0E {
+                    return ModbusResponse::exception(
+                        FunctionCode::EncapsulatedInterfaceTransport,
+                        ExceptionCode::IllegalDataValue,
+                    );
+                }
+
+                if data.len() < 2 {
+                    return ModbusResponse::exception(
+                        FunctionCode::EncapsulatedInterfaceTransport,
+                        ExceptionCode::IllegalDataValue,
+                    );
+                }
+
+                let read_device_id_code = data[0];
+                let object_id = data[1];
+
+                let objects = match encode_device_id_objects(read_device_id_code, object_id) {
+                    Ok(v) => v,
+                    Err(code) => {
+                        return ModbusResponse::exception(
+                            FunctionCode::EncapsulatedInterfaceTransport,
+                            code,
+                        );
+                    }
+                };
+
+                ModbusResponse::ReadDeviceId {
+                    read_device_id_code,
+                    conformity_level: DEVICE_ID_CONFORMITY_LEVEL,
+                    more_follows: false,
+                    next_object_id: 0,
+                    objects,
+                }
             }
 
             // ── All other FCs: reply with Illegal Function ────────────────────

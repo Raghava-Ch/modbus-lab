@@ -4,7 +4,6 @@
   import {
     Table2,
     LayoutGrid,
-    RefreshCw,
     Play,
     SlidersHorizontal,
     Wand,
@@ -16,34 +15,40 @@
     Repeat,
   } from "lucide-svelte";
   import {
-    addExclusiveDiscreteInput,
-    addDiscreteInputRange,
     discreteInputState,
-    generateRandomExclusiveDiscreteInputAddress,
-    getFilteredDiscreteInputs,
     initDiscreteInputState,
-    readAllDiscreteInputs,
-    readDiscreteInput,
-    removeAllDiscreteInputs,
-    removeDiscreteInput,
-    type DiscreteInputAddressFilter,
-    setDiscreteInputAddressFilter,
-    setDiscreteInputAddressList,
-    setDiscreteInputAddressRange,
-    setDiscreteInputFilter,
-    setDiscreteInputLabel,
-    setDiscreteInputPollActive,
-    setDiscreteInputPollInterval,
     setDiscreteInputView,
+    setDiscreteInputFilter,
+    setDiscreteInputAddressFilter,
+    setDiscreteInputAddressRange,
+    setDiscreteInputAddressList,
+    toggleDiscreteInputValue,
+    setDiscreteInputValue,
+    writeDiscreteInput,
+    setDiscreteInputLabel,
+    executeMassWrite,
+    startAutoToggle,
+    stopAutoToggle,
+    setMassAutoInterval,
+    addDiscreteInputRange,
+    addExclusiveDiscreteInput,
+    generateRandomExclusiveDiscreteInputAddress,
+    removeDiscreteInput,
+    removeAllDiscreteInputs,
+    getFilteredDiscreteInputs,
+    buildMassPreview,
+    getDiscreteInputRule,
+    setDiscreteInputRule,
+    clearAllDiscreteInputRules,
+    type DiscreteInputAddressFilter,
+    type DiscreteInputRuleType,
+    type MassWritePattern,
+    type WriteMode,
   } from "../../state/discrete-inputs.svelte";
   import { connectionState } from "../../state/connection.svelte";
-  import { estimateFrameMs } from "../../lib/frame-timing";
-  import {
-    formatAddressWithSettings,
-    getGlobalPollingMaxAddressCount,
-    isPollingAllowedForCount,
-  } from "../../state/settings.svelte";
+  import { formatAddressWithSettings } from "../../state/settings.svelte";
   import { notifyWarning } from "../../state/notifications.svelte";
+  import { containViewportScroll } from "../../lib/scroll-lock";
   import SectionHeader from "../shared/SectionHeader.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
   import ToggleSwitch from "../shared/ToggleSwitch.svelte";
@@ -54,83 +59,23 @@
   $effect(() => {
     untrack(() => initDiscreteInputState());
     return () => {
-      setDiscreteInputPollActive(false);
+      stopAutoToggle();
+      clearAllDiscreteInputRules();
     };
   });
 
-  // Stop polling automatically when connection drops
-  $effect(() => {
-    if (connectionState.status !== "connected" && discreteInputState.pollActive) {
-      setDiscreteInputPollActive(false);
-    }
-  });
-
-  const connected = $derived(connectionState.status === "connected");
-
   // ── Local panel open/close state ────────────────────────────────────────────
   let readPanelOpen = $state(false);
+  let writePanelOpen = $state(false);
 
   // ── Address range inputs (local; committed on Apply) ────────────────────────
   let rangeStart = $state(discreteInputState.startAddress);
   let rangeCount = $state(discreteInputState.inputCount);
   let rangeApplyPending = $state(false);
   const RANGE_APPLY_MIN_SPINNER_MS = 250;
-  const DISCRETE_READ_CHUNK_MAX = 2000;
 
-  interface AddressSection {
-    start: number;
-    quantity: number;
-  }
-
-  function buildAddressSections(addresses: number[]): AddressSection[] {
-    if (addresses.length === 0) return [];
-
-    const uniqueSorted = [...new Set(addresses)].sort((a, b) => a - b);
-    const sections: AddressSection[] = [];
-    let sectionStart = uniqueSorted[0];
-    let prev = uniqueSorted[0];
-
-    for (let i = 1; i < uniqueSorted.length; i += 1) {
-      const current = uniqueSorted[i];
-      if (current === prev + 1) {
-        prev = current;
-        continue;
-      }
-
-      sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
-      sectionStart = current;
-      prev = current;
-    }
-
-    sections.push({ start: sectionStart, quantity: prev - sectionStart + 1 });
-    return sections;
-  }
-
-  function buildRequestPlan(
-    addresses: number[],
-    chunkMax: number,
-    responsePayloadBytes: number,
-  ): { frames: number; cycleMs: number } {
-    const sections = buildAddressSections(addresses);
-    const frames = sections.reduce((total, section) => total + Math.max(1, Math.ceil(section.quantity / chunkMax)), 0);
-    const { protocol, serial, tcp } = connectionState;
-    const frameMs = estimateFrameMs(
-      responsePayloadBytes,
-      protocol,
-      serial.baudRate,
-      serial.dataBits,
-      serial.parity,
-      serial.stopBits,
-      tcp.responseTimeoutMs,
-    );
-    return { frames, cycleMs: frames * frameMs };
-  }
-
-  // ── Filtered coil list ──────────────────────────────────────────────────────
+  // ── Filtered discrete input list ──────────────────────────────────────────
   const filtered = $derived(getFilteredDiscreteInputs());
-  const readPlan = $derived(
-    buildRequestPlan(discreteInputState.entries.map((entry) => entry.address), DISCRETE_READ_CHUNK_MAX, 250),
-  );
   const VIRTUAL_TABLE_THRESHOLD = 300;
   const VIRTUAL_SWITCH_THRESHOLD = 200;
   const TABLE_ROW_HEIGHT = 34;
@@ -192,6 +137,7 @@
 
   $effect(() => {
     readPanelOpen;
+    writePanelOpen;
     discreteInputState.view;
     filtered.length;
 
@@ -263,26 +209,36 @@
     switchVirtualEnabled ? Math.max(0, (switchTotalRows - switchEndRow) * SWITCH_CARD_ROW_HEIGHT) : 0,
   );
 
-  const onCount = $derived(discreteInputState.entries.filter((e) => e.value).length);
-  const offCount = $derived(discreteInputState.entries.filter((e) => !e.value).length);
+  const massPreview = $derived(buildMassPreview());
+  const onCount = $derived(discreteInputState.entries.filter((e) => e.slaveValue).length);
+  const offCount = $derived(discreteInputState.entries.filter((e) => !e.slaveValue).length);
   const anyAddressFilterActive = $derived(discreteInputState.addressFilter !== "all");
-  const anyFilterActive = $derived(
-    discreteInputState.filter !== "all" || discreteInputState.addressFilter !== "all",
-  );
-  const pollMaxCount = $derived(getGlobalPollingMaxAddressCount());
-  const pollDisabledByCount = $derived(!isPollingAllowedForCount(discreteInputState.entries.length));
+  const anyFilterActive = $derived(discreteInputState.filter !== "all" || discreteInputState.addressFilter !== "all");
 
   // ── Inline label editing ────────────────────────────────────────────────────
   let editingAddress: number | null = $state(null);
-  let selectedInputAddress: number | null = $state(null);
+  let selectedDiscreteInputAddress: number | null = $state(null);
   let editLabelVal = $state("");
   let addAddressInput = $state("");
   let singleWriteAddressInput = $state("");
   let singleWriteDesired = $state(false);
+  let singleRuleType = $state<DiscreteInputRuleType>("none");
+  let singleRuleIntervalMs = $state(1000);
   let filterPanelOpen = $state(false);
   let addressRangeStart = $state(discreteInputState.addressRangeStart);
   let addressRangeEnd = $state(discreteInputState.addressRangeEnd);
   let addressListInput = $state(discreteInputState.addressList.join(","));
+
+  function parseSingleDiscreteInputAddress(raw: string): number | null {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) return null;
+    if (parsed < 0 || parsed > 65535) return null;
+    return parsed;
+  }
+
+  const singleDiscreteInputAddress = $derived(parseSingleDiscreteInputAddress(singleWriteAddressInput));
 
   function beginEdit(address: number, current: string): void {
     editingAddress = address;
@@ -303,16 +259,6 @@
   function onLabelKeydown(e: KeyboardEvent): void {
     if (e.key === "Enter") commitEdit();
     else if (e.key === "Escape") cancelEdit();
-  }
-
-  function handleManualReadAllDiscreteInputs(): void {
-    if (discreteInputState.pollActive) {
-      notifyWarning("Polling is already in progress. Stop polling to use manual refresh.");
-      return;
-    }
-
-    // Keep current visible states stable during manual refresh to avoid UI flicker.
-    void readAllDiscreteInputs({ markPending: false });
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -348,35 +294,43 @@
   }
 
   function handleScrollChain(e: WheelEvent): void {
-    const target = e.currentTarget as HTMLElement;
-    const delta = e.deltaY;
-    if (delta === 0) return;
-
-    const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1;
-    const atTop = target.scrollTop <= 1;
-
-    // If at boundary and trying to scroll past it, scroll parent instead
-    if ((delta > 0 && atBottom) || (delta < 0 && atTop)) {
-      const parent = document.querySelector(".main-content") as HTMLElement | null;
-      if (parent) {
-        const canScrollDown = parent.scrollTop + parent.clientHeight < parent.scrollHeight - 1;
-        const canScrollUp = parent.scrollTop > 1;
-        const shouldDelegate = (delta > 0 && canScrollDown) || (delta < 0 && canScrollUp);
-
-        if (!shouldDelegate) return;
-
-        const delegatedDelta = Math.sign(delta) * Math.min(48, Math.abs(delta) * 0.3);
-        parent.scrollBy({ top: delegatedDelta, left: 0, behavior: "auto" });
-        e.preventDefault();
-      }
-    }
+    containViewportScroll(e);
   }
 
-  const pollIntervals: { ms: number; label: string }[] = [
+  async function executeSingleWrite(): Promise<void> {
+    if (singleDiscreteInputAddress === null) return;
+    const addr = singleDiscreteInputAddress;
+
+    addExclusiveDiscreteInput(addr);
+    setDiscreteInputValue(addr, singleWriteDesired);
+    await writeDiscreteInput(addr);
+  }
+
+  function applySingleRule(): void {
+    if (singleDiscreteInputAddress === null) return;
+    addExclusiveDiscreteInput(singleDiscreteInputAddress);
+    setDiscreteInputRule(singleDiscreteInputAddress, {
+      type: singleRuleType,
+      intervalMs: singleRuleIntervalMs,
+    });
+  }
+
+  const patterns: { id: MassWritePattern; label: string; sub: string }[] = [
+    { id: "all-on",        label: "All ON",       sub: "1 1 1 1…" },
+    { id: "all-off",       label: "All OFF",      sub: "0 0 0 0…" },
+    { id: "alternating",   label: "Alt ↑↓",       sub: "1 0 1 0…" },
+    { id: "alternating-inv", label: "Alt ↓↑",     sub: "0 1 0 1…" },
+    { id: "every-third",   label: "Every 3rd",    sub: "1 0 0 1…" },
+    { id: "random",        label: "Random",       sub: "? ? ? ?…" },
+  ];
+
+  const autoIntervals: { ms: number; label: string }[] = [
+    { ms: 250,  label: "250 ms" },
     { ms: 500,  label: "500 ms" },
     { ms: 1000, label: "1 s"    },
     { ms: 2000, label: "2 s"    },
     { ms: 5000, label: "5 s"    },
+    { ms: 10000, label: "10 s"  },
   ];
 
   function addrFmt(n: number): string {
@@ -434,7 +388,7 @@
   }
 </script>
 
-<div class="coils-page">
+<div class="discrete-inputs-page">
   {#if connectionState.status === "disconnected"}
     <div class="disconnected-banner" role="alert">
       <span class="banner-icon">⚠</span>
@@ -445,55 +399,9 @@
   <!-- ── Header ─────────────────────────────────────────────────────────────── -->
   <SectionHeader
     title="Discrete Inputs"
-    subtitle="Server-hosted discrete inputs (FC 02) — read-only, clients can monitor these values"
+    subtitle="Server-hosted discrete inputs (FC 02) — clients read these values"
   >
     {#snippet actions()}
-      <!-- Poll controls -->
-      <div class="poll-controls">
-        <select
-          class="ctrl-select has-tip"
-          value={discreteInputState.pollInterval}
-          onchange={(e) => setDiscreteInputPollInterval(Number(e.currentTarget.value))}
-          data-tip="Poll interval"
-        >
-          {#each pollIntervals as pi}
-            <option value={pi.ms}>{pi.label}</option>
-          {/each}
-        </select>
-        <button
-          class="ctrl-btn poll-btn has-tip"
-          class:active={discreteInputState.pollActive}
-          data-tip={pollDisabledByCount ? "Polling disabled for large lists" : discreteInputState.pollActive ? "Stop polling" : "Start polling"}
-          type="button"
-          disabled={!connected || pollDisabledByCount}
-          onclick={() => setDiscreteInputPollActive(!discreteInputState.pollActive)}
-        >
-          {#if discreteInputState.pollActive}
-            <Timer size={14} />
-            <span>Polling</span>
-          {:else}
-            <Play size={14} />
-            <span>Poll</span>
-          {/if}
-        </button>
-        <button class="ctrl-btn icon-only has-tip" data-tip="Read once" type="button" disabled={!connected}
-          onclick={handleManualReadAllDiscreteInputs}>
-          <RefreshCw size={14} />
-        </button>
-        {#if pollDisabledByCount}
-          <span class="pending-chip has-tip" data-tip="Global polling max reached">
-            Poll disabled: list &gt; {pollMaxCount}
-          </span>
-        {/if}
-        {#if discreteInputState.entries.length > 0}
-          <span class="plan-chip has-tip" data-tip="Estimated FC02 frames and cycle time per read-all run">
-            Read {readPlan.frames}f ~{readPlan.cycleMs}ms
-          </span>
-        {/if}
-      </div>
-
-      <div class="divider-v"></div>
-
       <!-- View toggle -->
       <div class="view-toggle">
         <button
@@ -564,11 +472,23 @@
         class:active={readPanelOpen}
         type="button"
         onclick={() => { readPanelOpen = !readPanelOpen; }}
-        data-tip="Add coils"
+        data-tip="Add discrete inputs"
       >
         <SlidersHorizontal size={13} />
-        <span>Add Inputs</span>
+        <span>Add Discrete Inputs</span>
         {#if readPanelOpen}<ChevronUp size={12} />{:else}<ChevronDown size={12} />{/if}
+      </button>
+      <button
+        class="ctrl-btn has-tip"
+        class:active={writePanelOpen || discreteInputState.massAutoActive}
+        type="button"
+        onclick={() => { writePanelOpen = !writePanelOpen; }}
+        data-tip="Discrete input rules"
+      >
+        <Wand size={13} />
+        <span>Rules</span>
+        {#if discreteInputState.massAutoActive}<span class="auto-badge">AUTO</span>{/if}
+        {#if writePanelOpen}<ChevronUp size={12} />{:else}<ChevronDown size={12} />{/if}
       </button>
     </div>
   </div>
@@ -643,7 +563,7 @@
     <PanelFrame>
       {#snippet children()}
         <div class="sub-panel">
-          <div class="sub-title">Add Inputs</div>
+          <div class="sub-title">Add Discrete Inputs</div>
 
           <div class="mini-section">
             <div class="mini-title">Single Add</div>
@@ -722,7 +642,7 @@
             <div class="mini-title">Cleanup</div>
             <div class="sub-row">
               <button class="btn btn-sm btn-clear" type="button" onclick={removeAllDiscreteInputs}>
-                Remove All Inputs
+                Remove All Discrete Inputs
               </button>
             </div>
           </div>
@@ -731,20 +651,227 @@
     </PanelFrame>
   {/if}
 
-  <!-- ── Main inputs display ──────────────────────────────────────────────────── -->
+  <!-- ── Write Panels ──────────────────────────────────────────────────────── -->
+  {#if writePanelOpen}
+    <div class="write-sections">
+      <PanelFrame>
+        {#snippet children()}
+          <div class="write-panel">
+            <div class="sub-title">Single Discrete Input Rule</div>
+
+            <div class="sub-row">
+              <div class="form-group">
+                <label for="single-write-address">Address</label>
+                <input
+                  id="single-write-address"
+                  class="custom-address-input"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  placeholder="Type address"
+                  value={singleWriteAddressInput}
+                  oninput={(e) => { singleWriteAddressInput = e.currentTarget.value; }}
+                  onkeydown={(e) => { if (e.key === "Enter") executeSingleWrite(); }}
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="single-rule-type">Rule</label>
+                <select
+                  id="single-rule-type"
+                  value={singleRuleType}
+                  onchange={(e) => { singleRuleType = e.currentTarget.value as DiscreteInputRuleType; }}
+                >
+                  <option value="none">None</option>
+                  <option value="auto-toggle">Auto-toggle</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="single-rule-interval">Interval</label>
+                <select
+                  id="single-rule-interval"
+                  value={singleRuleIntervalMs}
+                  disabled={singleRuleType !== "auto-toggle"}
+                  onchange={(e) => { singleRuleIntervalMs = Number(e.currentTarget.value); }}
+                >
+                  {#each autoIntervals as ai}
+                    <option value={ai.ms}>{ai.label}</option>
+                  {/each}
+                </select>
+              </div>
+
+              <div class="form-group">
+                <div class="mini-field-label">State</div>
+                <div class="single-write-toggle">
+                  <ToggleSwitch
+                    checked={singleWriteDesired}
+                    size="sm"
+                    title={singleWriteDesired ? "Desired ON" : "Desired OFF"}
+                    onToggle={() => { singleWriteDesired = !singleWriteDesired; }}
+                  />
+                </div>
+              </div>
+
+              <button
+                class="btn btn-sm btn-write"
+                type="button"
+                disabled={singleDiscreteInputAddress === null}
+                title={singleDiscreteInputAddress === null ? "Enter a valid address (0-65535)" : "Apply value"}
+                onclick={() => { void executeSingleWrite(); }}
+              >
+                <Zap size={12} />
+                Apply
+              </button>
+
+              <button
+                class="btn btn-sm btn-apply"
+                type="button"
+                disabled={singleDiscreteInputAddress === null}
+                title={singleDiscreteInputAddress === null ? "Enter a valid address (0-65535)" : "Apply rule"}
+                onclick={applySingleRule}
+              >
+                <Wand size={12} />
+                Set Rule
+              </button>
+            </div>
+          </div>
+        {/snippet}
+      </PanelFrame>
+
+      <PanelFrame>
+        {#snippet children()}
+          <div class="write-panel">
+            <div class="sub-title">Batch Discrete Input Rules</div>
+
+          <!-- Pattern selector -->
+          <div class="patterns-grid">
+            {#each patterns as p}
+              <button
+                class="pattern-btn"
+                class:active={discreteInputState.massPattern === p.id}
+                type="button"
+                onclick={() => { discreteInputState.massPattern = p.id as MassWritePattern; }}
+              >
+                <span class="p-label">{p.label}</span>
+                <span class="p-sub">{p.sub}</span>
+              </button>
+            {/each}
+          </div>
+
+          <!-- Address range -->
+          <div class="addr-row">
+            <div class="form-group">
+              <label for="mass-from">From</label>
+              <input
+                id="mass-from"
+                type="number"
+                min={discreteInputState.startAddress}
+                max={discreteInputState.startAddress + discreteInputState.inputCount - 1}
+                value={discreteInputState.massFrom}
+                oninput={(e) => { discreteInputState.massFrom = Number(e.currentTarget.value); }}
+              />
+            </div>
+            <div class="form-group">
+              <label for="mass-to">To</label>
+              <input
+                id="mass-to"
+                type="number"
+                min={discreteInputState.startAddress}
+                max={discreteInputState.startAddress + discreteInputState.inputCount - 1}
+                value={discreteInputState.massTo}
+                oninput={(e) => { discreteInputState.massTo = Number(e.currentTarget.value); }}
+              />
+            </div>
+          </div>
+
+          <!-- Preview -->
+          <div class="preview-line">
+            <span class="preview-label">Preview:</span>
+            <span class="preview-text">{massPreview}</span>
+          </div>
+
+          <!-- Mode selector -->
+          <div class="mode-row">
+            <div class="mode-label">Rule Mode</div>
+            <div class="seg-group">
+              <button
+                class="seg-btn"
+                class:active={discreteInputState.massMode === "once"}
+                type="button"
+                onclick={() => { discreteInputState.massMode = "once" as WriteMode; stopAutoToggle(); }}
+              >
+                <Zap size={12} /> Apply Once
+              </button>
+              <button
+                class="seg-btn"
+                class:active={discreteInputState.massMode === "auto-toggle"}
+                type="button"
+                onclick={() => { discreteInputState.massMode = "auto-toggle" as WriteMode; }}
+              >
+                <Repeat size={12} /> Auto-toggle
+              </button>
+            </div>
+          </div>
+
+          <!-- One-shot action -->
+          {#if discreteInputState.massMode === "once"}
+            <div class="action-row">
+              <button class="btn btn-write" type="button" onclick={() => { void executeMassWrite(); }}>
+                <Wand size={14} />
+                Apply to {Math.abs(discreteInputState.massTo - discreteInputState.massFrom) + 1} Coils
+              </button>
+            </div>
+          {/if}
+
+          <!-- Auto-toggle config -->
+          {#if discreteInputState.massMode === "auto-toggle"}
+            <div class="auto-row">
+              <div class="form-group">
+                <label for="auto-interval">Interval</label>
+                <select
+                  id="auto-interval"
+                  value={discreteInputState.massAutoInterval}
+                  onchange={(e) => setMassAutoInterval(Number(e.currentTarget.value))}
+                >
+                  {#each autoIntervals as ai}
+                    <option value={ai.ms}>{ai.label}</option>
+                  {/each}
+                </select>
+              </div>
+              {#if discreteInputState.massAutoActive}
+                <button class="btn btn-stop" type="button" onclick={stopAutoToggle}>
+                  <Timer size={14} />
+                  Stop Rule
+                </button>
+              {:else}
+                <button class="btn btn-write" type="button" onclick={startAutoToggle}>
+                  <Play size={14} />
+                  Start Rule
+                </button>
+              {/if}
+            </div>
+          {/if}
+
+          </div>
+        {/snippet}
+      </PanelFrame>
+    </div>
+  {/if}
+
+  <!-- ── Main discrete input display ───────────────────────────────────────── -->
   <PanelFrame>
     {#snippet children()}
       {#if filtered.length === 0}
-        <div class="empty">No coils match the current filter.</div>
+        <div class="empty">No discrete inputs match the current filter.</div>
       {:else if discreteInputState.view === "table"}
         <!-- TABLE view -->
-        <div class="coil-table">
+        <div class="discrete-input-table">
           <div class="ct-header">
             <span>Label</span>
-            <span>Status</span>
             <span>Addr</span>
-            <span>Read Value</span>
-            <span>Operation</span>
+            <span>Switch</span>
+            <span>Rule</span>
             <span>Delete</span>
           </div>
           <div
@@ -763,10 +890,10 @@
               <div
                 class="selectable-item"
                 class:zebra-row={(tableStartRow + rowIndex) % 2 === 1}
-                class:selected-item={selectedInputAddress === entry.address}
+                class:selected-item={selectedDiscreteInputAddress === entry.address}
                 role="button"
                 tabindex="0"
-                onclick={() => { selectedInputAddress = entry.address; }}
+                onclick={() => { selectedDiscreteInputAddress = entry.address; }}
                 onkeydown={(e) => {
                   const target = e.target as HTMLElement | null;
                   if (
@@ -777,20 +904,12 @@
                   }
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    selectedInputAddress = entry.address;
+                    selectedDiscreteInputAddress = entry.address;
                   }
                 }}
               >
                 <TableRow
-                  entry={{
-                    address: entry.address,
-                    slaveValue: entry.value,
-                    desiredValue: entry.value,
-                    pending: entry.pending,
-                    writeError: entry.readError,
-                    label: entry.label,
-                  }}
-                  {connected}
+                  {entry}
                   {editingAddress}
                   {editLabelVal}
                   {addrFmt}
@@ -799,11 +918,10 @@
                   {cancelEdit}
                   {onLabelKeydown}
                   onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                  onToggle={undefined}
-                  onRead={(address: number) => { void readDiscreteInput(address); }}
-                  onWrite={undefined}
+                  onToggle={(address: number) => { toggleDiscreteInputValue(address); void writeDiscreteInput(address); }}
+                  rule={getDiscreteInputRule(entry.address)}
+                  onRuleChange={(rule) => setDiscreteInputRule(entry.address, rule)}
                   onDelete={(address: number) => removeDiscreteInput(address)}
-                  showStatusColumn={true}
                 />
               </div>
             {/each}
@@ -833,10 +951,10 @@
             {#each visibleSwitchEntries as entry (entry.address)}
               <div
                 class="selectable-item"
-                class:selected-item={selectedInputAddress === entry.address}
+                class:selected-item={selectedDiscreteInputAddress === entry.address}
                 role="button"
                 tabindex="0"
-                onclick={() => { selectedInputAddress = entry.address; }}
+                onclick={() => { selectedDiscreteInputAddress = entry.address; }}
                 onkeydown={(e) => {
                   const target = e.target as HTMLElement | null;
                   if (
@@ -847,7 +965,7 @@
                   }
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    selectedInputAddress = entry.address;
+                    selectedDiscreteInputAddress = entry.address;
                   }
                 }}
               >
@@ -855,10 +973,10 @@
                   address={entry.address}
                   label={entry.label}
                   pending={entry.pending}
-                  readValue={entry.value}
-                  toggleValue={entry.value}
-                  {connected}
-                  cardDirty={entry.readError !== null}
+                  readValue={entry.slaveValue}
+                  toggleValue={entry.desiredValue}
+                  showStateChip={false}
+                  cardDirty={entry.desiredValue !== entry.slaveValue || entry.writeError !== null}
                   {editingAddress}
                   {editLabelVal}
                   {addrFmt}
@@ -867,11 +985,11 @@
                   onCancelEdit={cancelEdit}
                   {onLabelKeydown}
                   onEditLabelValChange={(next: string) => { editLabelVal = next; }}
-                  onToggle={undefined}
-                  onRead={(address: number) => { void readDiscreteInput(address); }}
-                  onWrite={undefined}
+                  onToggle={(address: number) => { toggleDiscreteInputValue(address); void writeDiscreteInput(address); }}
+                  rule={getDiscreteInputRule(entry.address)}
+                  onRuleChange={(rule) => setDiscreteInputRule(entry.address, rule)}
                   onDelete={(address: number) => removeDiscreteInput(address)}
-                  deleteButtonTitle="Delete coil"
+                  deleteButtonTitle="Delete discrete input"
                 />
               </div>
             {/each}
@@ -887,8 +1005,184 @@
 </div>
 
 <style>
+  /* ── Page-unique: auto-toggle badge ─────────────────────────────────────── */
+  .auto-badge {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: color-mix(in srgb, var(--c-warn) 20%, transparent);
+    color: var(--c-warn);
+    border-radius: 4px;
+    padding: 1px 4px;
+  }
+
+  /* ── Page-unique: write panel ────────────────────────────────────────────── */
+  .write-panel {
+    display: grid;
+    gap: 10px;
+  }
+
+  .write-sections {
+    display: grid;
+    gap: 8px;
+  }
+
+  .addr-row,
+  .auto-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .mini-field-label {
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: var(--c-text-1);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  /* ── Page-unique: mass write patterns ───────────────────────────────────── */
+  .patterns-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 5px;
+  }
+
+  .pattern-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 7px 10px;
+    border: 1px solid var(--c-border);
+    border-radius: 7px;
+    background: var(--c-surface-2);
+    color: var(--c-text-2);
+    font: inherit;
+    cursor: pointer;
+    transition: all 140ms ease;
+  }
+
+  .pattern-btn:hover { border-color: var(--c-border-strong); color: var(--c-text-1); }
+
+  .pattern-btn.active {
+    border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
+    background: color-mix(in srgb, var(--c-accent) 10%, var(--c-surface-2));
+    color: var(--c-text-1);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 20%, transparent);
+  }
+
+  .p-label { font-size: 0.75rem; font-weight: 500; }
+  .p-sub   { font-size: 0.62rem; opacity: 0.55; font-family: monospace; }
+
+  /* ── Page-unique: mass write preview ────────────────────────────────────── */
+  .preview-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.73rem;
+    font-family: monospace;
+  }
+
+  .preview-label { color: var(--c-text-2); flex-shrink: 0; font-family: inherit; }
+  .preview-text  { color: var(--c-text-1); word-break: break-all; }
+
+  /* ── Page-unique: write mode controls ───────────────────────────────────── */
+  .mode-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .mode-label {
+    font-size: 0.68rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--c-text-2);
+    flex-shrink: 0;
+  }
+
+  .seg-group {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--c-border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .seg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 27px;
+    padding: 0 10px;
+    border: none;
+    border-right: 1px solid var(--c-border);
+    background: var(--c-surface-2);
+    color: var(--c-text-2);
+    font: inherit;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: all 140ms ease;
+  }
+
+  .seg-btn:last-child { border-right: none; }
+  .seg-btn:hover { background: var(--c-surface-3); color: var(--c-text-1); }
+  .seg-btn.active { background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2)); color: var(--c-text-1); }
+
+  .single-write-toggle {
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+  }
+
+  .action-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  /* ── Page-unique: write / stop buttons ──────────────────────────────────── */
+  .btn-write {
+    border: 1px solid color-mix(in srgb, var(--c-accent) 30%, var(--c-border));
+    background: color-mix(in srgb, var(--c-accent) 15%, var(--c-surface-2));
+    color: var(--c-accent);
+  }
+  .btn-write:hover {
+    border-color: var(--c-accent);
+    background: color-mix(in srgb, var(--c-accent) 25%, var(--c-surface-2));
+    color: var(--c-text-1);
+  }
+
+  .btn-stop {
+    border: 1px solid color-mix(in srgb, var(--c-error) 30%, var(--c-border));
+    background: color-mix(in srgb, var(--c-error) 12%, var(--c-surface-2));
+    color: var(--c-error);
+  }
+  .btn-stop:hover {
+    border-color: var(--c-error);
+    background: color-mix(in srgb, var(--c-error) 22%, var(--c-surface-2));
+    color: var(--c-text-1);
+  }
+
+  /* ── Page-unique: failed write badge ────────────────────────────────────── */
+  .pending-chip-failed {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--c-danger) 16%, var(--c-surface-3));
+    color: var(--c-danger);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+
   /* ── Page-unique: table column layout ───────────────────────────────────── */
   .ct-header {
-    grid-template-columns: minmax(140px, 1fr) 92px 64px 88px 182px 52px;
+    /* label | addr | switch | rule | delete */
+    grid-template-columns: minmax(140px, 1fr) 65px 60px 160px 44px;
   }
 </style>

@@ -1,7 +1,8 @@
+// Coils state — FC 01 (Read) · FC 05 (Write Single) · FC 15 (Write Multiple)
+
 import { invoke } from "@tauri-apps/api/core";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
-import { connectionState } from "./connection.svelte";
 import {
   getGlobalPollingMaxAddressCount,
   getSettingsSnapshot,
@@ -17,24 +18,82 @@ export type DiscreteInputAddressFilter =
   | "required-list"
   | "not-required-list";
 export type DiscreteInputOrigin = "range" | "custom";
-const DISCRETE_INPUT_MAX_COUNT = 65536; // Modbus spec: 16-bit address space
-const MODBUS_ADDRESS_MIN = 0;
-const MODBUS_ADDRESS_MAX = DISCRETE_INPUT_MAX_COUNT - 1; // 0x0000-0xFFFF
+export type MassWritePattern =
+  | "all-on"
+  | "all-off"
+  | "alternating"
+  | "alternating-inv"
+  | "every-third"
+  | "random";
+export type WriteMode = "once" | "auto-toggle";
+
+export type DiscreteInputRuleType = "none" | "auto-toggle";
+
+export interface DiscreteInputRule {
+  type: DiscreteInputRuleType;
+  intervalMs: number;
+}
+
+export const DEFAULT_RULE: DiscreteInputRule = { type: "none", intervalMs: 1000 };
 
 export interface DiscreteInputEntry {
   address: number;
-  value: boolean;
+  slaveValue: boolean;
+  desiredValue: boolean;
   pending: boolean;
-  readError: string | null;
+  writeError: string | null;
   label: string;
   origin: DiscreteInputOrigin;
 }
 
-interface BackendReadDiscreteInputsResponse {
-  inputs: Array<{ address: number; value: boolean }>;
-  startAddress: number;
-  quantity: number;
+interface StoreReadBoolEntry {
+  address: number;
+  value: boolean;
 }
+
+interface BackendWriteDiscreteInputResponse {
+  address: number;
+  value: boolean;
+}
+
+interface BackendWriteMassDiscreteInputsResponse {
+  writtenCount: number;
+  totalCount: number;
+  failures: Array<{ address: number; code: string; message: string }>;
+}
+
+function parseInvokeError(err: unknown): string {
+  if (typeof err === "string") {
+    try {
+      const parsed = JSON.parse(err) as { message?: string; details?: string };
+      if (typeof parsed.details === "string" && parsed.details.trim().length > 0) {
+        return `${parsed.message ?? "Unknown error"} (${parsed.details})`;
+      }
+      return parsed.message ?? err;
+    } catch {
+      return err;
+    }
+  }
+  if (typeof err === "object" && err !== null && "message" in err) {
+    const maybe = err as { message: unknown; details?: unknown };
+    if (typeof maybe.details === "string" && maybe.details.trim().length > 0) {
+      return `${String(maybe.message)} (${maybe.details})`;
+    }
+    return String(maybe.message);
+  }
+  return "Unknown error";
+}
+
+function warnLocal(message: string): void {
+  addLog("warn", message);
+  notifyWarning(message);
+}
+
+
+const DISCRETE_INPUT_VIEW_KEY = "Modbus-Lab.coilView";
+const DISCRETE_INPUT_MAX_COUNT = 65536; // Modbus spec: 16-bit address space
+const MODBUS_ADDRESS_MIN = 0;
+const MODBUS_ADDRESS_MAX = DISCRETE_INPUT_MAX_COUNT - 1; // 0x0000-0xFFFF
 
 interface AddressSection {
   start: number;
@@ -75,110 +134,76 @@ function formatSectionPreview(sections: AddressSection[], max = 4): string {
   return sections.length > max ? `${preview},...` : preview;
 }
 
-function parseInvokeError(err: unknown): string {
-  if (typeof err === "string") {
-    try {
-      const parsed = JSON.parse(err) as { message?: string; details?: string };
-      if (typeof parsed.details === "string" && parsed.details.trim().length > 0) {
-        return `${parsed.message ?? "Unknown error"} (${parsed.details})`;
-      }
-      return parsed.message ?? err;
-    } catch {
-      return err;
-    }
-  }
-  if (typeof err === "object" && err !== null && "message" in err) {
-    const maybe = err as { message: unknown; details?: unknown };
-    if (typeof maybe.details === "string" && maybe.details.trim().length > 0) {
-      return `${String(maybe.message)} (${maybe.details})`;
-    }
-    return String(maybe.message);
-  }
-  return "Unknown error";
-}
-
-function isTransientTransportError(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("too many requests")
-    || lower.includes("expected responses buffer is full")
-    || lower.includes("timeout")
-    || lower.includes("timed out")
-    || lower.includes("not connected")
-    || lower.includes("reconnecting")
-    || lower.includes("broken pipe")
-    || lower.includes("connection reset")
-    || lower.includes("transport")
-    || lower.includes("send failed")
-    || lower.includes("io error")
-    || lower.includes("connection closed")
-  );
-}
-
-function warnLocal(message: string): void {
-  addLog("warn", message);
-  notifyWarning(message);
-}
-
-function generateInputs(startAddress: number, count: number): DiscreteInputEntry[] {
+function generateDiscreteInputs(startAddress: number, count: number): DiscreteInputEntry[] {
   return Array.from({ length: count }, (_, i) => ({
     address: startAddress + i,
-    value: false,
+    slaveValue: false,
+    desiredValue: false,
     pending: false,
-    readError: null,
+    writeError: null,
     label: "",
     origin: "range",
   }));
 }
 
-function getDiscreteAcceptedAddressRange(): { min: number; max: number } {
-  if (discreteInputState.entries.length === 0) {
-    return { min: MODBUS_ADDRESS_MIN, max: MODBUS_ADDRESS_MAX };
-  }
-
-  const addresses = discreteInputState.entries.map((entry) => entry.address);
-  const currentMin = Math.min(...addresses);
-  const currentMax = Math.max(...addresses);
-
-  return {
-    min: Math.max(MODBUS_ADDRESS_MIN, currentMax - (DISCRETE_INPUT_MAX_COUNT - 1)),
-    max: Math.min(MODBUS_ADDRESS_MAX, currentMin + (DISCRETE_INPUT_MAX_COUNT - 1)),
-  };
-}
-
 export const discreteInputState = $state({
   view: "table" as DiscreteInputView,
-  entries: [] as DiscreteInputEntry[],
-  startAddress: 0,
-  inputCount: 8,
   filter: "all" as DiscreteInputFilter,
   addressFilter: "all" as DiscreteInputAddressFilter,
   addressRangeStart: 0,
   addressRangeEnd: 0,
   addressList: [] as number[],
+  entries: [] as DiscreteInputEntry[],
+  startAddress: 0,
+  inputCount: 16,
+  // Poll
   pollActive: false,
   pollInterval: 1000,
+  // Mass write config
+  massFrom: 0,
+  massTo: 15,
+  massPattern: "alternating" as MassWritePattern,
+  massMode: "once" as WriteMode,
+  massAutoInterval: 1000,
+  massAutoActive: false,
 });
 
+// Timer handles — not reactive, managed manually
+let autoToggleTimer: ReturnType<typeof setInterval> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+// ── Per-address rule state ────────────────────────────────────────────────────
+export const discreteInputRules = $state<Record<number, DiscreteInputRule>>({});
+const ruleTimers = new Map<number, ReturnType<typeof setInterval>>();
 let readAllInFlight = false;
-let readAllQueuedRuns = 0;
-const READ_ALL_QUEUE_DEPTH_MAX = 6;
+let autoToggleWriteInFlight = false;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
 
 export function initDiscreteInputState(): void {
   const settings = getSettingsSnapshot();
 
-  if (!settings.rememberLastFeatureState || discreteInputState.entries.length === 0) {
-    const nextView = settings.defaults.discreteInputs.view;
-    discreteInputState.view = nextView === "switch" ? "switch" : "table";
-    applyDiscreteInputRange(settings.defaults.discreteInputs.startAddress, settings.defaults.discreteInputs.count);
+  if (!settings.rememberLastFeatureState) {
+    discreteInputState.view = settings.defaults.discreteInputs.view === "switch" ? "switch" : "table";
+    applyDiscreteInputAddressRange(settings.defaults.discreteInputs.startAddress, settings.defaults.discreteInputs.count);
+  } else {
+    const savedView = localStorage.getItem(DISCRETE_INPUT_VIEW_KEY);
+    if (savedView === "switch" || savedView === "table") {
+      discreteInputState.view = savedView;
+    }
+    if (discreteInputState.entries.length === 0) {
+      applyDiscreteInputAddressRange(settings.defaults.discreteInputs.startAddress, settings.defaults.discreteInputs.count);
+    }
   }
 
   setDiscreteInputPollInterval(settings.polling.defaultIntervalMs);
 }
 
+// ── View & Filter ─────────────────────────────────────────────────────────────
+
 export function setDiscreteInputView(view: DiscreteInputView): void {
   discreteInputState.view = view;
+  localStorage.setItem(DISCRETE_INPUT_VIEW_KEY, view);
 }
 
 export function setDiscreteInputFilter(filter: DiscreteInputFilter): void {
@@ -203,13 +228,525 @@ export function setDiscreteInputAddressList(addresses: number[]): void {
   discreteInputState.addressList = [...new Set(normalized)].sort((a, b) => a - b);
 }
 
-export function setDiscreteInputLabel(address: number, label: string): void {
-  const entry = discreteInputState.entries.find((item) => item.address === address);
+// ── Single coil ───────────────────────────────────────────────────────────────
+
+export function toggleDiscreteInputValue(address: number): void {
+  const entry = discreteInputState.entries.find((e) => e.address === address);
   if (!entry) return;
-  entry.label = label;
+  entry.desiredValue = !entry.desiredValue;
+  entry.writeError = null;
+  addLog("info", `DI.store.set ok addr=${address} val=${entry.desiredValue ? 1 : 0}`);
 }
 
-export function applyDiscreteInputRange(startAddress: number, count: number): void {
+export function setDiscreteInputValue(address: number, value: boolean): void {
+  const entry = discreteInputState.entries.find((e) => e.address === address);
+  if (!entry) return;
+  const changed = entry.desiredValue !== value;
+  entry.desiredValue = value;
+  entry.writeError = null;
+  if (changed) {
+    addLog("info", `DI.store.set ok addr=${address} val=${value ? 1 : 0}`);
+  }
+}
+
+export function syncAllSlaveToDesired(): number {
+  let changed = 0;
+  for (const entry of discreteInputState.entries) {
+    if (entry.desiredValue !== entry.slaveValue || entry.writeError !== null) {
+      changed += 1;
+    }
+    entry.desiredValue = entry.slaveValue;
+    entry.writeError = null;
+  }
+  return changed;
+}
+
+export async function writeDiscreteInput(address: number): Promise<void> {
+  const entry = discreteInputState.entries.find((e) => e.address === address);
+  if (!entry) return;
+  const valueToWrite = entry.desiredValue;
+  entry.pending = true;
+  entry.writeError = null;
+  try {
+    await invoke("store_set_discrete_input", { address, value: valueToWrite });
+    const e = discreteInputState.entries.find((e2) => e2.address === address);
+    if (e) {
+      e.slaveValue = valueToWrite;
+      e.pending = false;
+      e.writeError = null;
+    }
+  } catch (err) {
+    const e = discreteInputState.entries.find((e2) => e2.address === address);
+    const message = parseInvokeError(err);
+    if (e) {
+      e.pending = false;
+      e.writeError = message;
+    }
+  }
+}
+
+export async function writePendingDiscreteInputs(): Promise<number> {
+  const pending = discreteInputState.entries.filter((e) => e.desiredValue !== e.slaveValue);
+  if (pending.length === 0) return 0;
+  const valueMap = new Map<number, boolean>(pending.map((entry) => [entry.address, entry.desiredValue]));
+  const response = await writeAddressMap(valueMap);
+  return response?.writtenCount ?? 0;
+}
+
+export async function readDiscreteInput(address: number): Promise<void> {
+  const entry = discreteInputState.entries.find((e) => e.address === address);
+  if (!entry) return;
+  entry.pending = true;
+  try {
+    const results = await invoke<StoreReadBoolEntry[]>("store_read_discrete_inputs", { addresses: [address] });
+    const e = discreteInputState.entries.find((e2) => e2.address === address);
+    if (e) {
+      const found = results.find((r) => r.address === address);
+      if (found !== undefined) {
+        e.slaveValue = found.value;
+        e.writeError = null;
+      }
+      e.pending = false;
+    }
+    addLog("info", `store.read ok addr=${address} val=${results[0]?.value ? 1 : 0}`);
+  } catch (err) {
+    const e = discreteInputState.entries.find((e2) => e2.address === address);
+    const reason = parseInvokeError(err);
+    if (e) {
+      e.pending = false;
+      e.writeError = reason;
+    }
+    addLog("error", `store.read err addr=${address} msg=${reason}`);
+  }
+}
+
+export function setDiscreteInputLabel(address: number, label: string): void {
+  const entry = discreteInputState.entries.find((e) => e.address === address);
+  if (entry) entry.label = label;
+}
+
+// ── Pattern helpers ───────────────────────────────────────────────────────────
+
+function getRangeAddresses(from: number, to: number): number[] {
+  const start = Math.min(from, to);
+  const end = Math.max(from, to);
+  const inRange: number[] = [];
+  for (const entry of discreteInputState.entries) {
+    if (entry.address >= start && entry.address <= end) {
+      inRange.push(entry.address);
+    }
+  }
+  return inRange;
+}
+
+function getTargetAddresses(): number[] {
+  return getRangeAddresses(discreteInputState.massFrom, discreteInputState.massTo);
+}
+
+function computePatternValues(pattern: MassWritePattern, addresses: number[]): Map<number, boolean> {
+  const result = new Map<number, boolean>();
+  let i = 0;
+  for (const address of addresses) {
+    let value: boolean;
+    switch (pattern) {
+      case "all-on":          value = true; break;
+      case "all-off":         value = false; break;
+      case "alternating":     value = i % 2 === 0; break;
+      case "alternating-inv": value = i % 2 !== 0; break;
+      case "every-third":     value = i % 3 === 0; break;
+      case "random":          value = Math.random() >= 0.5; break;
+      default:                value = false;
+    }
+    result.set(address, value);
+    i++;
+  }
+  return result;
+}
+
+async function writeAddressMap(
+  valueMap: Map<number, boolean>,
+  source: "ui" | "auto-toggle" = "ui",
+): Promise<BackendWriteMassDiscreteInputsResponse | null> {
+  if (valueMap.size === 0) return null;
+
+  const sourceTag = source === "auto-toggle" ? "srv.auto" : "srv.ui";
+
+  const planSections = buildAddressSections([...valueMap.keys()].sort((a, b) => a - b));
+  addLog(
+    "info",
+    `${sourceTag} fc15.write plan req=${valueMap.size} sections=${planSections.length} sample=${formatSectionPreview(planSections)}`,
+  );
+
+  // Set pending state immediately
+  for (const [address, value] of valueMap) {
+    const entry = discreteInputState.entries.find((e) => e.address === address);
+    if (entry) {
+      entry.desiredValue = value;
+      entry.pending = true;
+      entry.writeError = null;
+    }
+  }
+
+  // Convert to array for batch request
+  const coils = Array.from(valueMap, ([address, value]) => ({ address, value }));
+
+  try {
+    // No batch command — use individual store_set_discrete_input calls
+    const rawResults = await Promise.allSettled(
+      coils.map(({ address: addr, value: val }) =>
+        invoke("store_set_discrete_input", { address: addr, value: val })
+      )
+    );
+    const batchFailures: Array<{ address: number; code: string; message: string }> = [];
+    coils.forEach(({ address: addr }, i) => {
+      if (rawResults[i].status === "rejected") {
+        const msg = parseInvokeError((rawResults[i] as PromiseRejectedResult).reason);
+        batchFailures.push({ address: addr, code: "store-error", message: msg });
+      }
+    });
+    const response = { writtenCount: coils.length - batchFailures.length, totalCount: coils.length, failures: batchFailures };
+
+    const failureMap = new Map(response.failures.map((failure) => [failure.address, failure]));
+
+    // Update state based on per-address results
+    for (const [address, value] of valueMap) {
+      const e = discreteInputState.entries.find((e2) => e2.address === address);
+      if (e) {
+        e.pending = false;
+        const failure = failureMap.get(address);
+        if (failure) {
+          e.writeError = `${failure.code}: ${failure.message}`;
+        } else {
+          e.slaveValue = value;
+          e.writeError = null;
+        }
+      }
+    }
+
+    if (response.failures.length === 0) {
+      addLog("info", `${sourceTag} fc15.write ok req=${response.totalCount} ok=${response.writtenCount} fail=0`);
+    } else {
+      const failedAddresses = response.failures.map((failure) => failure.address).join(", ");
+      const failureCodes = [...new Set(response.failures.map((failure) => failure.code))].join(", ");
+      addLog(
+        "warn",
+        `${sourceTag} fc15.write partial req=${response.totalCount} ok=${response.writtenCount} fail=${response.failures.length} addrs=${failedAddresses} codes=${failureCodes}`
+      );
+    }
+
+    return response;
+  } catch (err) {
+    // Clear pending on all entries on batch failure
+    const message = parseInvokeError(err);
+    for (const address of valueMap.keys()) {
+      const e = discreteInputState.entries.find((e2) => e2.address === address);
+      if (e) {
+        e.pending = false;
+        e.writeError = message;
+      }
+    }
+    return null;
+  }
+}
+
+function invertAddresses(addresses: number[]): void {
+  for (const address of addresses) {
+    const entry = discreteInputState.entries.find((e) => e.address === address);
+    if (entry) {
+      entry.desiredValue = !entry.desiredValue;
+      entry.writeError = null;
+    }
+  }
+}
+
+// ── Mass write ────────────────────────────────────────────────────────────────
+
+export async function executeMassWrite(): Promise<void> {
+  const targets = getTargetAddresses();
+  if (targets.length === 0) return;
+  const valueMap = computePatternValues(discreteInputState.massPattern, targets);
+  await writeAddressMap(valueMap);
+}
+
+export function startAutoToggle(): void {
+  if (autoToggleTimer) clearInterval(autoToggleTimer);
+  discreteInputState.massAutoActive = true;
+
+  // First pass: apply the selected pattern immediately
+  const initialTargets = getTargetAddresses();
+  const initialMap = computePatternValues(discreteInputState.massPattern, initialTargets);
+  void (async () => {
+    if (autoToggleWriteInFlight) return;
+    autoToggleWriteInFlight = true;
+    try {
+      await writeAddressMap(initialMap, "auto-toggle");
+    } finally {
+      autoToggleWriteInFlight = false;
+    }
+  })();
+
+  autoToggleTimer = setInterval(() => {
+    if (autoToggleWriteInFlight) {
+      return;
+    }
+
+    const targets = getTargetAddresses();
+    invertAddresses(targets);
+    const invertMap = new Map(targets.map((addr) => {
+      const entry = discreteInputState.entries.find((e) => e.address === addr);
+      return [addr, entry?.desiredValue ?? false] as [number, boolean];
+    }));
+
+    void (async () => {
+      autoToggleWriteInFlight = true;
+      try {
+        await writeAddressMap(invertMap, "auto-toggle");
+      } finally {
+        autoToggleWriteInFlight = false;
+      }
+    })();
+  }, discreteInputState.massAutoInterval);
+}
+
+export function stopAutoToggle(): void {
+  if (autoToggleTimer) {
+    clearInterval(autoToggleTimer);
+    autoToggleTimer = null;
+  }
+  discreteInputState.massAutoActive = false;
+  autoToggleWriteInFlight = false;
+}
+
+export function setMassAutoInterval(ms: number): void {
+  discreteInputState.massAutoInterval = ms;
+  if (discreteInputState.massAutoActive) {
+    startAutoToggle();
+  }
+}
+
+function upsertAndSortEntries(next: DiscreteInputEntry[]): void {
+  const map = new Map<number, DiscreteInputEntry>();
+  for (const entry of next) {
+    map.set(entry.address, entry);
+  }
+  discreteInputState.entries = [...map.values()].sort((a, b) => a.address - b.address);
+}
+
+function getDiscreteInputAcceptedAddressRange(): { min: number; max: number } {
+  if (discreteInputState.entries.length === 0) {
+    return { min: MODBUS_ADDRESS_MIN, max: MODBUS_ADDRESS_MAX };
+  }
+
+  const addresses = discreteInputState.entries.map((e) => e.address);
+  const currentMin = Math.min(...addresses);
+  const currentMax = Math.max(...addresses);
+
+  return {
+    min: Math.max(MODBUS_ADDRESS_MIN, currentMax - (DISCRETE_INPUT_MAX_COUNT - 1)),
+    max: Math.min(MODBUS_ADDRESS_MAX, currentMin + (DISCRETE_INPUT_MAX_COUNT - 1)),
+  };
+}
+
+export function addExclusiveDiscreteInput(address: number): boolean {
+  // Modbus limit: max 2000 coils per read
+  if (discreteInputState.entries.length >= DISCRETE_INPUT_MAX_COUNT) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${DISCRETE_INPUT_MAX_COUNT}; already at ${DISCRETE_INPUT_MAX_COUNT}.`);
+    return false;
+  }
+
+  if (!Number.isFinite(address)) {
+    warnLocal(`Address is invalid. Accepted address range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}.`);
+    return false;
+  }
+  const normalized = Math.floor(address);
+  if (normalized < MODBUS_ADDRESS_MIN || normalized > MODBUS_ADDRESS_MAX) {
+    warnLocal(`Address is invalid. Accepted address range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}.`);
+    return false;
+  }
+
+  const accepted = getDiscreteInputAcceptedAddressRange();
+  if (normalized < accepted.min || normalized > accepted.max) {
+    warnLocal(`Address is invalid. Accepted address range is ${accepted.min}-${accepted.max} to keep max span ${DISCRETE_INPUT_MAX_COUNT}.`);
+    return false;
+  }
+
+  if (discreteInputState.entries.some((e) => e.address === normalized)) return false;
+
+  upsertAndSortEntries([
+    ...discreteInputState.entries,
+    {
+      address: normalized,
+      slaveValue: false,
+      desiredValue: false,
+      pending: false,
+      writeError: null,
+      label: "",
+      origin: "custom",
+    },
+  ]);
+  // Register the new address in the Rust data store (value=false)
+  void invoke("store_set_discrete_input", { address: normalized, value: false });
+  return true;
+}
+
+function pickRandomAvailableDiscreteInputAddress(): number | null {
+  // Modbus limit: max 2000 coils per read
+  if (discreteInputState.entries.length >= DISCRETE_INPUT_MAX_COUNT) {
+    warnLocal(`Address is invalid. Accepted count range is 1-${DISCRETE_INPUT_MAX_COUNT}; already at ${DISCRETE_INPUT_MAX_COUNT}.`);
+    return null;
+  }
+
+  const used = new Set(discreteInputState.entries.map((e) => e.address));
+  const accepted = getDiscreteInputAcceptedAddressRange();
+  const pool: number[] = [];
+
+  // Pick from current range neighborhood first, then broaden.
+  const preferredMin = Math.max(accepted.min, discreteInputState.startAddress);
+  const preferredMax = Math.min(accepted.max, discreteInputState.startAddress + discreteInputState.inputCount + 255);
+  for (let addr = preferredMin; addr <= preferredMax; addr++) {
+    if (!used.has(addr)) {
+      pool.push(addr);
+    }
+  }
+
+  if (pool.length === 0) {
+    for (let addr = accepted.min; addr <= accepted.max; addr++) {
+      if (!used.has(addr)) pool.push(addr);
+      if (pool.length >= 2048) break;
+    }
+  }
+
+  if (pool.length === 0) return null;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+export function generateRandomExclusiveDiscreteInputAddress(): number | null {
+  return pickRandomAvailableDiscreteInputAddress();
+}
+
+export function addRandomExclusiveDiscreteInput(): number | null {
+  const picked = pickRandomAvailableDiscreteInputAddress();
+  if (picked === null) return null;
+  addExclusiveDiscreteInput(picked);
+  return picked;
+}
+
+export function removeDiscreteInput(address: number): void {
+  stopRuleTimer(address);
+  delete discreteInputRules[address];
+  discreteInputState.entries = discreteInputState.entries.filter((e) => e.address !== address);
+  void invoke("store_remove_discrete_input", { address });
+}
+
+export function removeAllDiscreteInputs(): void {
+  clearAllDiscreteInputRules();
+  discreteInputState.entries = [];
+  void invoke("store_clear_discrete_inputs", {});
+}
+
+// ── Per-address rules ─────────────────────────────────────────────────────────
+
+function stopRuleTimer(address: number): void {
+  const timer = ruleTimers.get(address);
+  if (timer !== undefined) {
+    clearInterval(timer);
+    ruleTimers.delete(address);
+  }
+}
+
+export function getDiscreteInputRule(address: number): DiscreteInputRule {
+  return discreteInputRules[address] ?? DEFAULT_RULE;
+}
+
+export function setDiscreteInputRule(address: number, rule: DiscreteInputRule): void {
+  stopRuleTimer(address);
+  if (rule.type === "none") {
+    delete discreteInputRules[address];
+  } else {
+    discreteInputRules[address] = { ...rule };
+    if (rule.type === "auto-toggle") {
+      const timer = setInterval(() => {
+        const entry = discreteInputState.entries.find((e) => e.address === address);
+        if (!entry) {
+          stopRuleTimer(address);
+          delete discreteInputRules[address];
+          return;
+        }
+        toggleDiscreteInputValue(address);
+        void writeDiscreteInput(address);
+      }, rule.intervalMs);
+      ruleTimers.set(address, timer);
+    }
+  }
+}
+
+export function clearAllDiscreteInputRules(): void {
+  for (const timer of ruleTimers.values()) {
+    clearInterval(timer);
+  }
+  ruleTimers.clear();
+  for (const key of Object.keys(discreteInputRules)) {
+    delete discreteInputRules[Number(key)];
+  }
+}
+
+// ── Poll ──────────────────────────────────────────────────────────────────────
+
+export async function readAllDiscreteInputs(): Promise<void> {
+  if (readAllInFlight) return;
+  readAllInFlight = true;
+  try {
+    if (discreteInputState.entries.length === 0) return;
+    const addresses = discreteInputState.entries.map((e) => e.address);
+    const results = await invoke<StoreReadBoolEntry[]>("store_read_discrete_inputs", { addresses });
+    const resultMap = new Map(results.map((r) => [r.address, r.value]));
+    let okCount = 0;
+    for (const entry of discreteInputState.entries) {
+      if (resultMap.has(entry.address)) {
+        entry.slaveValue = resultMap.get(entry.address) ?? entry.slaveValue;
+        entry.writeError = null;
+        okCount += 1;
+      }
+    }
+    addLog("info", `store.read ok total=${discreteInputState.entries.length} ok=${okCount}`);
+  } catch (err) {
+    addLog("error", `store.read err msg=${parseInvokeError(err)}`);
+  } finally {
+    readAllInFlight = false;
+  }
+}
+export function setDiscreteInputPollActive(active: boolean): void {
+  if (active && !isPollingAllowedForCount(discreteInputState.entries.length)) {
+    warnLocal(
+      `Polling disabled for lists larger than ${getGlobalPollingMaxAddressCount()} addresses. Use Read once for bulk refresh.`,
+    );
+    discreteInputState.pollActive = false;
+    return;
+  }
+
+  discreteInputState.pollActive = active;
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (active) {
+    void readAllDiscreteInputs();
+    pollTimer = setInterval(() => { void readAllDiscreteInputs(); }, discreteInputState.pollInterval);
+  }
+}
+
+export function setDiscreteInputPollInterval(ms: number): void {
+  discreteInputState.pollInterval = ms;
+  if (discreteInputState.pollActive) setDiscreteInputPollActive(true); // restart with new interval
+}
+
+// ── Address range ─────────────────────────────────────────────────────────────
+
+export function applyDiscreteInputAddressRange(startAddress: number, count: number): void {
+  // Stop active operations before changing range
+  if (discreteInputState.massAutoActive) stopAutoToggle();
+  if (discreteInputState.pollActive) setDiscreteInputPollActive(false);
+
   const requestedStart = Math.floor(startAddress);
   const requestedCount = Math.floor(count);
 
@@ -227,51 +764,50 @@ export function applyDiscreteInputRange(startAddress: number, count: number): vo
   discreteInputState.startAddress = start;
   discreteInputState.inputCount = qty;
 
-  const next = generateInputs(start, qty);
-  const existing = new Map(discreteInputState.entries.map((entry) => [entry.address, entry]));
-  for (const entry of next) {
-    const prev = existing.get(entry.address);
-    if (prev) {
-      entry.value = prev.value;
-      entry.pending = false;
-      entry.readError = prev.readError;
-      entry.label = prev.label;
-      entry.origin = prev.origin;
-    }
-  }
+  // Keep custom-added coils while rebuilding base range entries.
+  const customEntries = discreteInputState.entries.filter((e) => e.origin === "custom");
+  const rangeEntries = generateDiscreteInputs(start, qty).map((entry) => {
+    const existing = discreteInputState.entries.find((e) => e.address === entry.address);
+    if (!existing) return entry;
+    return {
+      ...entry,
+      slaveValue: existing.slaveValue,
+      desiredValue: existing.desiredValue,
+      writeError: existing.writeError,
+      label: existing.label,
+      pending: existing.pending,
+      origin: existing.origin,
+    };
+  });
 
-  // Keep custom addresses so "Add" behavior mirrors coils panel.
-  for (const prev of discreteInputState.entries) {
-    if (prev.origin === "custom" && !next.some((entry) => entry.address === prev.address)) {
-      next.push({ ...prev });
-    }
-  }
-
+  const customCandidates = customEntries
+    .filter((e) => !rangeEntries.some((r) => r.address === e.address))
+    .sort((a, b) => a.address - b.address);
   const rangeEnd = start + qty - 1;
   const acceptedCustomMin = Math.max(MODBUS_ADDRESS_MIN, rangeEnd - (DISCRETE_INPUT_MAX_COUNT - 1));
   const acceptedCustomMax = Math.min(MODBUS_ADDRESS_MAX, start + (DISCRETE_INPUT_MAX_COUNT - 1));
-  const rangeSet = new Set(generateInputs(start, qty).map((entry) => entry.address));
-  const rangeOnly = next.filter((entry) => rangeSet.has(entry.address));
-  const customOnly = next
-    .filter((entry) => entry.origin === "custom" && !rangeSet.has(entry.address))
-    .sort((a, b) => a.address - b.address);
-  const keptCustom = customOnly.filter(
+  const keptCustom = customCandidates.filter(
     (entry) => entry.address >= acceptedCustomMin && entry.address <= acceptedCustomMax,
   );
-  const droppedCustom = customOnly.length - keptCustom.length;
-  next.length = 0;
-  next.push(...rangeOnly, ...keptCustom);
 
+  upsertAndSortEntries([...rangeEntries, ...keptCustom]);
+
+  const droppedCustom = customCandidates.length - keptCustom.length;
   if (droppedCustom > 0) {
-    warnLocal(`Address is invalid. Accepted address range is ${acceptedCustomMin}-${acceptedCustomMax} for custom inputs at this range; dropped ${droppedCustom} custom input${droppedCustom === 1 ? "" : "s"}.`);
+    warnLocal(`Address is invalid. Accepted address range is ${acceptedCustomMin}-${acceptedCustomMax} for custom coils at this range; dropped ${droppedCustom} custom coil${droppedCustom === 1 ? "" : "s"}.`);
   }
 
-  next.sort((a, b) => a.address - b.address);
-  discreteInputState.entries = next;
+  // Reset mass-write range to match new entries
+  discreteInputState.massFrom = start;
+  discreteInputState.massTo = start + qty - 1;
+
+  // Sync registered addresses in the Rust data store
   syncDiscreteInputAddressesToBackend();
 }
 
 export function addDiscreteInputRange(startAddress: number, count: number): void {
+  if (discreteInputState.massAutoActive) stopAutoToggle();
+
   const requestedStart = Math.floor(startAddress);
   const requestedCount = Math.floor(count);
 
@@ -291,160 +827,31 @@ export function addDiscreteInputRange(startAddress: number, count: number): void
 
   // Merge: only add addresses not already present
   const existingByAddress = new Map(discreteInputState.entries.map((e) => [e.address, e]));
-  for (const newEntry of generateInputs(start, qty)) {
+  for (const newEntry of generateDiscreteInputs(start, qty)) {
     if (!existingByAddress.has(newEntry.address)) {
       existingByAddress.set(newEntry.address, newEntry);
     }
   }
 
-  discreteInputState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
+  upsertAndSortEntries([...existingByAddress.values()]);
+  // Sync registered addresses in the Rust data store
   syncDiscreteInputAddressesToBackend();
 }
 
-export function addExclusiveDiscreteInput(address: number): boolean {
-  // Modbus limit: max 2000 discrete inputs per read
-  if (discreteInputState.entries.length >= DISCRETE_INPUT_MAX_COUNT) {
-    warnLocal(`Address is invalid. Accepted count range is 1-${DISCRETE_INPUT_MAX_COUNT}; already at ${DISCRETE_INPUT_MAX_COUNT}.`);
-    return false;
-  }
-
-  const addr = Math.floor(address);
-  if (!Number.isFinite(addr) || addr < MODBUS_ADDRESS_MIN || addr > MODBUS_ADDRESS_MAX) {
-    warnLocal(`Address is invalid. Accepted address range is ${MODBUS_ADDRESS_MIN}-${MODBUS_ADDRESS_MAX}.`);
-    return false;
-  }
-
-  const accepted = getDiscreteAcceptedAddressRange();
-  if (addr < accepted.min || addr > accepted.max) {
-    warnLocal(`Address is invalid. Accepted address range is ${accepted.min}-${accepted.max} to keep max span ${DISCRETE_INPUT_MAX_COUNT}.`);
-    return false;
-  }
-
-  const existing = discreteInputState.entries.find((entry) => entry.address === addr);
-  if (existing) {
-    return true;
-  }
-
-  const next: DiscreteInputEntry[] = [
-    ...discreteInputState.entries,
-    {
-      address: addr,
-      value: false,
-      pending: false,
-      readError: null,
-      label: "",
-      origin: "custom",
-    },
-  ];
-
-  discreteInputState.entries = next.sort((a, b) => a.address - b.address);
-  void invoke("store_set_discrete_input", { address: addr, value: false });
-  return true;
-}
-
-export function generateRandomExclusiveDiscreteInputAddress(): number | null {
-  // Modbus limit: max 2000 discrete inputs per read
-  if (discreteInputState.entries.length >= DISCRETE_INPUT_MAX_COUNT) {
-    warnLocal(`Address is invalid. Accepted count range is 1-${DISCRETE_INPUT_MAX_COUNT}; already at ${DISCRETE_INPUT_MAX_COUNT}.`);
-    return null;
-  }
-
-  if (discreteInputState.entries.length >= MODBUS_ADDRESS_MAX + 1) {
-    return null;
-  }
-
-  const accepted = getDiscreteAcceptedAddressRange();
-
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const addr = accepted.min + Math.floor(Math.random() * (accepted.max - accepted.min + 1));
-    if (!discreteInputState.entries.some((entry) => entry.address === addr)) {
-      return addr;
-    }
-  }
-
-  for (let addr = accepted.min; addr <= accepted.max; addr += 1) {
-    if (!discreteInputState.entries.some((entry) => entry.address === addr)) {
-      return addr;
-    }
-  }
-
-  return null;
-}
-
-export function removeDiscreteInput(address: number): void {
-  discreteInputState.entries = discreteInputState.entries.filter((entry) => entry.address !== address);
-  void invoke("store_remove_discrete_input", { address });
-}
-
-export function removeAllDiscreteInputs(): void {
-  discreteInputState.entries = [];
-  void invoke("store_clear_discrete_inputs", {});
-}
+// ── Filtered view ─────────────────────────────────────────────────────────────
 
 export function syncDiscreteInputAddressesToBackend(): void {
   const addresses = discreteInputState.entries.map((e) => e.address);
   void invoke("store_sync_discrete_input_addresses", { addresses });
 }
 
-async function readRange(startAddress: number, quantity: number): Promise<BackendReadDiscreteInputsResponse> {
-  return invoke<BackendReadDiscreteInputsResponse>("read_discrete_inputs", {
-    request: { startAddress, quantity },
-  });
-}
-
-async function readRangeAdaptive(startAddress: number, quantity: number): Promise<Map<number, boolean>> {
-  const values = new Map<number, boolean>();
-
-  function isModbusException(err: unknown): boolean {
-    const msg = (typeof err === "string" ? err : (err as { message?: string })?.message ?? "").toLowerCase();
-    return msg.includes("exception") || msg.includes("illegal") || msg.includes("slave device failure");
-  }
-
-  async function readChunk(start: number, qty: number): Promise<void> {
-    try {
-      const response = await readRange(start, qty);
-      for (const input of response.inputs) {
-        values.set(input.address, input.value);
-      }
-      return;
-    } catch (err) {
-      // A Modbus protocol exception is a definitive answer — don't bisect further.
-      if (isModbusException(err)) {
-        const reason = parseInvokeError(err);
-        addLog("warn", `fc02.read exception addr=${start} qty=${qty} msg=${reason}`);
-        return;
-      }
-
-      // Transport failure: re-throw so the outer section handler logs once and continues.
-      // Bisecting here would only produce O(n) redundant failures for every address.
-      const reason = parseInvokeError(err);
-      if (isTransientTransportError(reason)) {
-        throw err;
-      }
-
-      if (qty === 1) {
-        addLog("warn", `fc02.read miss addr=${start} msg=${reason}`);
-        return;
-      }
-    }
-
-    const leftQty = Math.floor(qty / 2);
-    const rightQty = qty - leftQty;
-    await readChunk(start, leftQty);
-    await readChunk(start + leftQty, rightQty);
-  }
-
-  await readChunk(startAddress, quantity);
-  return values;
-}
-
 export function getFilteredDiscreteInputs(): DiscreteInputEntry[] {
   const valueFiltered = (() => {
     switch (discreteInputState.filter) {
       case "on":
-        return discreteInputState.entries.filter((entry) => entry.value);
+        return discreteInputState.entries.filter((entry) => entry.slaveValue);
       case "off":
-        return discreteInputState.entries.filter((entry) => !entry.value);
+        return discreteInputState.entries.filter((entry) => !entry.slaveValue);
       default:
         return discreteInputState.entries;
     }
@@ -469,191 +876,36 @@ export function getFilteredDiscreteInputs(): DiscreteInputEntry[] {
   }
 }
 
-export async function readAllDiscreteInputs(options?: { trace?: boolean; markPending?: boolean; queueIfBusy?: boolean }): Promise<void> {
-  if (discreteInputState.entries.length === 0) return;
-  // Do not issue reads while the transport layer is recovering.
-  if (connectionState.status === "reconnecting" || connectionState.status === "disconnected") return;
+/** Build a preview string for the current mass-write pattern & range */
+export function buildMassPreview(): string {
+  const targets = getTargetAddresses();
+  const total = targets.length;
+  if (total <= 0) return "—";
 
-  const queueIfBusy = options?.queueIfBusy ?? true;
-  if (readAllInFlight) {
-    if (queueIfBusy && readAllQueuedRuns < READ_ALL_QUEUE_DEPTH_MAX) {
-      readAllQueuedRuns += 1;
-    }
-    return;
-  }
-
-  readAllInFlight = true;
-
-  const sections = buildAddressSections(discreteInputState.entries.map((entry) => entry.address));
-  const trace = options?.trace ?? true;
-  const markPending = options?.markPending ?? true;
-  if (trace) {
-    const singleSections = sections.filter((section) => section.quantity === 1).length;
-    const adaptiveSections = sections.length - singleSections;
-    addLog(
-      "info",
-      `fc02.read plan total=${discreteInputState.entries.length} sections=${sections.length} singles=${singleSections} adaptive=${adaptiveSections} sample=${formatSectionPreview(sections)}`,
-    );
-  }
-
-  const entryByAddress = new Map<number, DiscreteInputEntry>(
-    discreteInputState.entries.map((entry) => [entry.address, entry]),
-  );
-
-  for (const entry of discreteInputState.entries) {
-    if (markPending) {
-      entry.pending = true;
+  const preview: string[] = [];
+  const cap = Math.min(total, 20);
+  for (let i = 0; i < cap; i++) {
+    switch (discreteInputState.massPattern) {
+      case "all-on":
+        preview.push("1");
+        break;
+      case "all-off":
+        preview.push("0");
+        break;
+      case "alternating":
+        preview.push(i % 2 === 0 ? "1" : "0");
+        break;
+      case "alternating-inv":
+        preview.push(i % 2 !== 0 ? "1" : "0");
+        break;
+      case "every-third":
+        preview.push(i % 3 === 0 ? "1" : "0");
+        break;
+      case "random":
+        preview.push("?");
+        break;
     }
   }
-
-  try {
-    let missingCount = 0;
-
-    for (const section of sections) {
-      try {
-        if (section.quantity === 1) {
-          const response = await readRange(section.start, 1);
-          const input = response.inputs.find((item) => item.address === section.start);
-          const entry = entryByAddress.get(section.start);
-          if (entry) {
-            if (input) {
-              entry.value = input.value;
-              entry.readError = null;
-            } else {
-              entry.readError = "Address not available";
-              missingCount += 1;
-            }
-            if (markPending) {
-              entry.pending = false;
-            }
-          }
-          continue;
-        }
-
-        const valueMap = await readRangeAdaptive(section.start, section.quantity);
-        const end = section.start + section.quantity - 1;
-        for (let address = section.start; address <= end; address += 1) {
-          const entry = entryByAddress.get(address);
-          if (!entry) continue;
-          if (valueMap.has(address)) {
-            entry.value = valueMap.get(address) ?? false;
-            entry.readError = null;
-          } else {
-            entry.readError = "Address not available";
-            missingCount += 1;
-          }
-          if (markPending) {
-            entry.pending = false;
-          }
-        }
-      } catch (sectionErr) {
-        const end = section.start + section.quantity - 1;
-        const reason = parseInvokeError(sectionErr);
-        if (isTransientTransportError(reason)) {
-          for (let address = section.start; address <= end; address += 1) {
-            const entry = entryByAddress.get(address);
-            if (entry && markPending) {
-              entry.pending = false;
-            }
-          }
-          addLog(
-            "warn",
-            `fc02.read transient start=${section.start} qty=${section.quantity} end=${end} msg=${reason}`,
-          );
-          continue;
-        }
-
-        for (let address = section.start; address <= end; address += 1) {
-          const entry = entryByAddress.get(address);
-          if (entry) {
-            if (markPending) {
-              entry.pending = false;
-            }
-            entry.readError = "Address not available";
-          }
-        }
-        addLog(
-          "error",
-          `fc02.read err start=${section.start} qty=${section.quantity} end=${end} msg=${reason}`,
-        );
-      }
-    }
-
-    const okCount = discreteInputState.entries.length - missingCount;
-    if (okCount > 0) {
-      addLog("info", `fc02.read ok total=${discreteInputState.entries.length} ok=${okCount} sections=${sections.length}`);
-    }
-    if (missingCount > 0) {
-      addLog("warn", `fc02.read miss count=${missingCount}`);
-    }
-  } catch (err) {
-    for (const entry of discreteInputState.entries) {
-      if (markPending) {
-        entry.pending = false;
-      }
-    }
-    addLog("error", `fc02.read err msg=${parseInvokeError(err)}`);
-  } finally {
-    readAllInFlight = false;
-    if (readAllQueuedRuns > 0) {
-      readAllQueuedRuns -= 1;
-      void readAllDiscreteInputs({ trace: false, markPending: false, queueIfBusy: false });
-    }
-  }
-}
-
-async function runDiscreteInputPollTick(): Promise<void> {
-  await readAllDiscreteInputs({ trace: false, markPending: false, queueIfBusy: true });
-}
-
-export async function readDiscreteInput(address: number): Promise<void> {
-  const entry = discreteInputState.entries.find((item) => item.address === address);
-  if (!entry) return;
-
-  entry.pending = true;
-  try {
-    const response = await readRange(address, 1);
-    const input = response.inputs.find((item) => item.address === address);
-    if (input) {
-      entry.value = input.value;
-      entry.readError = null;
-    }
-    addLog("info", `fc02.read ok addr=${address} val=${input?.value ? 1 : 0}`);
-  } catch (err) {
-    entry.readError = parseInvokeError(err);
-    addLog("error", `fc02.read err addr=${address} msg=${entry.readError}`);
-  } finally {
-    entry.pending = false;
-  }
-}
-
-export function setDiscreteInputPollInterval(ms: number): void {
-  discreteInputState.pollInterval = Math.max(250, Math.floor(ms));
-  if (discreteInputState.pollActive) {
-    setDiscreteInputPollActive(true);
-  }
-}
-
-export function setDiscreteInputPollActive(active: boolean): void {
-  if (active && !isPollingAllowedForCount(discreteInputState.entries.length)) {
-    warnLocal(
-      `Polling disabled for lists larger than ${getGlobalPollingMaxAddressCount()} addresses. Use Read once for bulk refresh.`,
-    );
-    discreteInputState.pollActive = false;
-    return;
-  }
-
-  discreteInputState.pollActive = active;
-
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-
-  if (active) {
-    void runDiscreteInputPollTick();
-    pollTimer = setInterval(() => {
-      void runDiscreteInputPollTick();
-    }, discreteInputState.pollInterval);
-  }
+  if (total > 20) preview.push("…");
+  return `${total} coil${total !== 1 ? "s" : ""}: ${preview.join(" ")}`;
 }

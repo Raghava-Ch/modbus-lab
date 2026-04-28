@@ -6,14 +6,11 @@
   import AppShell from "./components/layout/AppShell.svelte";
   import { addLog } from "./state/logs.svelte";
   import { applyBackendConnectionStatus } from "./state/connection.svelte";
-  import { notifyError, notifyInfo } from "./state/notifications.svelte";
   import { initLayoutState } from "./state/layout.svelte";
   import { initSettingsState } from "./state/settings.svelte";
   import { trackConnectionHealthEvent } from "./state/connection-health.svelte";
 
   let seeded = $state(false);
-  let previousBackendStatus = $state<string | null>(null);
-  let outageNotified = $state(false);
 
   interface BackendEventPayload {
     level?: "info" | "warn" | "error" | "traffic";
@@ -46,39 +43,6 @@
     return `${topic}${message}`;
   }
 
-  function normalizeStatus(status: string | undefined): string {
-    return (status ?? "").toLowerCase();
-  }
-
-  function isConnectedStatus(status: string): boolean {
-    return status.startsWith("connected") || status === "running";
-  }
-
-  function isOutageStatus(status: string): boolean {
-    return status === "reconnecting" || status === "disconnected" || status === "error" || status === "idle";
-  }
-
-  function maybeNotifyServerDown(nextStatusRaw: string | undefined, details?: string): void {
-    const nextStatus = normalizeStatus(nextStatusRaw);
-    const previousStatus = normalizeStatus(previousBackendStatus ?? undefined);
-    const droppedFromConnected = isConnectedStatus(previousStatus) && isOutageStatus(nextStatus);
-
-    if (droppedFromConnected && !outageNotified) {
-      const suffix = details?.trim() ? ` (${details})` : "";
-      notifyError(`Modbus server appears to be down${suffix}`);
-      outageNotified = true;
-    }
-
-    if (isConnectedStatus(nextStatus)) {
-      if (outageNotified) {
-        notifyInfo("Reconnected to Modbus server.");
-      }
-      outageNotified = false;
-    }
-
-    previousBackendStatus = nextStatus;
-  }
-
   $effect(() => {
     if (seeded) {
       return;
@@ -105,7 +69,6 @@
           trackConnectionHealthEvent(payload);
 
           if (payload.status?.status) {
-            maybeNotifyServerDown(payload.status.status, payload.status.details);
             applyBackendConnectionStatus(payload.status.status, payload.status.details);
           }
         });
@@ -119,7 +82,6 @@
         console.log("[App] Fetching backend status...");
         const status = await invoke<{ status: string; details?: string }>("listener_status");
         console.log("[App] Backend status received:", status);
-        maybeNotifyServerDown(status.status, status.details);
         applyBackendConnectionStatus(status.status, status.details);
       } catch (err) {
         console.error("[App] Failed to fetch backend status:", err);
@@ -130,7 +92,6 @@
       statusPollTimer = setInterval(() => {
         void invoke<{ status: string; details?: string }>("listener_status")
           .then((status) => {
-            maybeNotifyServerDown(status.status, status.details);
             applyBackendConnectionStatus(status.status, status.details);
           })
           .catch(() => {
