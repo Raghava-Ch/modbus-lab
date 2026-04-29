@@ -8,16 +8,22 @@ on:
 
 jobs:
   e2e:
-    name: Modbus TCP E2E (Linux)
-    runs-on: ubuntu-latest
+    name: Modbus TCP E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       # ── System dependencies ──────────────────────────────────────────────────
-      # modbus-rs depends on the serialport crate which requires libudev on Linux.
-      - name: Install libudev-dev
+      # The serialport crate requires libudev on Linux only.
+      - name: Install libudev-dev (Linux only)
+        if: runner.os == 'Linux'
         run: sudo apt-get update -y && sudo apt-get install -y libudev-dev
 
       # ── Rust toolchain ───────────────────────────────────────────────────────
