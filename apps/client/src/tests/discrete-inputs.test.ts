@@ -141,8 +141,11 @@ describe("addExclusiveDiscreteInput", () => {
     expect(discreteInputState.entries[0].address).toBe(50);
   });
 
-  it("returns true for a duplicate address (idempotent)", () => {
-    // The client implementation returns true even for existing addresses
+  it("returns true for a duplicate address (idempotent) — client-specific behaviour", () => {
+    // NOTE: The CLIENT's addExclusiveDiscreteInput returns `true` even for an existing
+    // address (idempotent / no-op for the caller). This differs from the SERVER version
+    // which returns `false` for duplicates (discrete-inputs have a slaveValue/desiredValue
+    // split there, so a true duplicate means no work was done).
     addExclusiveDiscreteInput(50);
     expect(addExclusiveDiscreteInput(50)).toBe(true);
     expect(discreteInputState.entries).toHaveLength(1);
