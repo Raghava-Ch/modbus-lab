@@ -346,6 +346,30 @@ pub struct ReadFifoQueueResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReadFileRecordsRequest {
+    pub payload_hex: String,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteFileRecordsRequest {
+    pub payload_hex: String,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRecordsResponse {
+    pub function_code: u8,
+    pub request_hex: String,
+    pub response_hex: String,
+    pub request_summary: String,
+    pub response_summary: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WriteCoilResponse {
     pub address: u16,
     pub value: bool,

@@ -269,13 +269,13 @@ describe("removeAllCoils", () => {
 // ── writeCoil ─────────────────────────────────────────────────────────────────
 
 describe("writeCoil", () => {
-  it("calls invoke('write_coil') with the address and desired value", async () => {
+  it("calls invoke('store_write_coil') with the address and desired value", async () => {
     coilState.entries = [makeEntry(3, { desiredValue: true })];
     mockedInvoke.mockResolvedValueOnce({ address: 3, value: true });
 
     await writeCoil(3);
 
-    expect(mockedInvoke).toHaveBeenCalledWith("write_coil", {
+    expect(mockedInvoke).toHaveBeenCalledWith("store_write_coil", {
       request: { address: 3, value: true },
     });
   });
@@ -311,28 +311,18 @@ describe("writeCoil", () => {
 // ── readCoil ──────────────────────────────────────────────────────────────────
 
 describe("readCoil", () => {
-  it("calls invoke('read_coils') with the address", async () => {
+  it("calls invoke('store_read_coils') with the address", async () => {
     coilState.entries = [makeEntry(7)];
-    mockedInvoke.mockResolvedValueOnce({
-      coils: [{ address: 7, value: true }],
-      startAddress: 7,
-      quantity: 1,
-    });
+    mockedInvoke.mockResolvedValueOnce([{ address: 7, value: true }]);
 
     await readCoil(7);
 
-    expect(mockedInvoke).toHaveBeenCalledWith("read_coils", {
-      request: { startAddress: 7, quantity: 1 },
-    });
+    expect(mockedInvoke).toHaveBeenCalledWith("store_read_coils", { addresses: [7] });
   });
 
   it("updates slaveValue on success", async () => {
     coilState.entries = [makeEntry(7)];
-    mockedInvoke.mockResolvedValueOnce({
-      coils: [{ address: 7, value: true }],
-      startAddress: 7,
-      quantity: 1,
-    });
+    mockedInvoke.mockResolvedValueOnce([{ address: 7, value: true }]);
 
     await readCoil(7);
 

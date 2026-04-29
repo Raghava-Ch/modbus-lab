@@ -9,6 +9,7 @@ use super::types::{
     ApiError, ApiResult, BackendEventLevel, CommandAck, ConnectionStatus, ConnectionStatusPayload,
     CustomFrameMode, CustomFrameRequest, CustomFrameResponse, DisconnectRequest, DiagnosticRequest,
     DiagnosticResponse, ReadExceptionStatusResponse, GetComEventCounterResponse,
+    FileRecordsResponse, ReadFileRecordsRequest, WriteFileRecordsRequest,
     GetComEventLogRequest, GetComEventLogResponse, ReportServerIdResponse,
     ReadFifoQueueRequest, ReadFifoQueueResponse,
     ReadDeviceIdentificationRequest,
@@ -719,6 +720,162 @@ pub async fn read_fifo_queue(
                         "fc24.read err addr={} msg={} rttMs={}",
                         request.address,
                         details_msg,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    err.analytics.clone(),
+                )
+                .await;
+                return Err(err);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn read_file_records(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadFileRecordsRequest,
+) -> ApiResult<FileRecordsResponse> {
+    let started_at = Instant::now();
+    let mut retried_after_recovery = false;
+
+    loop {
+        match state.read_file_records(&request).await {
+            Ok(response) => {
+                state.record_request_success().await;
+                emit_log(
+                    &app,
+                    BackendEventLevel::Info,
+                    "file-records",
+                    format!(
+                        "fc20.read ok req={} rsp={} rttMs={}",
+                        response.request_hex,
+                        response.response_hex,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    request.analytics.clone(),
+                )
+                .await;
+                return Ok(response);
+            }
+            Err(err) => {
+                if !retried_after_recovery && is_expected_response_buffer_full(&err) {
+                    retried_after_recovery = true;
+                    if let Err(recovery_err) = state
+                        .recover_tcp_client_pipeline(request.analytics.clone())
+                        .await
+                    {
+                        return Err(recovery_err);
+                    }
+                    continue;
+                }
+
+                if is_transport_error(&err) && state.record_request_transport_failure().await {
+                    emit_log(
+                        &app,
+                        BackendEventLevel::Warn,
+                        "connection",
+                        "Server unreachable after consecutive transport failures. Pausing requests until reconnected."
+                            .to_string(),
+                        Some(ConnectionStatusPayload {
+                            status: ConnectionStatus::Reconnecting,
+                            details: Some(format_error_message(&err)),
+                        }),
+                        err.analytics.clone(),
+                    )
+                    .await;
+                } else if !is_transport_error(&err) {
+                    state.record_request_success().await;
+                }
+
+                emit_log(
+                    &app,
+                    BackendEventLevel::Error,
+                    "file-records",
+                    format!(
+                        "fc20.read err msg={} rttMs={}",
+                        format_error_message(&err),
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    err.analytics.clone(),
+                )
+                .await;
+                return Err(err);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn write_file_records(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: WriteFileRecordsRequest,
+) -> ApiResult<FileRecordsResponse> {
+    let started_at = Instant::now();
+    let mut retried_after_recovery = false;
+
+    loop {
+        match state.write_file_records(&request).await {
+            Ok(response) => {
+                state.record_request_success().await;
+                emit_log(
+                    &app,
+                    BackendEventLevel::Info,
+                    "file-records",
+                    format!(
+                        "fc21.write ok req={} rsp={} rttMs={}",
+                        response.request_hex,
+                        response.response_hex,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    request.analytics.clone(),
+                )
+                .await;
+                return Ok(response);
+            }
+            Err(err) => {
+                if !retried_after_recovery && is_expected_response_buffer_full(&err) {
+                    retried_after_recovery = true;
+                    if let Err(recovery_err) = state
+                        .recover_tcp_client_pipeline(request.analytics.clone())
+                        .await
+                    {
+                        return Err(recovery_err);
+                    }
+                    continue;
+                }
+
+                if is_transport_error(&err) && state.record_request_transport_failure().await {
+                    emit_log(
+                        &app,
+                        BackendEventLevel::Warn,
+                        "connection",
+                        "Server unreachable after consecutive transport failures. Pausing requests until reconnected."
+                            .to_string(),
+                        Some(ConnectionStatusPayload {
+                            status: ConnectionStatus::Reconnecting,
+                            details: Some(format_error_message(&err)),
+                        }),
+                        err.analytics.clone(),
+                    )
+                    .await;
+                } else if !is_transport_error(&err) {
+                    state.record_request_success().await;
+                }
+
+                emit_log(
+                    &app,
+                    BackendEventLevel::Error,
+                    "file-records",
+                    format!(
+                        "fc21.write err msg={} rttMs={}",
+                        format_error_message(&err),
                         started_at.elapsed().as_millis()
                     ),
                     None,

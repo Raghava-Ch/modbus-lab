@@ -24,6 +24,7 @@ mbus-core = { version = "0.8.0", default-features = false, features = [
     "registers",
     "diagnostics",
     "fifo",
+    "file-record",
 ] }
 modbus-rs = { version = "0.8.0", features = [
     "async",
@@ -36,6 +37,7 @@ modbus-rs = { version = "0.8.0", features = [
     "holding-registers",
     "input-registers",
     "fifo",
+    "file-record",
     "diagnostics",
     "traffic",
 ] }

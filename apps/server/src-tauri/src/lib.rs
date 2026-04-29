@@ -23,6 +23,8 @@ use modbus::commands::{
     store_clear_fifo_queue,
     store_set_input_reg, store_remove_input_reg, store_clear_input_regs,
     store_sync_input_reg_addresses,
+    store_read_file_records, store_write_file_records,
+    read_file_records, write_file_records,
 };
 use modbus::service::AppState;
 
@@ -83,6 +85,10 @@ pub fn run() {
             store_remove_input_reg,
             store_clear_input_regs,
             store_sync_input_reg_addresses,
+            store_read_file_records,
+            store_write_file_records,
+            read_file_records,
+            write_file_records,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

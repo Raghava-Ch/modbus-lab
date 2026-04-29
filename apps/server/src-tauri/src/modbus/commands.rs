@@ -21,6 +21,7 @@ use super::types::{
     WriteMassCoilsRequest, WriteMassCoilsResponse, WriteMassHoldingRegistersRequest,
     WriteMassHoldingRegistersResponse,
     StoreReadBoolEntry, StoreReadU16Entry,
+    ReadFileRecordsRequest, WriteFileRecordsRequest, FileRecordsResponse,
 };
 
 fn format_error_message(err: &ApiError) -> String {
@@ -75,6 +76,125 @@ fn is_transport_message(msg: &str) -> bool {
         || t.contains("connection aborted")
         || t.contains("unexpected eof")
         || t.contains("early eof")
+}
+
+fn parse_hex_input_local(input: &str) -> Result<Vec<u8>, String> {
+    let cleaned: String = input.chars().filter(|ch| ch.is_ascii_hexdigit()).collect();
+    if cleaned.len() % 2 != 0 {
+        return Err("Hex input must contain an even number of hex digits.".to_string());
+    }
+
+    let mut out = Vec::with_capacity(cleaned.len() / 2);
+    let bytes = cleaned.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let part = std::str::from_utf8(&bytes[i..i + 2])
+            .map_err(|_| "Invalid UTF-8 while parsing hex input.".to_string())?;
+        let value = u8::from_str_radix(part, 16)
+            .map_err(|_| format!("Invalid hex byte '{part}'."))?;
+        out.push(value);
+        i += 2;
+    }
+
+    Ok(out)
+}
+
+fn format_hex_bytes_local(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{:02X}", byte))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn parse_fc20_read_segments(payload: &[u8]) -> Result<Vec<(u16, u16, u16)>, String> {
+    if payload.is_empty() {
+        return Err("FC20 payload is empty.".to_string());
+    }
+
+    let byte_count = payload[0] as usize;
+    if byte_count != payload.len().saturating_sub(1) {
+        return Err(format!(
+            "FC20 byte count mismatch: header={}, actual={}",
+            byte_count,
+            payload.len().saturating_sub(1)
+        ));
+    }
+
+    let mut cursor = 1_usize;
+    let mut segments = Vec::new();
+    while cursor < payload.len() {
+        if cursor + 6 >= payload.len() {
+            return Err("FC20 segment truncated.".to_string());
+        }
+        let reference_type = payload[cursor];
+        if reference_type != 0x06 {
+            return Err(format!("FC20 unsupported reference type 0x{:02X}", reference_type));
+        }
+
+        let file = u16::from_be_bytes([payload[cursor + 1], payload[cursor + 2]]);
+        let record = u16::from_be_bytes([payload[cursor + 3], payload[cursor + 4]]);
+        let word_count = u16::from_be_bytes([payload[cursor + 5], payload[cursor + 6]]);
+        if word_count == 0 {
+            return Err("FC20 word count must be > 0.".to_string());
+        }
+        segments.push((file, record, word_count));
+        cursor += 7;
+    }
+
+    Ok(segments)
+}
+
+fn parse_fc21_write_segments(payload: &[u8]) -> Result<Vec<(u16, u16, Vec<u16>)>, String> {
+    if payload.is_empty() {
+        return Err("FC21 payload is empty.".to_string());
+    }
+
+    let byte_count = payload[0] as usize;
+    if byte_count != payload.len().saturating_sub(1) {
+        return Err(format!(
+            "FC21 byte count mismatch: header={}, actual={}",
+            byte_count,
+            payload.len().saturating_sub(1)
+        ));
+    }
+
+    let mut cursor = 1_usize;
+    let mut segments = Vec::new();
+    while cursor < payload.len() {
+        if cursor + 6 >= payload.len() {
+            return Err("FC21 segment truncated.".to_string());
+        }
+
+        let reference_type = payload[cursor];
+        if reference_type != 0x06 {
+            return Err(format!("FC21 unsupported reference type 0x{:02X}", reference_type));
+        }
+
+        let file = u16::from_be_bytes([payload[cursor + 1], payload[cursor + 2]]);
+        let record = u16::from_be_bytes([payload[cursor + 3], payload[cursor + 4]]);
+        let word_count = u16::from_be_bytes([payload[cursor + 5], payload[cursor + 6]]) as usize;
+        cursor += 7;
+
+        let bytes_needed = word_count * 2;
+        if cursor + bytes_needed > payload.len() {
+            return Err("FC21 segment data truncated.".to_string());
+        }
+
+        let mut values = Vec::with_capacity(word_count);
+        for _ in 0..word_count {
+            values.push(u16::from_be_bytes([payload[cursor], payload[cursor + 1]]));
+            cursor += 2;
+        }
+
+        segments.push((file, record, values));
+    }
+
+    Ok(segments)
+}
+
+fn summarize_file_record_segments(mode: &str, count: usize) -> String {
+    format!("store.{} segments={}", mode, count)
 }
 
 
@@ -132,6 +252,11 @@ pub async fn listener_start(
                 let mut app_store = handle.app.lock().await;
                 for (address, values) in fifo_snapshot {
                     app_store.set_fifo_queue(address, &values);
+                }
+
+                let file_record_snapshot = state.file_record_store.lock().await.clone();
+                for ((file_number, record_number), values) in file_record_snapshot {
+                    app_store.set_file_record(file_number, record_number, &values);
                 }
             }
 
@@ -1567,6 +1692,116 @@ pub async fn store_read_holding_regs(
     }
 }
 
+/// Read file-record values directly from the server's in-memory file-record store.
+#[tauri::command]
+pub async fn store_read_file_records(
+    state: State<'_, AppState>,
+    request: ReadFileRecordsRequest,
+) -> ApiResult<FileRecordsResponse> {
+    let request_payload = parse_hex_input_local(&request.payload_hex)
+        .map_err(|details| ApiError::invalid_request(details, request.analytics.clone()))?;
+    let segments = parse_fc20_read_segments(&request_payload)
+        .map_err(|details| ApiError::invalid_request(details, request.analytics.clone()))?;
+
+    let mut response_body: Vec<u8> = Vec::new();
+    let listener_guard = state.listener_handle.lock().await;
+    if let Some(handle) = listener_guard.as_ref() {
+        let app = handle.app.lock().await;
+        for (file, record, word_count) in &segments {
+            let words = app.get_file_record(*file, *record, *word_count);
+            let data_len = 1 + (words.len() * 2);
+            response_body.push(data_len as u8);
+            response_body.push(0x06);
+            for value in words {
+                let [hi, lo] = value.to_be_bytes();
+                response_body.push(hi);
+                response_body.push(lo);
+            }
+        }
+    } else {
+        let store = state.file_record_store.lock().await;
+        for (file, record, word_count) in &segments {
+            let record_words = store
+                .get(&(*file, *record))
+                .cloned()
+                .unwrap_or_default();
+            let needed = *word_count as usize;
+            let mut words = vec![0_u16; needed];
+            for (idx, value) in record_words.into_iter().take(needed).enumerate() {
+                words[idx] = value;
+            }
+
+            let data_len = 1 + (needed * 2);
+            response_body.push(data_len as u8);
+            response_body.push(0x06);
+            for value in words {
+                let [hi, lo] = value.to_be_bytes();
+                response_body.push(hi);
+                response_body.push(lo);
+            }
+        }
+    }
+
+    if response_body.len() > 255 {
+        return Err(ApiError::invalid_request(
+            "FC20 response payload exceeds 255 bytes.",
+            request.analytics.clone(),
+        ));
+    }
+
+    let mut response_payload = Vec::with_capacity(1 + response_body.len());
+    response_payload.push(response_body.len() as u8);
+    response_payload.extend_from_slice(&response_body);
+
+    Ok(FileRecordsResponse {
+        function_code: 0x14,
+        request_hex: format_hex_bytes_local(&request_payload),
+        response_hex: format_hex_bytes_local(&response_payload),
+        request_summary: summarize_file_record_segments("read", segments.len()),
+        response_summary: summarize_file_record_segments("read.response", segments.len()),
+    })
+}
+
+/// Write file-record values directly into the server's in-memory file-record store.
+#[tauri::command]
+pub async fn store_write_file_records(
+    state: State<'_, AppState>,
+    request: WriteFileRecordsRequest,
+) -> ApiResult<FileRecordsResponse> {
+    let request_payload = parse_hex_input_local(&request.payload_hex)
+        .map_err(|details| ApiError::invalid_request(details, request.analytics.clone()))?;
+    let segments = parse_fc21_write_segments(&request_payload)
+        .map_err(|details| ApiError::invalid_request(details, request.analytics.clone()))?;
+
+    {
+        let mut store = state.file_record_store.lock().await;
+        for (file, record, values) in &segments {
+            store.insert((*file, *record), values.clone());
+        }
+    }
+
+    {
+        let listener_guard = state.listener_handle.lock().await;
+        if let Some(handle) = listener_guard.as_ref() {
+            let mut app = handle.app.lock().await;
+            for (file, record, values) in &segments {
+                app.set_file_record(*file, *record, values);
+            }
+        }
+    }
+
+    // FC21 response echoes the request payload.
+    let response_payload = request_payload.clone();
+
+    Ok(FileRecordsResponse {
+        function_code: 0x15,
+        request_hex: format_hex_bytes_local(&request_payload),
+        response_hex: format_hex_bytes_local(&response_payload),
+        request_summary: summarize_file_record_segments("write", segments.len()),
+        response_summary: summarize_file_record_segments("write.response", segments.len()),
+    })
+}
+
 /// Read FIFO queue values directly from the server's in-memory store.
 #[tauri::command]
 pub async fn store_read_fifo_queue(
@@ -1873,5 +2108,161 @@ pub async fn write_holding_registers_batch(
             return Err(err)
         }
     }
+    }
+}
+
+#[tauri::command]
+pub async fn read_file_records(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadFileRecordsRequest,
+) -> ApiResult<FileRecordsResponse> {
+    let started_at = Instant::now();
+    let mut retried_after_recovery = false;
+
+    loop {
+        match state.read_file_records(&request).await {
+            Ok(response) => {
+                state.record_request_success().await;
+                emit_log(
+                    &app,
+                    BackendEventLevel::Info,
+                    "file-records",
+                    format!(
+                        "fc20.read ok req={} rsp={} rttMs={}",
+                        response.request_hex,
+                        response.response_hex,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    request.analytics.clone(),
+                )
+                .await;
+                return Ok(response);
+            }
+            Err(err) => {
+                if !retried_after_recovery && is_expected_response_buffer_full(&err) {
+                    retried_after_recovery = true;
+                    if let Err(recovery_err) = state
+                        .recover_tcp_client_pipeline(request.analytics.clone())
+                        .await
+                    {
+                        return Err(recovery_err);
+                    }
+                    continue;
+                }
+
+                if is_transport_error(&err) && state.record_request_transport_failure().await {
+                    emit_log(
+                        &app,
+                        BackendEventLevel::Warn,
+                        "connection",
+                        "Server unreachable after consecutive transport failures. Pausing requests until reconnected."
+                            .to_string(),
+                        Some(ConnectionStatusPayload {
+                            status: ConnectionStatus::Reconnecting,
+                            details: Some(format_error_message(&err)),
+                        }),
+                        err.analytics.clone(),
+                    )
+                    .await;
+                } else if !is_transport_error(&err) {
+                    state.record_request_success().await;
+                }
+
+                emit_log(
+                    &app,
+                    BackendEventLevel::Error,
+                    "file-records",
+                    format!(
+                        "fc20.read err msg={} rttMs={}",
+                        format_error_message(&err),
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    err.analytics.clone(),
+                )
+                .await;
+                return Err(err);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn write_file_records(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: WriteFileRecordsRequest,
+) -> ApiResult<FileRecordsResponse> {
+    let started_at = Instant::now();
+    let mut retried_after_recovery = false;
+
+    loop {
+        match state.write_file_records(&request).await {
+            Ok(response) => {
+                state.record_request_success().await;
+                emit_log(
+                    &app,
+                    BackendEventLevel::Info,
+                    "file-records",
+                    format!(
+                        "fc21.write ok req={} rsp={} rttMs={}",
+                        response.request_hex,
+                        response.response_hex,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    request.analytics.clone(),
+                )
+                .await;
+                return Ok(response);
+            }
+            Err(err) => {
+                if !retried_after_recovery && is_expected_response_buffer_full(&err) {
+                    retried_after_recovery = true;
+                    if let Err(recovery_err) = state
+                        .recover_tcp_client_pipeline(request.analytics.clone())
+                        .await
+                    {
+                        return Err(recovery_err);
+                    }
+                    continue;
+                }
+
+                if is_transport_error(&err) && state.record_request_transport_failure().await {
+                    emit_log(
+                        &app,
+                        BackendEventLevel::Warn,
+                        "connection",
+                        "Server unreachable after consecutive transport failures. Pausing requests until reconnected."
+                            .to_string(),
+                        Some(ConnectionStatusPayload {
+                            status: ConnectionStatus::Reconnecting,
+                            details: Some(format_error_message(&err)),
+                        }),
+                        err.analytics.clone(),
+                    )
+                    .await;
+                } else if !is_transport_error(&err) {
+                    state.record_request_success().await;
+                }
+
+                emit_log(
+                    &app,
+                    BackendEventLevel::Error,
+                    "file-records",
+                    format!(
+                        "fc21.write err msg={} rttMs={}",
+                        format_error_message(&err),
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    err.analytics.clone(),
+                )
+                .await;
+                return Err(err);
+            }
+        }
     }
 }
