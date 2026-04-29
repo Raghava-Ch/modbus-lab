@@ -690,7 +690,7 @@ async function readAllCoilsOnce(trace: boolean): Promise<void> {
       for (let address = section.start; address <= sectionEnd; address += 1) {
         const entry = entryByAddress.get(address);
         if (!entry) continue;
-        entry.writeError = "Address not available";
+        entry.writeError = reason;
       }
       addLog(
         "error",

@@ -110,27 +110,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
-name = "bitfields"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef6e59298da389bc0649c7463856b34c6e17fe542f88939426ede4436c6b1195"
-dependencies = [
- "bitfields-impl",
-]
-
-[[package]]
-name = "bitfields-impl"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2c044f98f86f15414668d6c8187c7e4fadab1ad2b31680f648703e0fe07c555"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,6 +299,12 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -841,12 +826,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -901,6 +902,7 @@ version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -1876,10 +1878,11 @@ checksum = "2532096657941c2fea9c289d370a250971c689d4f143798ff67113ec042024a5"
 
 [[package]]
 name = "mbus-async"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55560cc35b663cc581ac4a2001fb807cd0d2cb63b0940347900eaa1d31b23cea"
+checksum = "a54a4cbb8c9bbb64380005374fed4149a94d07743aa378d5c1d8c1095165338c"
 dependencies = [
+ "heapless",
  "mbus-client",
  "mbus-core",
  "mbus-network",
@@ -1889,9 +1892,9 @@ dependencies = [
 
 [[package]]
 name = "mbus-client"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4722883c19b998dc8314a7092986449696b71477ed118bcd6df09975efe0700f"
+checksum = "80d37456d6113f7904485df43a158422185d379ce3246d000364e599a3b29d8e"
 dependencies = [
  "heapless",
  "mbus-core",
@@ -1899,33 +1902,59 @@ dependencies = [
 
 [[package]]
 name = "mbus-core"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bed11b38e4d066a103dee2323a8414fde2d6764eb41c098c72580d190c01f409"
+checksum = "348dc8137fa569a73227aa21da88ca36c4da97c59e8dbab08ecb91622cbb5302"
 dependencies = [
- "bitfields",
  "heapless",
+]
+
+[[package]]
+name = "mbus-macros"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8a0928abc1579802b61a3d81815ec4fa8de4c5b97721703f8be19c734480ae6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
 name = "mbus-network"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6632121c711123b2fb949121460558fc53d3070b1724c518b7334256e642568d"
+checksum = "45058f5c6315df5685be58c9eb7e87fd5e286236fcc0a4ec086fbfeb55ee5247"
 dependencies = [
  "heapless",
  "mbus-core",
+ "tokio",
 ]
 
 [[package]]
 name = "mbus-serial"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d9f0dd0aa8a0c17432bb59fdfbe5f4c9999725597ce52cb72482220f38da4d0"
+checksum = "bfd5df60fd915e245ed0ef588814043b90a3455f2422494128fbf8ebc699dc2c"
 dependencies = [
  "heapless",
  "mbus-core",
  "serialport",
+ "tokio",
+ "tokio-serial",
+]
+
+[[package]]
+name = "mbus-server"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e483d83351bff24790c4fe73e2f201c9e27323bec56fd93731eb7090aab8355e"
+dependencies = [
+ "heapless",
+ "mbus-core",
+ "mbus-macros",
+ "serde",
+ "toml 0.8.2",
 ]
 
 [[package]]
@@ -1966,14 +1995,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50b7e5b27aa02a74bac8c3f23f448f8d87ff11f92d3aac1a6ed369ee08cc56c1"
 dependencies = [
  "libc",
+ "log",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mio-serial"
+version = "5.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "029e1f407e261176a983a6599c084efd322d9301028055c87174beac71397ba3"
+dependencies = [
+ "log",
+ "mio",
+ "nix 0.29.0",
+ "serialport",
+ "winapi",
 ]
 
 [[package]]
 name = "modbus-lab-client"
 version = "0.0.4"
 dependencies = [
+ "mbus-core",
  "modbus-rs",
  "serde",
  "serde_json",
@@ -1988,9 +2032,9 @@ dependencies = [
 
 [[package]]
 name = "modbus-rs"
-version = "0.5.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c9e86cdb31a8738aa2937934f259922d951f0887ecd7633bfd068800fce4fa4"
+checksum = "2320ac4b86db28c8a48a38557d17e0088ccc2be18263a70ba7a2ce1eb83ab9f3"
 dependencies = [
  "heapless",
  "mbus-async",
@@ -1998,6 +2042,7 @@ dependencies = [
  "mbus-core",
  "mbus-network",
  "mbus-serial",
+ "mbus-server",
 ]
 
 [[package]]
@@ -2065,6 +2110,18 @@ checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
 dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.11.0",
+ "cfg-if",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -3169,7 +3226,7 @@ dependencies = [
  "io-kit-sys",
  "libudev",
  "mach2",
- "nix",
+ "nix 0.26.4",
  "scopeguard",
  "unescaper",
  "windows-sys 0.52.0",
@@ -3878,6 +3935,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tokio-serial"
+version = "5.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa1d5427f11ba7c5e6384521cfd76f2d64572ff29f3f4f7aa0f496282923fdc8"
+dependencies = [
+ "cfg-if",
+ "futures",
+ "log",
+ "mio-serial",
+ "serialport",
+ "tokio",
 ]
 
 [[package]]

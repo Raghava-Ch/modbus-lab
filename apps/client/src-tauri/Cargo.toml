@@ -18,7 +18,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-modbus-rs = { version = "0.5.0", features = ["async", "client", "coils", "discrete-inputs", "registers", "traffic"] }
+mbus-core = { version = "0.8.0", default-features = false, features = ["coils", "discrete-inputs", "registers", "diagnostics", "fifo"] }
+modbus-rs = { version = "0.8.0", features = ["async", "client", "server", "network-tcp", "coils", "discrete-inputs", "registers", "diagnostics", "traffic"] }
 tokio = { version = "1", features = ["io-util", "net", "sync", "rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -26,3 +27,9 @@ thiserror = "1"
 serialport = "4"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
+
+[profile.dev]
+# modbus-rs generates large async futures that overflow the default
+# 2 MB tokio-worker stack in fully-unoptimised debug builds.
+# opt-level 1 is enough to shrink them while preserving debug symbols.
+opt-level = 1

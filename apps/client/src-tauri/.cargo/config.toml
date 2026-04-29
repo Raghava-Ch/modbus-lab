@@ -1,0 +1,20 @@
+# Increase the default thread stack size to 8 MB for debug builds.
+# modbus-rs 0.7.0 generates large async futures that overflow the default
+# 2 MB tokio-worker stack in unoptimised builds. On Windows the PE header
+# stack reserve applies to all threads, including tokio workers.
+#
+# /DELAYLOAD:comctl32.dll — comctl32 is pulled into the import table by the
+# AppHandle → tao → comctl32 dependency chain.  Without an application
+# manifest activating Common Controls v6, Windows refuses to start the test
+# binary (STATUS_ENTRYPOINT_NOT_FOUND / 0xC0000139) because it resolves the
+# import against comctl32 v5 which does not export TaskDialogIndirect.
+# Delay-loading makes Windows load comctl32 lazily (on first call) rather
+# than eagerly at binary startup, so test binaries — which never call any
+# comctl32 function — start successfully.  The production binary is unaffected
+# because tauri_build already embeds a manifest that activates v6 before the
+# first dialog is shown.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "link-args=/STACK:8388608 /DELAYLOAD:comctl32.dll",
+    "-C", "link-arg=delayimp.lib",
+]

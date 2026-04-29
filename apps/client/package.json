@@ -8,6 +8,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@testing-library/svelte": "^5.3.1",
+    "jsdom": "^29.0.2",
+    "vitest": "^4.1.5"
   }
 }

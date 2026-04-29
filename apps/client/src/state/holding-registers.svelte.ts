@@ -318,8 +318,8 @@ export async function readHoldingRegister(address: number): Promise<void> {
       entry.readError = "Address not available";
     }
   } catch (err) {
-    entry.readError = "Address not available";
-    addLog("error", `fc03.read err addr=${address} msg=${parseInvokeError(err)}`);
+    entry.readError = parseInvokeError(err);
+    addLog("error", `fc03.read err addr=${address} msg=${entry.readError}`);
   } finally {
     entry.pending = false;
   }
@@ -422,7 +422,7 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean;
 
           const entry = entryByAddress.get(section.start);
           if (entry) {
-            entry.writeError = "Address not available";
+            entry.writeError = reason;
             if (markPending) {
               entry.pending = false;
             }
@@ -481,7 +481,7 @@ export async function readAllHoldingRegisters(options?: { markPending?: boolean;
           for (let address = chunkStart; address <= chunkEnd; address += 1) {
             const entry = entryByAddress.get(address);
             if (!entry) continue;
-            entry.writeError = "Address not available";
+            entry.writeError = reason;
             missingCount += 1;
             if (markPending) {
               entry.pending = false;

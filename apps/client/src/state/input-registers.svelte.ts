@@ -365,7 +365,7 @@ export async function readAllInputRegisters(options?: { markPending?: boolean; q
 
           const entry = entryByAddress.get(section.start);
           if (entry) {
-            entry.readError = "Address not available";
+            entry.readError = reason;
             if (markPending) entry.pending = false;
           }
           failedRanges.push({ start: section.start, end: section.start, quantity: 1 });
@@ -415,7 +415,7 @@ export async function readAllInputRegisters(options?: { markPending?: boolean; q
           for (let address = chunkStart; address <= chunkEnd; address += 1) {
             const entry = entryByAddress.get(address);
             if (!entry) continue;
-            entry.readError = "Address not available";
+            entry.readError = reason;
             missingCount += 1;
             if (markPending) entry.pending = false;
           }

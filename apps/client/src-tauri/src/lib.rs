@@ -5,6 +5,7 @@ use modbus::commands::{
     diagnostic, get_com_event_counter, get_com_event_log, get_modbus_connection_status,
     list_serial_ports, send_custom_frame,
     read_coils, read_device_identification, read_discrete_inputs, read_exception_status,
+    read_fifo_queue,
     read_holding_registers, read_input_registers, report_server_id, write_coil,
     write_coils_batch, write_holding_register, write_holding_registers_batch,
 };
@@ -27,6 +28,7 @@ pub fn run() {
             read_discrete_inputs,
             read_holding_registers,
             read_input_registers,
+            read_fifo_queue,
             read_exception_status,
             diagnostic,
             send_custom_frame,

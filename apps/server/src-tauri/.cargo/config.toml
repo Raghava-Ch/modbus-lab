@@ -1,0 +1,6 @@
+# Increase the default thread stack size to 8 MB for debug builds.
+# modbus-rs 0.7.0 generates large async futures that overflow the default
+# 2 MB tokio-worker stack in unoptimised builds. On Windows the PE header
+# stack reserve applies to all threads, including tokio workers.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:8388608"]
