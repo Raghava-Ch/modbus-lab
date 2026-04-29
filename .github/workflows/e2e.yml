@@ -1,0 +1,43 @@
+name: E2E – Modbus TCP integration tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  e2e:
+    name: Modbus TCP E2E (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── System dependencies ──────────────────────────────────────────────────
+      # modbus-rs depends on the serialport crate which requires libudev on Linux.
+      - name: Install libudev-dev
+        run: sudo apt-get update -y && sudo apt-get install -y libudev-dev
+
+      # ── Rust toolchain ───────────────────────────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry & build artefacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tests/e2e/target
+          key: e2e-${{ runner.os }}-${{ hashFiles('tests/e2e/Cargo.lock') }}
+          restore-keys: e2e-${{ runner.os }}-
+
+      # ── Run E2E tests ────────────────────────────────────────────────────────
+      # Each test binds to port 0 (OS assigns a free port) so there are no
+      # hard-coded ports and no sleep() calls.  Tests run in parallel by
+      # default via tokio::test.
+      - name: Run Modbus TCP E2E tests
+        working-directory: tests/e2e
+        run: cargo test --locked -- --nocapture
