@@ -604,3 +604,27 @@ pub struct ReadDeviceIdentificationResponse {
     pub conformity: Option<u8>,
     pub objects: Vec<DeviceIdObject>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFileRecordsRequest {
+    pub payload_hex: String,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteFileRecordsRequest {
+    pub payload_hex: String,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRecordsResponse {
+    pub function_code: u8,
+    pub request_hex: String,
+    pub response_hex: String,
+    pub request_summary: String,
+    pub response_summary: String,
+}

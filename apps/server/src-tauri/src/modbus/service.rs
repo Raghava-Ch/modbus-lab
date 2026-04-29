@@ -46,6 +46,7 @@ use super::types::{
     TcpConnectRequest, WriteCoilRequest, WriteCoilResponse, WriteHoldingRegisterRequest,
     WriteHoldingRegisterResponse, WriteMassCoilsRequest, WriteMassCoilsResponse,
     WriteMassHoldingRegistersRequest, WriteMassHoldingRegistersResponse,
+    ReadFileRecordsRequest, WriteFileRecordsRequest, FileRecordsResponse,
 };
 
 #[derive(Clone, Copy)]
@@ -243,6 +244,9 @@ pub struct AppState {
     pub listener_handle: Arc<Mutex<Option<super::listener::ListenerHandle>>>,
     /// Persistent FIFO queue values managed by the server UI.
     pub fifo_store: Arc<Mutex<BTreeMap<u16, Vec<u16>>>>,
+    /// Persistent file-record values managed by the server UI.
+    /// Key: (file number, record number), Value: record words.
+    pub file_record_store: Arc<Mutex<BTreeMap<(u16, u16), Vec<u16>>>>,
 }
 
 impl AppState {
@@ -251,6 +255,7 @@ impl AppState {
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             listener_handle: Arc::new(Mutex::new(None)),
             fifo_store: Arc::new(Mutex::new(BTreeMap::new())),
+            file_record_store: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -1424,6 +1429,112 @@ impl AppState {
                 } else {
                     Some(response_ascii)
                 },
+                request_summary: describe_custom_pdu("request", function_code, &payload),
+                response_summary: describe_custom_pdu("response", function_code, &response_payload),
+            })
+        }
+
+        pub async fn read_file_records(
+            &self,
+            request: &ReadFileRecordsRequest,
+        ) -> ApiResult<FileRecordsResponse> {
+            self.mark_tcp_activity().await;
+
+            let payload = parse_hex_input(&request.payload_hex).map_err(|details| {
+                ApiError::backend_failure(
+                    "payloadHex is not valid hex.",
+                    Some(details),
+                    request.analytics.clone(),
+                )
+            })?;
+
+            let function_code = 0x14_u8;
+            let response_payload = match self.active_connection_kind(request.analytics.clone()).await? {
+                ActiveConnectionKind::Tcp => {
+                    let (host, port, slave_id, config) =
+                        self.active_tcp_endpoint(request.analytics.clone()).await?;
+                    send_raw_modbus_request_with_retry(
+                        &host,
+                        port,
+                        slave_id,
+                        function_code,
+                        &payload,
+                        config,
+                    )
+                    .await
+                    .map_err(|err| {
+                        ApiError::backend_failure(
+                            "FC20 Read File Record failed.",
+                            Some(err),
+                            request.analytics.clone(),
+                        )
+                    })?
+                }
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
+                    self.with_serial_session(request.analytics.clone(), |session| {
+                        serial_send_request(session, function_code, &payload)
+                    })
+                    .await?
+                }
+            };
+
+            Ok(FileRecordsResponse {
+                function_code,
+                request_hex: format_hex_bytes(&payload),
+                response_hex: format_hex_bytes(&response_payload),
+                request_summary: describe_custom_pdu("request", function_code, &payload),
+                response_summary: describe_custom_pdu("response", function_code, &response_payload),
+            })
+        }
+
+        pub async fn write_file_records(
+            &self,
+            request: &WriteFileRecordsRequest,
+        ) -> ApiResult<FileRecordsResponse> {
+            self.mark_tcp_activity().await;
+
+            let payload = parse_hex_input(&request.payload_hex).map_err(|details| {
+                ApiError::backend_failure(
+                    "payloadHex is not valid hex.",
+                    Some(details),
+                    request.analytics.clone(),
+                )
+            })?;
+
+            let function_code = 0x15_u8;
+            let response_payload = match self.active_connection_kind(request.analytics.clone()).await? {
+                ActiveConnectionKind::Tcp => {
+                    let (host, port, slave_id, config) =
+                        self.active_tcp_endpoint(request.analytics.clone()).await?;
+                    send_raw_modbus_request_with_retry(
+                        &host,
+                        port,
+                        slave_id,
+                        function_code,
+                        &payload,
+                        config,
+                    )
+                    .await
+                    .map_err(|err| {
+                        ApiError::backend_failure(
+                            "FC21 Write File Record failed.",
+                            Some(err),
+                            request.analytics.clone(),
+                        )
+                    })?
+                }
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
+                    self.with_serial_session(request.analytics.clone(), |session| {
+                        serial_send_request(session, function_code, &payload)
+                    })
+                    .await?
+                }
+            };
+
+            Ok(FileRecordsResponse {
+                function_code,
+                request_hex: format_hex_bytes(&payload),
+                response_hex: format_hex_bytes(&response_payload),
                 request_summary: describe_custom_pdu("request", function_code, &payload),
                 response_summary: describe_custom_pdu("response", function_code, &response_payload),
             })
@@ -3910,8 +4021,9 @@ fn decode_modbus_text(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::modbus::types::{CustomFrameMode, CustomFrameRequest};
     use modbus_rs::crc16;
-    use super::{try_extract_serial_rtu_response};
+    use super::{describe_custom_pdu, parse_hex_input, resolve_custom_frame_request, try_extract_serial_rtu_response};
 
     #[test]
     fn extracts_fc01_response_after_echoed_request_frame() {
@@ -3966,5 +4078,39 @@ mod tests {
 
         assert_eq!(payload, request_payload);
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn parses_hex_input_with_common_separators() {
+        let parsed = parse_hex_input("07 06,00;01 00-00 00:01").expect("hex parsing should succeed");
+        assert_eq!(parsed, vec![0x07, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn resolves_raw_frame_request_for_fc20_payload() {
+        let request = CustomFrameRequest {
+            mode: CustomFrameMode::RawBytes,
+            function_code: None,
+            payload_hex: None,
+            raw_hex: Some("14 07 06 00 01 00 00 00 01".to_string()),
+            analytics: None,
+        };
+
+        let (function, payload) =
+            resolve_custom_frame_request(&request).expect("raw frame should resolve");
+
+        assert_eq!(function, 0x14);
+        assert_eq!(payload, vec![0x07, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn summarizes_file_record_pdus() {
+        let fc20 = describe_custom_pdu("request", 0x14, &[0x07, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01]);
+        let fc21 = describe_custom_pdu("response", 0x15, &[0x09, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0A]);
+
+        assert!(fc20.contains("fc=0x14"));
+        assert!(fc20.contains("kind=request"));
+        assert!(fc21.contains("fc=0x15"));
+        assert!(fc21.contains("kind=response"));
     }
 }

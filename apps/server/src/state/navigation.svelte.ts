@@ -36,7 +36,7 @@ export const tabDefs: TabDef[] = [
   { id: "discrete-inputs", label: "Discrete Inputs", icon: "list", group: "main", feature: "FC 02 (Read-Only)" },
   { id: "holding-registers", label: "Holding Registers", icon: "database", group: "main", feature: "FC 03/06/16 (Read/Write)" },
   { id: "input-registers", label: "Input Registers", icon: "activity", group: "main", feature: "FC 04 (Read-Only)" },
-  { id: "file-records", label: "File Records", icon: "file-text", group: "main", feature: "FC 20/21 (Not Supported)" },
+  { id: "file-records", label: "File Records", icon: "file-text", group: "main", feature: "FC 20/21 (Read/Write)" },
   { id: "fifo-queue", label: "FIFO Queue", icon: "layers", group: "main", feature: "FC 24 (Read FIFO Queue)" },
   { id: "traffic", label: "Traffic", icon: "stethoscope", group: "main", feature: "Request/error analytics" },
   { id: "diagnostics", label: "Diagnostics", icon: "activity", group: "main", feature: "FC07/08/11/12/17/43 tools" },

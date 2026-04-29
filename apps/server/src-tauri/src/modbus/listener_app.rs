@@ -109,6 +109,7 @@ pub struct ServerApp {
     holding_regs: Vec<u16>,
     input_regs: Vec<u16>,
     fifo_queues: BTreeMap<u16, Vec<u16>>,
+    file_records: BTreeMap<(u16, u16), Vec<u16>>,
     registered_coils: Vec<bool>,
     registered_discrete_inputs: Vec<bool>,
     registered_holding_regs: Vec<bool>,
@@ -125,6 +126,7 @@ impl ServerApp {
             holding_regs: vec![0u16; ADDR_SPACE],
             input_regs: vec![0u16; ADDR_SPACE],
             fifo_queues: BTreeMap::new(),
+            file_records: BTreeMap::new(),
             registered_coils: vec![false; ADDR_SPACE],
             registered_discrete_inputs: vec![false; ADDR_SPACE],
             registered_holding_regs: vec![false; ADDR_SPACE],
@@ -405,6 +407,26 @@ impl ServerApp {
             None => (0, Vec::new()),
         }
     }
+
+    // ── File record store accessors ───────────────────────────────────────
+
+    /// Store a file-record payload for (file_number, record_number).
+    pub fn set_file_record(&mut self, file_number: u16, record_number: u16, values: &[u16]) {
+        self.file_records
+            .insert((file_number, record_number), values.to_vec());
+    }
+
+    /// Read up to `word_count` words for a file-record tuple, zero-filling missing values.
+    pub fn get_file_record(&self, file_number: u16, record_number: u16, word_count: u16) -> Vec<u16> {
+        let needed = word_count as usize;
+        let mut out = vec![0_u16; needed];
+        if let Some(values) = self.file_records.get(&(file_number, record_number)) {
+            for (idx, value) in values.iter().copied().take(needed).enumerate() {
+                out[idx] = value;
+            }
+        }
+        out
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -637,6 +659,72 @@ impl AsyncAppHandler for ServerApp {
                 }
 
                 ModbusResponse::fifo_response(&payload)
+            }
+
+            // ── FC14: Read File Record ───────────────────────────────────────
+            ModbusRequest::ReadFileRecord { sub_requests, .. } => {
+                let mut payload: HeaplessVec<u8, MAX_ADU_FRAME_LEN> = HeaplessVec::new();
+
+                for sub in sub_requests {
+                    let values = self.get_file_record(
+                        sub.file_number,
+                        sub.record_number,
+                        sub.record_length,
+                    );
+                    let data_len = 1 + values.len() * 2;
+                    if data_len > u8::MAX as usize {
+                        return ModbusResponse::exception(
+                            FunctionCode::ReadFileRecord,
+                            ExceptionCode::IllegalDataValue,
+                        );
+                    }
+
+                    if payload.push(data_len as u8).is_err() || payload.push(0x06).is_err() {
+                        return ModbusResponse::exception(
+                            FunctionCode::ReadFileRecord,
+                            ExceptionCode::ServerDeviceFailure,
+                        );
+                    }
+
+                    for value in values {
+                        let [hi, lo] = value.to_be_bytes();
+                        if payload.push(hi).is_err() || payload.push(lo).is_err() {
+                            return ModbusResponse::exception(
+                                FunctionCode::ReadFileRecord,
+                                ExceptionCode::ServerDeviceFailure,
+                            );
+                        }
+                    }
+                }
+
+                ModbusResponse::read_file_record_response(payload.as_slice())
+            }
+
+            // ── FC15: Write File Record ──────────────────────────────────────
+            ModbusRequest::WriteFileRecord {
+                sub_requests,
+                raw_pdu_data,
+                ..
+            } => {
+                for sub in sub_requests {
+                    let expected_len = sub.record_length as usize * 2;
+                    if sub.record_data.len() != expected_len {
+                        return ModbusResponse::exception(
+                            FunctionCode::WriteFileRecord,
+                            ExceptionCode::IllegalDataValue,
+                        );
+                    }
+
+                    let mut words = Vec::with_capacity(sub.record_length as usize);
+                    let bytes = sub.record_data.as_slice();
+                    for chunk in bytes.chunks_exact(2) {
+                        words.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+                    }
+
+                    self.set_file_record(sub.file_number, sub.record_number, &words);
+                }
+
+                ModbusResponse::echo_write_file_record(raw_pdu_data)
             }
 
             // ── FC16: Mask Write Register ─────────────────────────────────────

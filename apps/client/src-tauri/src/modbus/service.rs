@@ -34,8 +34,10 @@ const SUPERVISOR_RECONNECT_MAX_BACKOFF_SECS: u64 = 30;
 use super::types::{
     AnalyticsContext, ApiError, ApiResult, CoilEntry, CoilWriteFailure, ConnectionStatus,
     ConnectionStatusPayload, CustomFrameMode, CustomFrameRequest, CustomFrameResponse,
+    FileRecordsResponse,
     DiagnosticRequest, DiagnosticResponse, DiscreteInputEntry,
     GetComEventCounterResponse, GetComEventLogRequest, GetComEventLogResponse,
+    ReadFileRecordsRequest,
     ReadFifoQueueRequest, ReadFifoQueueResponse,
     ReadCoilsRequest, ReadCoilsResponse, ReadDeviceIdentificationRequest,
     ReadDeviceIdentificationResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
@@ -43,6 +45,7 @@ use super::types::{
     ReadInputRegistersRequest, ReadInputRegistersResponse, RegisterEntry, RegisterWriteFailure,
     ReportServerIdResponse, RetryBackoffStrategy, RetryJitterStrategy, SerialConnectRequest,
     TcpConnectRequest, WriteCoilRequest, WriteCoilResponse, WriteHoldingRegisterRequest,
+    WriteFileRecordsRequest,
     WriteHoldingRegisterResponse, WriteMassCoilsRequest, WriteMassCoilsResponse,
     WriteMassHoldingRegistersRequest, WriteMassHoldingRegistersResponse,
 };
@@ -1431,6 +1434,112 @@ impl AppState {
                 } else {
                     Some(response_ascii)
                 },
+                request_summary: describe_custom_pdu("request", function_code, &payload),
+                response_summary: describe_custom_pdu("response", function_code, &response_payload),
+            })
+        }
+
+        pub async fn read_file_records(
+            &self,
+            request: &ReadFileRecordsRequest,
+        ) -> ApiResult<FileRecordsResponse> {
+            self.mark_tcp_activity().await;
+
+            let payload = parse_hex_input(&request.payload_hex).map_err(|details| {
+                ApiError::backend_failure(
+                    "payloadHex is not valid hex.",
+                    Some(details),
+                    request.analytics.clone(),
+                )
+            })?;
+
+            let function_code = 0x14;
+            let response_payload = match self.active_connection_kind(request.analytics.clone()).await? {
+                ActiveConnectionKind::Tcp => {
+                    let (host, port, slave_id, config) =
+                        self.active_tcp_endpoint(request.analytics.clone()).await?;
+                    send_raw_modbus_request_with_retry(
+                        &host,
+                        port,
+                        slave_id,
+                        function_code,
+                        &payload,
+                        config,
+                    )
+                    .await
+                    .map_err(|err| {
+                        ApiError::backend_failure(
+                            "FC20 Read File Record failed.",
+                            Some(err),
+                            request.analytics.clone(),
+                        )
+                    })?
+                }
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
+                    self.with_serial_session(request.analytics.clone(), |session| {
+                        serial_send_request(session, function_code, &payload)
+                    })
+                    .await?
+                }
+            };
+
+            Ok(FileRecordsResponse {
+                function_code,
+                request_hex: format_hex_bytes(&payload),
+                response_hex: format_hex_bytes(&response_payload),
+                request_summary: describe_custom_pdu("request", function_code, &payload),
+                response_summary: describe_custom_pdu("response", function_code, &response_payload),
+            })
+        }
+
+        pub async fn write_file_records(
+            &self,
+            request: &WriteFileRecordsRequest,
+        ) -> ApiResult<FileRecordsResponse> {
+            self.mark_tcp_activity().await;
+
+            let payload = parse_hex_input(&request.payload_hex).map_err(|details| {
+                ApiError::backend_failure(
+                    "payloadHex is not valid hex.",
+                    Some(details),
+                    request.analytics.clone(),
+                )
+            })?;
+
+            let function_code = 0x15;
+            let response_payload = match self.active_connection_kind(request.analytics.clone()).await? {
+                ActiveConnectionKind::Tcp => {
+                    let (host, port, slave_id, config) =
+                        self.active_tcp_endpoint(request.analytics.clone()).await?;
+                    send_raw_modbus_request_with_retry(
+                        &host,
+                        port,
+                        slave_id,
+                        function_code,
+                        &payload,
+                        config,
+                    )
+                    .await
+                    .map_err(|err| {
+                        ApiError::backend_failure(
+                            "FC21 Write File Record failed.",
+                            Some(err),
+                            request.analytics.clone(),
+                        )
+                    })?
+                }
+                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
+                    self.with_serial_session(request.analytics.clone(), |session| {
+                        serial_send_request(session, function_code, &payload)
+                    })
+                    .await?
+                }
+            };
+
+            Ok(FileRecordsResponse {
+                function_code,
+                request_hex: format_hex_bytes(&payload),
+                response_hex: format_hex_bytes(&response_payload),
                 request_summary: describe_custom_pdu("request", function_code, &payload),
                 response_summary: describe_custom_pdu("response", function_code, &response_payload),
             })
