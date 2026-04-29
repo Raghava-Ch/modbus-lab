@@ -1167,19 +1167,6 @@
     color: var(--c-text-1);
   }
 
-  /* ── Page-unique: failed write badge ────────────────────────────────────── */
-  .pending-chip-failed {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--c-danger) 16%, var(--c-surface-3));
-    color: var(--c-danger);
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-  }
-
   /* ── Page-unique: table column layout ───────────────────────────────────── */
   .ct-header {
     /* label | addr | switch | rule | delete */

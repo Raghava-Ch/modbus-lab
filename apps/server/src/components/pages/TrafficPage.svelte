@@ -16,14 +16,15 @@
   );
 </script>
 
+{#if connectionState.status === "disconnected"}
+  <div class="disconnected-banner" role="alert">
+    <span class="banner-icon">⚠</span>
+    <span class="banner-text">Server not running — go to <strong>Listener</strong> and start the server to accept client connections.</span>
+  </div>
+{/if}
+
 <PageShell title="Traffic" feature="Request/error analytics" icon="stethoscope">
   {#snippet children()}
-    {#if connectionState.status === "disconnected"}
-      <div class="disconnected-banner" role="alert">
-        <span class="banner-icon">⚠</span>
-        <span class="banner-text">Server not running — go to <strong>Listener</strong> and start the server to accept client connections.</span>
-      </div>
-    {/if}
 
     <section class="traffic-section">
       <SectionHeader title="Traffic Logs" subtitle="Latest tx/rx protocol events (level: traffic)" />

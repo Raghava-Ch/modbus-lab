@@ -11,6 +11,7 @@
 /// UI. Any Modbus request that touches an address not in the registration mask
 /// is rejected with `IllegalDataAddress`.
 use std::sync::Arc;
+use std::collections::BTreeMap;
 
 use mbus_core::errors::ExceptionCode;
 use mbus_core::function_codes::public::FunctionCode;
@@ -107,6 +108,7 @@ pub struct ServerApp {
     discrete_inputs: Vec<bool>,
     holding_regs: Vec<u16>,
     input_regs: Vec<u16>,
+    fifo_queues: BTreeMap<u16, Vec<u16>>,
     registered_coils: Vec<bool>,
     registered_discrete_inputs: Vec<bool>,
     registered_holding_regs: Vec<bool>,
@@ -122,6 +124,7 @@ impl ServerApp {
             discrete_inputs: vec![false; ADDR_SPACE],
             holding_regs: vec![0u16; ADDR_SPACE],
             input_regs: vec![0u16; ADDR_SPACE],
+            fifo_queues: BTreeMap::new(),
             registered_coils: vec![false; ADDR_SPACE],
             registered_discrete_inputs: vec![false; ADDR_SPACE],
             registered_holding_regs: vec![false; ADDR_SPACE],
@@ -365,6 +368,43 @@ impl ServerApp {
             })
             .collect()
     }
+
+    // ── FIFO queue store accessors ───────────────────────────────────────────
+
+    /// Store a FIFO queue payload for an address.
+    pub fn set_fifo_queue(&mut self, address: u16, values: &[u16]) {
+        const MAX_FIFO_VALUES: usize = 31;
+        let mut next = values.to_vec();
+        if next.len() > MAX_FIFO_VALUES {
+            next.truncate(MAX_FIFO_VALUES);
+        }
+        self.fifo_queues.insert(address, next);
+    }
+
+    /// Append a single FIFO queue value for an address, dropping the oldest sample when full.
+    pub fn append_fifo_queue_value(&mut self, address: u16, value: u16) -> Vec<u16> {
+        const MAX_FIFO_VALUES: usize = 31;
+        let queue = self.fifo_queues.entry(address).or_default();
+        queue.push(value);
+        if queue.len() > MAX_FIFO_VALUES {
+            let overflow = queue.len() - MAX_FIFO_VALUES;
+            queue.drain(0..overflow);
+        }
+        queue.clone()
+    }
+
+    /// Clear a FIFO queue payload for an address.
+    pub fn clear_fifo_queue(&mut self, address: u16) {
+        self.fifo_queues.remove(&address);
+    }
+
+    /// Read a FIFO queue snapshot for an address.
+    pub fn get_fifo_queue(&self, address: u16) -> (u16, Vec<u16>) {
+        match self.fifo_queues.get(&address) {
+            Some(values) => (values.len() as u16, values.clone()),
+            None => (0, Vec::new()),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +607,38 @@ impl AsyncAppHandler for ServerApp {
                 )
             }
 
+            // ── FC18: Read FIFO Queue ────────────────────────────────────────
+            ModbusRequest::ReadFifoQueue {
+                pointer_address,
+                ..
+            } => {
+                let (fifo_count, values) = self.get_fifo_queue(pointer_address);
+                if values.len() > 31 || fifo_count as usize != values.len() {
+                    return ModbusResponse::exception(
+                        FunctionCode::ReadFifoQueue,
+                        ExceptionCode::IllegalDataValue,
+                    );
+                }
+
+                let mut payload: HeaplessVec<u8, MAX_ADU_FRAME_LEN> = HeaplessVec::new();
+                if payload.extend_from_slice(&fifo_count.to_be_bytes()).is_err() {
+                    return ModbusResponse::exception(
+                        FunctionCode::ReadFifoQueue,
+                        ExceptionCode::ServerDeviceFailure,
+                    );
+                }
+                for value in values {
+                    if payload.extend_from_slice(&value.to_be_bytes()).is_err() {
+                        return ModbusResponse::exception(
+                            FunctionCode::ReadFifoQueue,
+                            ExceptionCode::ServerDeviceFailure,
+                        );
+                    }
+                }
+
+                ModbusResponse::fifo_response(&payload)
+            }
+
             // ── FC16: Mask Write Register ─────────────────────────────────────
             ModbusRequest::MaskWriteRegister {
                 address,
@@ -653,7 +725,6 @@ impl AsyncAppHandler for ServerApp {
                         );
                     }
                 };
-
                 ModbusResponse::ReadDeviceId {
                     read_device_id_code,
                     conformity_level: DEVICE_ID_CONFORMITY_LEVEL,
@@ -781,6 +852,53 @@ mod tests {
             assert_eq!(data[0] & 1, 1, "coil 3 should be set");
         } else {
             panic!("expected ByteCountPayload");
+        }
+    }
+
+    #[tokio::test]
+    async fn unit_fc18_fifo_returns_configured_values() {
+        let mut app = ServerApp::new(None);
+        app.set_fifo_queue(0x0012, &[0x1111, 0x2222, 0x3333]);
+
+        let resp = app
+            .handle(ModbusRequest::ReadFifoQueue {
+                txn_id: 1,
+                unit: unit(),
+                pointer_address: 0x0012,
+            })
+            .await;
+
+        match resp {
+            ModbusResponse::FifoData { data } => {
+                assert_eq!(&data[0..2], &[0x00, 0x03]);
+                assert_eq!(&data[2..4], &[0x11, 0x11]);
+                assert_eq!(&data[4..6], &[0x22, 0x22]);
+                assert_eq!(&data[6..8], &[0x33, 0x33]);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unit_fc18_fifo_clear_returns_empty() {
+        let mut app = ServerApp::new(None);
+        app.set_fifo_queue(0x0020, &[1, 2]);
+        app.clear_fifo_queue(0x0020);
+
+        let resp = app
+            .handle(ModbusRequest::ReadFifoQueue {
+                txn_id: 1,
+                unit: unit(),
+                pointer_address: 0x0020,
+            })
+            .await;
+
+        match resp {
+            ModbusResponse::FifoData { data } => {
+                assert_eq!(data.len(), 2);
+                assert_eq!(&data[0..2], &[0x00, 0x00]);
+            }
+            other => panic!("unexpected: {other:?}"),
         }
     }
 

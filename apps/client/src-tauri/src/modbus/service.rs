@@ -36,6 +36,7 @@ use super::types::{
     ConnectionStatusPayload, CustomFrameMode, CustomFrameRequest, CustomFrameResponse,
     DiagnosticRequest, DiagnosticResponse, DiscreteInputEntry,
     GetComEventCounterResponse, GetComEventLogRequest, GetComEventLogResponse,
+    ReadFifoQueueRequest, ReadFifoQueueResponse,
     ReadCoilsRequest, ReadCoilsResponse, ReadDeviceIdentificationRequest,
     ReadDeviceIdentificationResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
     ReadExceptionStatusResponse, ReadHoldingRegistersRequest, ReadHoldingRegistersResponse,
@@ -795,6 +796,84 @@ impl AppState {
             registers: entries,
             start_address: request.start_address,
             quantity: request.quantity,
+        })
+    }
+
+    pub async fn read_fifo_queue(
+        &self,
+        request: &ReadFifoQueueRequest,
+    ) -> ApiResult<ReadFifoQueueResponse> {
+        self.mark_tcp_activity().await;
+
+        let payload = request.address.to_be_bytes();
+        let response = match self.active_connection_kind(request.analytics.clone()).await? {
+            ActiveConnectionKind::Tcp => {
+                let (host, port, slave_id, config) =
+                    self.active_tcp_endpoint(request.analytics.clone()).await?;
+                send_raw_modbus_request_with_retry(&host, port, slave_id, 0x18, &payload, config)
+                    .await
+                    .map_err(|err| {
+                        ApiError::backend_failure(
+                            "Read FIFO queue failed.",
+                            Some(err),
+                            request.analytics.clone(),
+                        )
+                    })?
+            }
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => self
+                .with_serial_session(request.analytics.clone(), |session| {
+                    serial_send_request(session, 0x18, &payload)
+                })
+                .await?,
+        };
+
+        // FC24 response payload layout:
+        // [byteCountHi, byteCountLo, fifoCountHi, fifoCountLo, values...]
+        if response.len() < 4 {
+            return Err(ApiError::backend_failure(
+                "Read FIFO queue failed.",
+                Some("FC24 response too short.".to_string()),
+                request.analytics.clone(),
+            ));
+        }
+
+        let byte_count = u16::from_be_bytes([response[0], response[1]]) as usize;
+        if byte_count < 2 {
+            return Err(ApiError::backend_failure(
+                "Read FIFO queue failed.",
+                Some("FC24 byte count is invalid.".to_string()),
+                request.analytics.clone(),
+            ));
+        }
+
+        let expected_total_len = byte_count + 2;
+        if response.len() < expected_total_len {
+            return Err(ApiError::backend_failure(
+                "Read FIFO queue failed.",
+                Some("FC24 response length does not match byte count.".to_string()),
+                request.analytics.clone(),
+            ));
+        }
+
+        let fifo_count = u16::from_be_bytes([response[2], response[3]]);
+        let value_bytes = &response[4..expected_total_len];
+        if value_bytes.len() % 2 != 0 {
+            return Err(ApiError::backend_failure(
+                "Read FIFO queue failed.",
+                Some("FC24 values payload is not register-aligned.".to_string()),
+                request.analytics.clone(),
+            ));
+        }
+
+        let values = value_bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+
+        Ok(ReadFifoQueueResponse {
+            address: request.address,
+            fifo_count,
+            values,
         })
     }
 

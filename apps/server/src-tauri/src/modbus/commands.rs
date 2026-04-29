@@ -14,6 +14,7 @@ use super::types::{
     ListenerTransport,
     ReadDeviceIdentificationRequest,
     ReadCoilsRequest, ReadCoilsResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
+    ReadFifoQueueRequest, ReadFifoQueueResponse,
     ReadHoldingRegistersRequest, ReadHoldingRegistersResponse, ReadInputRegistersRequest,
     ReadInputRegistersResponse, SerialConnectRequest, TcpConnectRequest, WriteCoilRequest,
     WriteCoilResponse, WriteHoldingRegisterRequest, WriteHoldingRegisterResponse,
@@ -124,6 +125,15 @@ pub async fn listener_start(
                 analytics.clone(),
             )
             .await?;
+
+            // Hydrate listener FIFO store from persistent server-side queue state.
+            {
+                let fifo_snapshot = state.fifo_store.lock().await.clone();
+                let mut app_store = handle.app.lock().await;
+                for (address, values) in fifo_snapshot {
+                    app_store.set_fifo_queue(address, &values);
+                }
+            }
 
             let details = Some(format!("{bind_addr} (unit {})", request.unit_id));
 
@@ -833,6 +843,83 @@ pub async fn read_input_registers(
 }
 
 #[tauri::command]
+pub async fn read_fifo_queue(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadFifoQueueRequest,
+) -> ApiResult<ReadFifoQueueResponse> {
+    let started_at = Instant::now();
+    let mut retried_after_recovery = false;
+    loop {
+        match state.read_fifo_queue(&request).await {
+            Ok(response) => {
+                state.record_request_success().await;
+                emit_log(
+                    &app,
+                    BackendEventLevel::Info,
+                    "fifo-queue",
+                    format!(
+                        "fc24.read ok addr={} count={} rttMs={}",
+                        response.address,
+                        response.fifo_count,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    request.analytics.clone(),
+                )
+                .await;
+                return Ok(response);
+            }
+            Err(err) => {
+                if !retried_after_recovery && is_expected_response_buffer_full(&err) {
+                    retried_after_recovery = true;
+                    if let Err(recovery_err) = state
+                        .recover_tcp_client_pipeline(request.analytics.clone())
+                        .await
+                    {
+                        return Err(recovery_err);
+                    }
+                    continue;
+                }
+                if is_transport_error(&err) && state.record_request_transport_failure().await {
+                    emit_log(
+                        &app,
+                        BackendEventLevel::Warn,
+                        "connection",
+                        "Server unreachable after consecutive transport failures. Pausing requests until reconnected.".to_string(),
+                        Some(ConnectionStatusPayload {
+                            status: ConnectionStatus::Reconnecting,
+                            details: Some(format_error_message(&err)),
+                        }),
+                        err.analytics.clone(),
+                    )
+                    .await;
+                } else if !is_transport_error(&err) {
+                    state.record_request_success().await;
+                }
+
+                let details_msg = format_error_message(&err);
+                emit_log(
+                    &app,
+                    BackendEventLevel::Error,
+                    "fifo-queue",
+                    format!(
+                        "fc24.read err addr={} msg={} rttMs={}",
+                        request.address,
+                        details_msg,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    err.analytics.clone(),
+                )
+                .await;
+                return Err(err);
+            }
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn read_exception_status(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1478,6 +1565,103 @@ pub async fn store_read_holding_regs(
                 .collect())
         }
     }
+}
+
+/// Read FIFO queue values directly from the server's in-memory store.
+#[tauri::command]
+pub async fn store_read_fifo_queue(
+    state: State<'_, AppState>,
+    address: u16,
+) -> ApiResult<ReadFifoQueueResponse> {
+    let store = state.fifo_store.lock().await;
+    let values = store.get(&address).cloned().unwrap_or_default();
+    Ok(ReadFifoQueueResponse {
+        address,
+        fifo_count: values.len() as u16,
+        values,
+    })
+}
+
+/// Set FIFO queue values directly in the server's in-memory store.
+#[tauri::command]
+pub async fn store_set_fifo_queue(
+    state: State<'_, AppState>,
+    address: u16,
+    values: Vec<u16>,
+) -> ApiResult<ReadFifoQueueResponse> {
+    let mut next = values;
+    if next.len() > 31 {
+        next.truncate(31);
+    }
+
+    {
+        let mut store = state.fifo_store.lock().await;
+        store.insert(address, next.clone());
+    }
+
+    let locked = state.listener_handle.lock().await;
+    if let Some(handle) = locked.as_ref() {
+        handle.app.lock().await.set_fifo_queue(address, &next);
+    }
+
+    Ok(ReadFifoQueueResponse {
+        address,
+        fifo_count: next.len() as u16,
+        values: next,
+    })
+}
+
+/// Append one FIFO queue value directly in the server's in-memory store.
+#[tauri::command]
+pub async fn store_append_fifo_queue_value(
+    state: State<'_, AppState>,
+    address: u16,
+    value: u16,
+) -> ApiResult<ReadFifoQueueResponse> {
+    let next = {
+        let mut store = state.fifo_store.lock().await;
+        let queue = store.entry(address).or_default();
+        queue.push(value);
+        if queue.len() > 31 {
+            let overflow = queue.len() - 31;
+            queue.drain(0..overflow);
+        }
+        queue.clone()
+    };
+
+    let locked = state.listener_handle.lock().await;
+    if let Some(handle) = locked.as_ref() {
+        handle.app.lock().await.append_fifo_queue_value(address, value);
+    }
+
+    Ok(ReadFifoQueueResponse {
+        address,
+        fifo_count: next.len() as u16,
+        values: next,
+    })
+}
+
+/// Clear a FIFO queue value list directly in the server's in-memory store.
+#[tauri::command]
+pub async fn store_clear_fifo_queue(
+    state: State<'_, AppState>,
+    address: u16,
+) -> ApiResult<ReadFifoQueueResponse> {
+    {
+        let mut store = state.fifo_store.lock().await;
+        store.remove(&address);
+    }
+
+    let locked = state.listener_handle.lock().await;
+    if let Some(handle) = locked.as_ref() {
+        handle.app.lock().await.clear_fifo_queue(address);
+    }
+
+    Ok(ReadFifoQueueResponse {
+        address,
+        fifo_count: 0,
+        values: Vec::new(),
+    })
 }
 
 #[tauri::command]

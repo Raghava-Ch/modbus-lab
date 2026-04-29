@@ -10,6 +10,7 @@ use super::types::{
     CustomFrameMode, CustomFrameRequest, CustomFrameResponse, DisconnectRequest, DiagnosticRequest,
     DiagnosticResponse, ReadExceptionStatusResponse, GetComEventCounterResponse,
     GetComEventLogRequest, GetComEventLogResponse, ReportServerIdResponse,
+    ReadFifoQueueRequest, ReadFifoQueueResponse,
     ReadDeviceIdentificationRequest,
     ReadCoilsRequest, ReadCoilsResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
     ReadHoldingRegistersRequest, ReadHoldingRegistersResponse, ReadInputRegistersRequest,
@@ -642,6 +643,91 @@ pub async fn read_input_registers(
             return Err(err)
         }
     }
+    }
+}
+
+#[tauri::command]
+pub async fn read_fifo_queue(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReadFifoQueueRequest,
+) -> ApiResult<ReadFifoQueueResponse> {
+    let started_at = Instant::now();
+    let mut retried_after_recovery = false;
+
+    loop {
+        match state.read_fifo_queue(&request).await {
+            Ok(response) => {
+                state.record_request_success().await;
+                emit_log(
+                    &app,
+                    BackendEventLevel::Info,
+                    "fifo-queue",
+                    format!(
+                        "fc24.read ok addr={} count={} rttMs={}",
+                        response.address,
+                        response.fifo_count,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    request.analytics.clone(),
+                )
+                .await;
+                return Ok(response);
+            }
+            Err(err) => {
+                if !retried_after_recovery && is_expected_response_buffer_full(&err) {
+                    retried_after_recovery = true;
+                    if let Err(recovery_err) = state
+                        .recover_tcp_client_pipeline(request.analytics.clone())
+                        .await
+                    {
+                        return Err(recovery_err);
+                    }
+                    continue;
+                }
+
+                if is_transport_error(&err) && state.record_request_transport_failure().await {
+                    emit_log(
+                        &app,
+                        BackendEventLevel::Warn,
+                        "connection",
+                        "Server unreachable after consecutive transport failures. Pausing requests until reconnected."
+                            .to_string(),
+                        Some(ConnectionStatusPayload {
+                            status: ConnectionStatus::Reconnecting,
+                            details: Some(format_error_message(&err)),
+                        }),
+                        err.analytics.clone(),
+                    )
+                    .await;
+                } else if !is_transport_error(&err) {
+                    state.record_request_success().await;
+                }
+
+                let details_msg = if let Some(details) = &err.details {
+                    format!("{} ({})", err.message, details)
+                } else {
+                    err.message.clone()
+                };
+
+                emit_log(
+                    &app,
+                    BackendEventLevel::Error,
+                    "fifo-queue",
+                    format!(
+                        "fc24.read err addr={} msg={} rttMs={}",
+                        request.address,
+                        details_msg,
+                        started_at.elapsed().as_millis()
+                    ),
+                    None,
+                    err.analytics.clone(),
+                )
+                .await;
+                return Err(err);
+            }
+        }
     }
 }
 

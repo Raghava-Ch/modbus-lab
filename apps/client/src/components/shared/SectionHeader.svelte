@@ -33,6 +33,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    margin-bottom: 10px;
   }
 
   h2 {

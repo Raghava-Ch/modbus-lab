@@ -9,6 +9,7 @@ import {
   getSettingsSnapshot,
   isPollingAllowedForCount,
 } from "./settings.svelte";
+import { recordFifoLinkedSourceSample, registerFifoSnapshotSourceReader } from "./fifo.svelte";
 
 export type InputRegisterView = "table" | "cards";
 export type InputRegisterFilter = "all" | "non-zero" | "zero";
@@ -241,6 +242,11 @@ export const inputRegisterState = $state({
   pollInterval: 1000,
 });
 
+registerFifoSnapshotSourceReader("input-register", (address) => {
+  const entry = inputRegisterState.entries.find((item) => item.address === address);
+  return entry ? (entry.value & 0xFFFF) : null;
+});
+
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let readAllQueuedRuns = 0;
 const READ_ALL_QUEUE_DEPTH_MAX = 6;
@@ -305,12 +311,16 @@ async function writeInputRegisterValue(address: number, value: number): Promise<
   entry.pending = true;
   entry.writeError = null;
   try {
+    const previousValue = entry.value;
     await invoke("store_set_input_reg", { address, value: normalized });
     entry.value = normalized;
     entry.desiredValue = normalized;
     entry.pending = false;
     entry.writeError = null;
     entry.lastWriteAt = Date.now();
+    if (previousValue !== normalized) {
+      void recordFifoLinkedSourceSample("input-register", address, normalized);
+    }
   } catch (err) {
     entry.pending = false;
     const message = parseInvokeError(err);
@@ -347,10 +357,14 @@ export async function readInputRegister(address: number): Promise<void> {
     });
     const reg = response.registers.find((r) => r.address === address);
     if (reg) {
+      const previousValue = entry.value;
       entry.value = reg.value;
       entry.desiredValue = reg.value;
       entry.readError = null;
       entry.lastReadAt = Date.now();
+      if (previousValue !== reg.value) {
+        void recordFifoLinkedSourceSample("input-register", address, reg.value);
+      }
     }
   } catch (err) {
     addLog("error", `fc04.read err addr=${address} msg=${parseInvokeError(err)}`);
@@ -429,10 +443,14 @@ export async function readAllInputRegisters(options?: { markPending?: boolean; q
           const entry = entryByAddress.get(section.start);
           if (entry) {
             if (single) {
+              const previousValue = entry.value;
               entry.value = single.value;
               entry.desiredValue = single.value;
               entry.readError = null;
               entry.lastReadAt = Date.now();
+              if (previousValue !== single.value) {
+                void recordFifoLinkedSourceSample("input-register", section.start, single.value);
+              }
               okCount += 1;
             } else {
               entry.readError = "Address not available";
@@ -476,10 +494,15 @@ export async function readAllInputRegisters(options?: { markPending?: boolean; q
             const entry = entryByAddress.get(address);
             if (!entry) continue;
             if (valueMap.has(address)) {
-              entry.value = valueMap.get(address) ?? entry.value;
+              const previousValue = entry.value;
+              const nextValue = valueMap.get(address) ?? entry.value;
+              entry.value = nextValue;
               entry.desiredValue = entry.value;
               entry.readError = null;
               entry.lastReadAt = Date.now();
+              if (previousValue !== nextValue) {
+                void recordFifoLinkedSourceSample("input-register", address, nextValue);
+              }
               okCount += 1;
             } else {
               entry.readError = "Address not available";

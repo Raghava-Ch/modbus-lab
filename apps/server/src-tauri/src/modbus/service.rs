@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io::{ErrorKind, Read, Write},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -38,6 +39,7 @@ use super::types::{
     GetComEventCounterResponse, GetComEventLogRequest, GetComEventLogResponse,
     ReadCoilsRequest, ReadCoilsResponse, ReadDeviceIdentificationRequest,
     ReadDeviceIdentificationResponse, ReadDiscreteInputsRequest, ReadDiscreteInputsResponse,
+    ReadFifoQueueRequest, ReadFifoQueueResponse,
     ReadExceptionStatusResponse, ReadHoldingRegistersRequest, ReadHoldingRegistersResponse,
     ReadInputRegistersRequest, ReadInputRegistersResponse, RegisterEntry, RegisterWriteFailure,
     ReportServerIdResponse, RetryBackoffStrategy, RetryJitterStrategy, SerialConnectRequest,
@@ -239,6 +241,8 @@ pub struct AppState {
     runtime: Arc<Mutex<RuntimeState>>,
     /// Active listener handle.  `None` when no server is running.
     pub listener_handle: Arc<Mutex<Option<super::listener::ListenerHandle>>>,
+    /// Persistent FIFO queue values managed by the server UI.
+    pub fifo_store: Arc<Mutex<BTreeMap<u16, Vec<u16>>>>,
 }
 
 impl AppState {
@@ -246,6 +250,7 @@ impl AppState {
         Self {
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             listener_handle: Arc::new(Mutex::new(None)),
+            fifo_store: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -798,6 +803,70 @@ impl AppState {
             registers: entries,
             start_address: request.start_address,
             quantity: request.quantity,
+        })
+    }
+
+    pub async fn read_fifo_queue(
+        &self,
+        request: &ReadFifoQueueRequest,
+    ) -> ApiResult<ReadFifoQueueResponse> {
+        self.mark_tcp_activity().await;
+
+        let (fifo_count, values) = match self.active_connection_kind(request.analytics.clone()).await? {
+            ActiveConnectionKind::Tcp => {
+                let (host, port, slave_id, config) =
+                    self.active_tcp_endpoint(request.analytics.clone()).await?;
+                let payload = request.address.to_be_bytes();
+
+                let response = send_raw_modbus_request_with_retry(
+                    &host,
+                    port,
+                    slave_id,
+                    0x18,
+                    &payload,
+                    config,
+                )
+                .await
+                .map_err(|err| {
+                    ApiError::backend_failure(
+                        "Read FIFO queue failed.",
+                        Some(err),
+                        request.analytics.clone(),
+                    )
+                })?;
+
+                parse_fifo_queue_response(&response)
+                    .map_err(|details| {
+                        ApiError::backend_failure(
+                            "Read FIFO queue failed.",
+                            Some(details),
+                            request.analytics.clone(),
+                        )
+                    })?
+            }
+            ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
+                let payload = request.address.to_be_bytes();
+                let response = self
+                    .with_serial_session(request.analytics.clone(), |session| {
+                        serial_send_request(session, 0x18, &payload)
+                    })
+                    .await?;
+
+                parse_fifo_queue_response(&response)
+                    .map_err(|details| {
+                        ApiError::backend_failure(
+                            "Read FIFO queue failed.",
+                            Some(details),
+                            request.analytics.clone(),
+                        )
+                    })?
+            }
+        };
+
+        Ok(ReadFifoQueueResponse {
+            address: request.address,
+            fifo_count,
+            values,
         })
     }
 
@@ -3377,6 +3446,44 @@ fn parse_register_read_response(
     }
 
     Ok(regs)
+}
+
+fn parse_fifo_queue_response(payload: &[u8]) -> Result<(u16, Vec<u16>), String> {
+    if payload.len() < 4 {
+        return Err(format!(
+            "FC24 response too short: expected at least 4 bytes, got {}.",
+            payload.len()
+        ));
+    }
+
+    let byte_count = u16::from_be_bytes([payload[0], payload[1]]) as usize;
+    let fifo_count = u16::from_be_bytes([payload[2], payload[3]]) as usize;
+    let expected_data_bytes = fifo_count * 2;
+    let expected_byte_count = expected_data_bytes + 2;
+
+    if byte_count != expected_byte_count {
+        return Err(format!(
+            "FC24 byte count mismatch: expected {}, got {}.",
+            expected_byte_count, byte_count
+        ));
+    }
+
+    if payload.len() != byte_count + 2 {
+        return Err(format!(
+            "FC24 payload length mismatch: expected {}, got {}.",
+            byte_count + 2,
+            payload.len()
+        ));
+    }
+
+    let mut values = Vec::with_capacity(fifo_count);
+    let mut cursor = 4;
+    for _ in 0..fifo_count {
+        values.push(u16::from_be_bytes([payload[cursor], payload[cursor + 1]]));
+        cursor += 2;
+    }
+
+    Ok((fifo_count as u16, values))
 }
 
 fn parse_single_write_coil_response(payload: &[u8]) -> Result<(u16, bool), String> {

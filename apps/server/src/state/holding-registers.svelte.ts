@@ -3,6 +3,7 @@ import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
 import { getSettingsSnapshot } from "./settings.svelte";
 import { connectionState } from "./connection.svelte";
+import { recordFifoLinkedSourceSample, registerFifoSnapshotSourceReader } from "./fifo.svelte";
 
 export type HoldingRegisterView = "table" | "cards";
 export type HoldingRegisterFilter = "all" | "non-zero" | "zero";
@@ -119,11 +120,15 @@ async function writeHoldingRegisterValue(address: number, value: number): Promis
   entry.pending = true;
   entry.writeError = null;
   try {
+    const previousSlaveValue = entry.slaveValue;
     await invoke("store_write_holding_reg", { address, value: normalized });
     entry.slaveValue = normalized;
     entry.pending = false;
     entry.writeError = null;
     entry.lastWriteAt = Date.now();
+    if (previousSlaveValue !== normalized) {
+      void recordFifoLinkedSourceSample("holding-register", address, normalized);
+    }
   } catch (err) {
     entry.pending = false;
     const message = parseInvokeError(err);
@@ -147,6 +152,7 @@ async function runHoldingRegisterUiSyncTick(): Promise<void> {
       const nextValue = valueByAddress.get(entry.address);
       if (nextValue === undefined) continue;
       const preserveDesired = entry.desiredValue !== entry.slaveValue;
+      const previousSlaveValue = entry.slaveValue;
       const normalized = normalizeU16(nextValue, entry.slaveValue);
       entry.slaveValue = normalized;
       if (!preserveDesired) {
@@ -154,6 +160,9 @@ async function runHoldingRegisterUiSyncTick(): Promise<void> {
       }
       entry.lastReadAt = now;
       entry.readError = null;
+      if (previousSlaveValue !== normalized) {
+        void recordFifoLinkedSourceSample("holding-register", entry.address, normalized);
+      }
     }
   } catch (err) {
     const msg = parseInvokeError(err);
@@ -223,6 +232,11 @@ export const holdingRegisterState = $state({
   entries: [] as HoldingRegisterEntry[],
   startAddress: 0,
   registerCount: 16,
+});
+
+registerFifoSnapshotSourceReader("holding-register", (address) => {
+  const entry = holdingRegisterState.entries.find((item) => item.address === address);
+  return entry ? (entry.slaveValue & 0xFFFF) : null;
 });
 
 export function initHoldingRegisterState(): void {

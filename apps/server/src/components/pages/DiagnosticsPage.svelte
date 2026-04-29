@@ -33,7 +33,8 @@
     { code: 0x2b, hex: "2B", name: "Read Device Identification", category: "cross-protocol" },
   ];
 
-  function parseFcCode(message: string): number | null {
+  function parseFcCode(message: string | undefined | null): number | null {
+    if (typeof message !== "string" || message.length === 0) return null;
     const m = message.match(/\bfc=0x([0-9A-Fa-f]{2})\b/);
     if (!m) return null;
     const parsed = Number.parseInt(m[1], 16);
@@ -41,7 +42,8 @@
     return parsed;
   }
 
-  function parseDirection(message: string): "rx" | "tx" | "other" {
+  function parseDirection(message: string | undefined | null): "rx" | "tx" | "other" {
+    if (typeof message !== "string" || message.length === 0) return "other";
     const first = message.replace(/^\[.*?\]\s*/, "").split(" ")[0] ?? "";
     if (first.includes(".rx")) return "rx";
     if (first.includes(".tx")) return "tx";
@@ -79,8 +81,36 @@
     });
   }
 
-  const diagnosticsTraffic = $derived(logState.entries.filter(isDiagnosticTraffic));
-  const health = $derived(getCurrentDeviceHealthSnapshot());
+  function fallbackHealthSnapshot() {
+    return {
+      key: connectionState.protocol === "tcp"
+        ? `tcp|${connectionState.tcp.host}:${connectionState.tcp.port}|slave=${connectionState.slaveId}`
+        : `${connectionState.protocol}|${connectionState.serial.port}@${connectionState.serial.baudRate}|slave=${connectionState.slaveId}`,
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      timeoutRate: 0,
+      retryRate: 0,
+      reconnectCount: 0,
+      latestRttMs: null,
+      medianRttMs: null,
+      p95RttMs: null,
+      qualityScore: 100,
+      qualityBand: "good" as const,
+      exceptionHistogram: [] as Array<{ code: string; count: number }>,
+      tuningHints: ["Connection quality is stable. Keep current timeout/retry settings."],
+    };
+  }
+
+  const safeEntries = $derived(Array.isArray(logState.entries) ? logState.entries : []);
+  const diagnosticsTraffic = $derived(safeEntries.filter(isDiagnosticTraffic));
+  const health = $derived.by(() => {
+    try {
+      return getCurrentDeviceHealthSnapshot();
+    } catch {
+      return fallbackHealthSnapshot();
+    }
+  });
   const diagnosticsBuckets = $derived(buildBuckets(diagnosticsTraffic));
   const serialBuckets = $derived(diagnosticsBuckets.filter((fc) => fc.category === "serial"));
   const fc43Bucket = $derived(diagnosticsBuckets.find((fc) => fc.code === 0x2b) ?? null);
@@ -94,14 +124,15 @@
   });
 </script>
 
+{#if connectionState.status === "disconnected"}
+  <div class="disconnected-banner" role="alert">
+    <span class="banner-icon">⚠</span>
+    <span class="banner-text">Server not running. Start it in <strong>Listener</strong> to capture diagnostics traffic.</span>
+  </div>
+{/if}
+
 <PageShell title="Diagnostics" feature="Server-side diagnostics from observed traffic" icon="activity">
   {#snippet children()}
-    {#if connectionState.status === "disconnected"}
-      <div class="disconnected-banner" role="alert">
-        <span class="banner-icon">!</span>
-        <span class="banner-text">Server not running. Start it in <strong>Listener</strong> to capture diagnostics traffic.</span>
-      </div>
-    {/if}
 
     <section class="diag-section">
       <SectionHeader title="Server Diagnostics Overview" subtitle="Passive view: counts are derived from received/sent server traffic, not active probe commands" />
@@ -290,13 +321,31 @@
   .protocol-note {
     display: flex;
     align-items: center;
-    padding: 7px 10px;
-    margin-bottom: 4px;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
     border-radius: 6px;
-    border: 1px solid color-mix(in srgb, var(--c-border) 80%, transparent);
-    background: color-mix(in srgb, var(--c-surface-3) 60%, transparent);
+    border: 1px solid color-mix(in srgb, var(--c-border-strong) 42%, var(--c-border));
+    background: color-mix(in srgb, var(--c-surface-2) 78%, var(--c-surface-3));
     font-size: 0.78rem;
     color: var(--c-text-2);
+  }
+
+  .protocol-note::before {
+    content: "i";
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--c-accent) 38%, var(--c-border));
+    background: color-mix(in srgb, var(--c-accent) 16%, transparent);
+    color: var(--c-text-1);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
+    flex-shrink: 0;
   }
 
   .health-grid {

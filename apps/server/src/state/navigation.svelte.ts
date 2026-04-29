@@ -37,7 +37,7 @@ export const tabDefs: TabDef[] = [
   { id: "holding-registers", label: "Holding Registers", icon: "database", group: "main", feature: "FC 03/06/16 (Read/Write)" },
   { id: "input-registers", label: "Input Registers", icon: "activity", group: "main", feature: "FC 04 (Read-Only)" },
   { id: "file-records", label: "File Records", icon: "file-text", group: "main", feature: "FC 20/21 (Not Supported)" },
-  { id: "fifo-queue", label: "FIFO Queue", icon: "layers", group: "main", feature: "FC 24 (Not Supported)" },
+  { id: "fifo-queue", label: "FIFO Queue", icon: "layers", group: "main", feature: "FC 24 (Read FIFO Queue)" },
   { id: "traffic", label: "Traffic", icon: "stethoscope", group: "main", feature: "Request/error analytics" },
   { id: "diagnostics", label: "Diagnostics", icon: "activity", group: "main", feature: "FC07/08/11/12/17/43 tools" },
   { id: "custom-frame", label: "Custom Frame", icon: "file-text", group: "main", feature: "Raw PDU builder" },

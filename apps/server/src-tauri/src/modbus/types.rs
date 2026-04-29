@@ -407,6 +407,21 @@ pub struct ReadInputRegistersResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReadFifoQueueRequest {
+    pub address: u16,
+    pub analytics: Option<AnalyticsContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFifoQueueResponse {
+    pub address: u16,
+    pub fifo_count: u16,
+    pub values: Vec<u16>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WriteCoilResponse {
     pub address: u16,
     pub value: bool,
