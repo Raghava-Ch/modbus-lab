@@ -14,6 +14,8 @@ import {
   getFilteredCoils,
   writeCoil,
   readCoil,
+  writePendingCoils,
+  executeMassWrite,
   buildMassPreview,
 } from "../state/coils.svelte";
 import type { CoilEntry } from "../state/coils.svelte";
@@ -454,5 +456,138 @@ describe("buildMassPreview", () => {
     coilState.massPattern = "all-on";
     const result = buildMassPreview();
     expect(result).toBe("1 coil: 1");
+  });
+});
+
+// ── buildMassPreview (extended patterns) ──────────────────────────────────────
+
+describe("buildMassPreview — extended patterns", () => {
+  it("every-third produces '1 0 0' cycle", () => {
+    coilState.entries = Array.from({ length: 6 }, (_, i) => makeEntry(i));
+    coilState.massFrom = 0;
+    coilState.massTo = 5;
+    coilState.massPattern = "every-third";
+    expect(buildMassPreview()).toBe("6 coils: 1 0 0 1 0 0");
+  });
+
+  it("every-third single entry produces '1'", () => {
+    coilState.entries = [makeEntry(10)];
+    coilState.massFrom = 10;
+    coilState.massTo = 10;
+    coilState.massPattern = "every-third";
+    expect(buildMassPreview()).toBe("1 coil: 1");
+  });
+});
+
+// ── writePendingCoils ─────────────────────────────────────────────────────────
+
+describe("writePendingCoils", () => {
+  it("returns 0 when no entries have a pending diff", async () => {
+    coilState.entries = [makeEntry(0)];
+    const count = await writePendingCoils();
+    expect(count).toBe(0);
+    expect(mockedInvoke).not.toHaveBeenCalled();
+  });
+
+  it("sends write_coils_batch with all differing entries", async () => {
+    coilState.entries = [
+      makeEntry(0, { slaveValue: false, desiredValue: true }),
+      makeEntry(1, { slaveValue: false, desiredValue: true }),
+    ];
+    mockedInvoke.mockResolvedValueOnce({ writtenCount: 2, totalCount: 2, failures: [] });
+
+    const count = await writePendingCoils();
+    expect(count).toBe(2);
+    expect(mockedInvoke).toHaveBeenCalledWith("write_coils_batch", expect.objectContaining({
+      request: expect.objectContaining({
+        coils: expect.arrayContaining([
+          { address: 0, value: true },
+          { address: 1, value: true },
+        ]),
+      }),
+    }));
+  });
+
+  it("attributes per-address failures correctly", async () => {
+    coilState.entries = [
+      makeEntry(0, { slaveValue: false, desiredValue: true }),
+      makeEntry(1, { slaveValue: false, desiredValue: true }),
+    ];
+    mockedInvoke.mockResolvedValueOnce({
+      writtenCount: 1,
+      totalCount: 2,
+      failures: [{ address: 1, code: "0x02", message: "ILLEGAL_DATA_ADDRESS" }],
+    });
+
+    await writePendingCoils();
+
+    expect(coilState.entries[0].slaveValue).toBe(true);
+    expect(coilState.entries[0].writeError).toBeNull();
+    expect(coilState.entries[1].writeError).toContain("0x02");
+    expect(coilState.entries[1].slaveValue).toBe(false);
+  });
+
+  // Stress: 200 coils pending
+  it("stress: handles 200-entry pending batch without error", async () => {
+    coilState.entries = Array.from({ length: 200 }, (_, i) =>
+      makeEntry(i, { slaveValue: false, desiredValue: true }),
+    );
+    mockedInvoke.mockResolvedValue({ writtenCount: 200, totalCount: 200, failures: [] });
+
+    const count = await writePendingCoils();
+    expect(count).toBe(200);
+  });
+});
+
+// ── executeMassWrite ──────────────────────────────────────────────────────────
+
+describe("executeMassWrite", () => {
+  it("does not invoke when no entries fall in mass range", async () => {
+    coilState.entries = [];
+    coilState.massFrom = 0;
+    coilState.massTo = 15;
+    coilState.massPattern = "all-on";
+    await executeMassWrite();
+    expect(mockedInvoke).not.toHaveBeenCalled();
+  });
+
+  it("sets all in-range entries pending for all-on pattern", async () => {
+    coilState.entries = Array.from({ length: 8 }, (_, i) => makeEntry(i));
+    coilState.massFrom = 0;
+    coilState.massTo = 7;
+    coilState.massPattern = "all-on";
+    mockedInvoke.mockResolvedValueOnce({ writtenCount: 8, totalCount: 8, failures: [] });
+
+    await executeMassWrite();
+
+    expect(coilState.entries.every((e) => e.slaveValue === true)).toBe(true);
+  });
+
+  it("handles partial backend failures and records writeError on failed addresses", async () => {
+    coilState.entries = Array.from({ length: 4 }, (_, i) => makeEntry(i));
+    coilState.massFrom = 0;
+    coilState.massTo = 3;
+    coilState.massPattern = "all-on";
+    mockedInvoke.mockResolvedValueOnce({
+      writtenCount: 3,
+      totalCount: 4,
+      failures: [{ address: 2, code: "0x03", message: "ILLEGAL_DATA_VALUE" }],
+    });
+
+    await executeMassWrite();
+
+    expect(coilState.entries[0].slaveValue).toBe(true);
+    expect(coilState.entries[2].writeError).toBeTruthy();
+  });
+
+  it("stress: all-on for 500 coils completes without error", async () => {
+    coilState.entries = Array.from({ length: 500 }, (_, i) => makeEntry(i));
+    coilState.massFrom = 0;
+    coilState.massTo = 499;
+    coilState.massPattern = "all-on";
+    mockedInvoke.mockResolvedValue({ writtenCount: 500, totalCount: 500, failures: [] });
+
+    await executeMassWrite();
+    expect(mockedInvoke).toHaveBeenCalled();
   });
 });
