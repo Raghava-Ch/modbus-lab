@@ -1,0 +1,82 @@
+name: Release Desktop Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+        app:
+          - name: client
+            path: apps/client
+          - name: server
+            path: apps/server
+
+    runs-on: ${{ matrix.platform.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: matrix.platform.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Build and publish ${{ matrix.app.name }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ${{ matrix.app.path }}
+          args: --target ${{ matrix.platform.target }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Modbus Lab ${{ github.ref_name }}
+          releaseBody: |
+            Automated release for ${{ github.ref_name }}.
+
+            Includes Tauri desktop binaries for:
+            - Client app (Windows, macOS, Linux)
+            - Server app (Windows, macOS, Linux)
+            - macOS targets: Intel (x86_64) and Apple Silicon (aarch64)
+          releaseDraft: false
+          prerelease: false
