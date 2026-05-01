@@ -1,5 +1,10 @@
+mod cloud_bridge;
 mod modbus;
 
+use cloud_bridge::mqtt::commands::{
+    get_cloud_bridge_status, start_cloud_bridge, stop_cloud_bridge,
+};
+use cloud_bridge::mqtt::state::CloudBridgeState;
 use modbus::commands::{
     connect_modbus_serial_ascii, connect_modbus_serial_rtu, connect_modbus_tcp, disconnect_modbus,
     diagnostic, get_com_event_counter, get_com_event_log, get_modbus_connection_status,
@@ -19,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState::new())
+        .manage(CloudBridgeState::new())
         .invoke_handler(tauri::generate_handler![
             connect_modbus_tcp,
             disconnect_modbus,
@@ -44,6 +50,9 @@ pub fn run() {
             write_coils_batch,
             write_holding_register,
             write_holding_registers_batch,
+            get_cloud_bridge_status,
+            start_cloud_bridge,
+            stop_cloud_bridge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

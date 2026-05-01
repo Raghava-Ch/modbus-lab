@@ -239,6 +239,7 @@ impl Default for RuntimeState {
     }
 }
 
+#[derive(Clone)]
 pub struct AppState {
     runtime: Arc<Mutex<RuntimeState>>,
 }

@@ -3,7 +3,7 @@ name = "modbus-lab-server"
 version = "0.0.4"
 description = "ModbusLab Client desktop application"
 authors = ["Raghav"]
-license = ""
+license = "../../../LICENSE"
 repository = ""
 edition = "2021"
 
