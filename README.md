@@ -28,6 +28,11 @@ The application is currently in **alpha**. It is fully usable for core Modbus TC
 * **Custom Frame Tooling:** Raw Modbus PDU builder with function+payload and raw-bytes modes.
 * **Global Settings:** Configurable poll defaults, TCP heartbeat behavior, display formats, layout forcing, and log preferences.
 * **App Logging:** Dedicated log panel with filtering capabilities and native save-to-file export.
+* **Cloud Bridge (MQTT):** Forward Modbus values to/from an MQTT broker via the new `Cloud Bridge` tab.
+  Per-mapping direction (Publish / Subscribe / Bidirectional), QoS, retain, and templated topics
+  (`{client_id}`, `{area}`, `{address}`, `{name}`). Free-tier scope: broker config and mappings
+  live entirely in process memory and reset on every app launch — JSON-file persistence and
+  export/import are reserved for the paid tier.
 
 ### Planned Features (Placeholders)
 * File Records (FC20/FC21)
