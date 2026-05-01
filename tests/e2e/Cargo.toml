@@ -1,0 +1,40 @@
+[package]
+name = "modbus-lab-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# This crate has no library surface — all tests live under tests/.
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+] }
+modbus-rs = { version = "0.8.0", features = [
+    "async",
+    "client",
+    "server",
+    "network-tcp",
+    "coils",
+    "discrete-inputs",
+    "registers",
+    "holding-registers",
+    "input-registers",
+    "fifo",
+    "diagnostics",
+    "traffic",
+] }
+mbus-core = { version = "0.8.0", default-features = false, features = [
+    "coils",
+    "discrete-inputs",
+    "registers",
+] }
+
+[profile.dev]
+# modbus-rs generates large async futures — see server Cargo.toml.
+opt-level = 1

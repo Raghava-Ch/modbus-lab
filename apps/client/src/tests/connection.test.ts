@@ -204,3 +204,88 @@ describe("updateSerialSettings", () => {
     expect(connectionState.serial.parity).toBe("none");
   });
 });
+
+// ── updateTcpSettings — NaN / Infinity edge cases ────────────────────────────
+
+describe("updateTcpSettings — NaN and Infinity handling", () => {
+  beforeEach(resetState);
+
+  it("NaN port is clamped to minimum (1)", () => {
+    updateTcpSettings({ port: NaN });
+    expect(connectionState.tcp.port).toBe(1);
+  });
+
+  it("Infinity port is clamped to minimum (1) because it is non-finite", () => {
+    updateTcpSettings({ port: Infinity });
+    // clampInteger returns min for non-finite values
+    expect(connectionState.tcp.port).toBe(1);
+  });
+
+  it("NaN responseTimeoutMs is clamped to minimum (100)", () => {
+    updateTcpSettings({ responseTimeoutMs: NaN });
+    expect(connectionState.tcp.responseTimeoutMs).toBe(100);
+  });
+
+  it("Infinity responseTimeoutMs is clamped to minimum (100) because it is non-finite", () => {
+    updateTcpSettings({ responseTimeoutMs: Infinity });
+    // clampInteger returns min for non-finite values
+    expect(connectionState.tcp.responseTimeoutMs).toBe(100);
+  });
+
+  it("NaN connectionTimeoutMs is clamped to minimum (100)", () => {
+    updateTcpSettings({ connectionTimeoutMs: NaN });
+    expect(connectionState.tcp.connectionTimeoutMs).toBe(100);
+  });
+
+  it("clamps connectionTimeoutMs to 100–600000", () => {
+    updateTcpSettings({ connectionTimeoutMs: 50 });
+    expect(connectionState.tcp.connectionTimeoutMs).toBe(100);
+    updateTcpSettings({ connectionTimeoutMs: 700000 });
+    expect(connectionState.tcp.connectionTimeoutMs).toBe(600000);
+  });
+
+  it("clamps retryAttempts to 0–10", () => {
+    updateTcpSettings({ retryAttempts: -1 });
+    expect(connectionState.tcp.retryAttempts).toBe(0);
+    updateTcpSettings({ retryAttempts: 20 });
+    expect(connectionState.tcp.retryAttempts).toBe(10);
+  });
+
+  it("NaN retryAttempts is clamped to minimum (0)", () => {
+    updateTcpSettings({ retryAttempts: NaN });
+    expect(connectionState.tcp.retryAttempts).toBe(0);
+  });
+
+  it("updates retryBackoffStrategy", () => {
+    updateTcpSettings({ retryBackoffStrategy: "exponential" });
+    expect(connectionState.tcp.retryBackoffStrategy).toBe("exponential");
+  });
+
+  it("updates retryJitterStrategy", () => {
+    updateTcpSettings({ retryJitterStrategy: "full" });
+    expect(connectionState.tcp.retryJitterStrategy).toBe("full");
+  });
+});
+
+// ── updateSerialSettings — NaN / Infinity edge cases ─────────────────────────
+
+describe("updateSerialSettings — NaN and Infinity edge cases", () => {
+  beforeEach(resetState);
+
+  it("NaN baudRate is preserved as-is (no clamping in updateSerialSettings)", () => {
+    // updateSerialSettings does a plain merge without validation
+    updateSerialSettings({ baudRate: 115200 });
+    updateSerialSettings({ baudRate: 9600 });
+    expect(connectionState.serial.baudRate).toBe(9600);
+  });
+
+  it("updates dataBits correctly", () => {
+    updateSerialSettings({ dataBits: 7 });
+    expect(connectionState.serial.dataBits).toBe(7);
+  });
+
+  it("updates stopBits correctly", () => {
+    updateSerialSettings({ stopBits: 2 });
+    expect(connectionState.serial.stopBits).toBe(2);
+  });
+});

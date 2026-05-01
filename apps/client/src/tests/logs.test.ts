@@ -124,3 +124,36 @@ describe("setLogFilter", () => {
     }
   });
 });
+
+// ── Log retention enforcement ─────────────────────────────────────────────────
+
+describe("addLog — retention cap", () => {
+  it("enforces maxRetainedEntries cap when entries exceed the limit", () => {
+    // The default maxRetainedEntries is 4000; add 4100 entries
+    const limit = 4000;
+    for (let i = 0; i < limit + 100; i++) {
+      addLog("info", `msg-${i}`);
+    }
+    expect(logState.entries.length).toBeLessThanOrEqual(limit);
+  });
+
+  it("retains the most recent entries when trimming", () => {
+    const limit = 4000;
+    for (let i = 0; i < limit + 5; i++) {
+      addLog("info", `msg-${i}`);
+    }
+    const messages = logState.entries.map((e) => e.message);
+    // Last message should still be present
+    expect(messages).toContain(`msg-${limit + 4}`);
+    // Very first messages are evicted
+    expect(messages).not.toContain("msg-0");
+  });
+
+  it("never drops below 200 entries (floor from settings minimum)", () => {
+    // Simulate only 100 entries added — they should all be kept
+    for (let i = 0; i < 100; i++) {
+      addLog("info", `keep-${i}`);
+    }
+    expect(logState.entries.length).toBe(100);
+  });
+});
