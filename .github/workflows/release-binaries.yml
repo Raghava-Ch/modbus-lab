@@ -9,11 +9,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  build-and-upload:
     strategy:
       fail-fast: false
       matrix:
@@ -62,21 +62,33 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci
 
-      - name: Build and publish ${{ matrix.app.name }}
+      - name: Build and upload ${{ matrix.app.name }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: ${{ matrix.app.path }}
           args: --target ${{ matrix.platform.target }}
-          tagName: ${{ github.ref_name }}
-          releaseName: Modbus Lab ${{ github.ref_name }}
+          tagName: ${{ github.event.release.tag_name || github.ref_name }}
+          releaseName: Modbus Lab ${{ github.event.release.tag_name || github.ref_name }}
           releaseBody: |
-            Automated release for ${{ github.ref_name }}.
+            Automated release for ${{ github.event.release.tag_name || github.ref_name }}.
 
             Includes Tauri desktop binaries for:
             - Client app (Windows, macOS, Linux)
             - Server app (Windows, macOS, Linux)
             - macOS targets: Intel (x86_64) and Apple Silicon (aarch64)
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
+
+  publish-release:
+    needs: build-and-upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG_NAME"
+          gh release edit "$TAG_NAME" --draft=false
