@@ -85,10 +85,20 @@ jobs:
     needs: build-and-upload
     runs-on: ubuntu-latest
     steps:
+      - name: Fail fast if release was already published
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          DRAFT=$(gh release view "$TAG_NAME" --json isDraft --jq '.isDraft')
+          if [ "$DRAFT" != "true" ]; then
+            echo "::error::Release $TAG_NAME was published before CI finished. Aborting to prevent incomplete uploads."
+            exit 1
+          fi
+
       - name: Publish draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          gh release view "$TAG_NAME"
           gh release edit "$TAG_NAME" --draft=false
