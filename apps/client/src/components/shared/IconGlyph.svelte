@@ -3,6 +3,7 @@
 <script lang="ts">
   import {
     Activity,
+    Cloud,
     Database,
     FileText,
     Layers,
@@ -33,6 +34,8 @@
   <Layers {size} />
 {:else if icon === "stethoscope"}
   <Stethoscope {size} />
+{:else if icon === "cloud"}
+  <Cloud {size} />
 {:else}
   <Settings2 {size} />
 {/if}

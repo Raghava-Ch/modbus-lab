@@ -40,6 +40,7 @@
   import FifoPage from "../pages/FifoPage.svelte";
   import DiagnosticsPage from "../pages/DiagnosticsPage.svelte";
   import CustomFramePage from "../pages/CustomFramePage.svelte";
+  import CloudBridgePage from "../pages/CloudBridgePage.svelte";
   import SettingsPage from "../pages/SettingsPage.svelte";
 
   const filtered = $derived(getFilteredLogs(logState.filter));
@@ -110,6 +111,8 @@
       <DiagnosticsPage />
     {:else if navigationState.activeTab === "custom-frame"}
       <CustomFramePage />
+    {:else if navigationState.activeTab === "cloud-bridge"}
+      <CloudBridgePage />
     {:else}
       <SettingsPage />
     {/if}

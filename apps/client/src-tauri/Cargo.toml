@@ -3,7 +3,7 @@ name = "modbus-lab-client"
 version = "0.0.4"
 description = "ModbusLab Client desktop application"
 authors = ["Raghav"]
-license = ""
+license-file= "../../../LICENSE"
 repository = ""
 edition = "2021"
 
@@ -27,6 +27,10 @@ thiserror = "1"
 serialport = "4"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
+# MQTT client for Cloud Bridge (Apache-2.0 — commercial-use friendly).
+# Pinned to a minor version range to allow patch updates without surprise breakages.
+rumqttc = { version = "0.25", default-features = false, features = ["use-rustls"] }
+rustls-native-certs = "0.8"
 
 [profile.dev]
 # modbus-rs generates large async futures that overflow the default

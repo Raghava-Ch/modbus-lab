@@ -13,6 +13,12 @@
 # comctl32 function — start successfully.  The production binary is unaffected
 # because tauri_build already embeds a manifest that activates v6 before the
 # first dialog is shown.
+[env]
+# Align the macOS deployment target with the host SDK so that C libraries
+# compiled by ring/aws-lc-sys (which default to the current SDK) and the
+# Rust linker invocation target the same macOS version.
+MACOSX_DEPLOYMENT_TARGET = "13.0"
+
 [target.x86_64-pc-windows-msvc]
 rustflags = [
     "-C", "link-args=/STACK:8388608 /DELAYLOAD:comctl32.dll",
