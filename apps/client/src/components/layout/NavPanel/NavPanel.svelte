@@ -8,10 +8,13 @@
     tabDefs,
     type TabId,
   } from "../../../state/navigation.svelte";
+  import { settingsState } from "../../../state/settings.svelte";
   import NavCollapseButton from "./NavCollapseButton.svelte";
   import NavSection from "./NavSection.svelte";
 
-  const mainTabs = tabDefs.filter((tab) => tab.group === "main");
+  const mainTabs = $derived(
+    tabDefs.filter((tab) => tab.group === "main" && (tab.id !== "ibus" || settingsState.ibus.enabled)),
+  );
   const settingsTabs = tabDefs.filter((tab) => tab.group === "settings");
 
   function handleSelect(tab: TabId): void {

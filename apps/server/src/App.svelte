@@ -6,6 +6,10 @@
   import AppShell from "./components/layout/AppShell.svelte";
   import { addLog } from "./state/logs.svelte";
   import { applyBackendConnectionStatus } from "./state/connection.svelte";
+  import { initCoilState } from "./state/coils.svelte";
+  import { initDiscreteInputState } from "./state/discrete-inputs.svelte";
+  import { initHoldingRegisterState } from "./state/holding-registers.svelte";
+  import { initInputRegisterState } from "./state/input-registers.svelte";
   import { initLayoutState } from "./state/layout.svelte";
   import { initSettingsState } from "./state/settings.svelte";
   import { trackConnectionHealthEvent } from "./state/connection-health.svelte";
@@ -54,6 +58,10 @@
 
     // Initialize settings and layout state
     initSettingsState();
+    initCoilState();
+    initDiscreteInputState();
+    initHoldingRegisterState();
+    initInputRegisterState();
     initLayoutState();
 
     let unlisten: (() => void) | undefined;

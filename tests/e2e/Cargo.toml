@@ -34,7 +34,5 @@ mbus-core = { version = "0.8.0", default-features = false, features = [
     "discrete-inputs",
     "registers",
 ] }
+ibus-core = { path = "../../crates/ibus-core" }
 
-[profile.dev]
-# modbus-rs generates large async futures — see server Cargo.toml.
-opt-level = 1

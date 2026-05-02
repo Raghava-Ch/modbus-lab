@@ -1,4 +1,5 @@
 mod cloud_bridge;
+mod ibus;
 mod modbus;
 
 use cloud_bridge::mqtt::commands::{
@@ -53,6 +54,15 @@ pub fn run() {
             get_cloud_bridge_status,
             start_cloud_bridge,
             stop_cloud_bridge,
+            ibus::ibus_parse_identity,
+            ibus::ibus_parse_manifest,
+            ibus::ibus_parse_points,
+            ibus::ibus_parse_descriptor,
+            ibus::ibus_decode_point,
+            ibus::ibus_encode_point,
+            ibus::ibus_run_conformance,
+            ibus::ibus_lookup_unit,
+            ibus::ibus_constants,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

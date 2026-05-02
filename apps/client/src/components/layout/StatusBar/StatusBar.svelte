@@ -17,7 +17,7 @@
 
 <header class="status-bar">
   <div class="left">
-    <h1>Modbus Lab</h1>
+    <h1>ModbusLab Client</h1>
     <ConnectionBadge />
   </div>
 

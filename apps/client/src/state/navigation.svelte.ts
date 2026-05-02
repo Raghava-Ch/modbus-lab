@@ -9,6 +9,7 @@ export type TabId =
   | "diagnostics"
   | "custom-frame"
   | "cloud-bridge"
+  | "ibus"
   | "settings";
 
 export type TabIcon =
@@ -19,8 +20,10 @@ export type TabIcon =
   | "activity"
   | "file-text"
   | "layers"
+  | "traffic"
   | "stethoscope"
   | "cloud"
+  | "compass"
   | "settings";
 
 export interface TabDef {
@@ -42,6 +45,7 @@ export const tabDefs: TabDef[] = [
   { id: "diagnostics", label: "Diagnostics", icon: "stethoscope", group: "main", feature: "FC 08" },
   { id: "custom-frame", label: "Custom Frame", icon: "file-text", group: "main", feature: "Raw PDU builder" },
   { id: "cloud-bridge", label: "Cloud Bridge", icon: "cloud", group: "main", feature: "Modbus ↔ MQTT" },
+  { id: "ibus", label: "iBus", icon: "compass", group: "main", feature: "iBus v1.1 discovery" },
   { id: "settings", label: "Settings", icon: "settings", group: "settings", feature: "App preferences" },
 ];
 

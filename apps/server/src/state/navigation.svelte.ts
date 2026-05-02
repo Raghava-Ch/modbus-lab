@@ -8,7 +8,7 @@ export type TabId =
   | "fifo-queue"
   | "traffic"
   | "diagnostics"
-  | "custom-frame"
+  | "ibus"
   | "settings";
 
 export type TabIcon =
@@ -19,7 +19,9 @@ export type TabIcon =
   | "activity"
   | "file-text"
   | "layers"
+  | "traffic"
   | "stethoscope"
+  | "compass"
   | "settings";
 
 export interface TabDef {
@@ -38,9 +40,9 @@ export const tabDefs: TabDef[] = [
   { id: "input-registers", label: "Input Registers", icon: "activity", group: "main", feature: "FC 04 (Read-Only)" },
   { id: "file-records", label: "File Records", icon: "file-text", group: "main", feature: "FC 20/21 (Read/Write)" },
   { id: "fifo-queue", label: "FIFO Queue", icon: "layers", group: "main", feature: "FC 24 (Read FIFO Queue)" },
-  { id: "traffic", label: "Traffic", icon: "stethoscope", group: "main", feature: "Request/error analytics" },
-  { id: "diagnostics", label: "Diagnostics", icon: "activity", group: "main", feature: "FC07/08/11/12/17/43 tools" },
-  { id: "custom-frame", label: "Custom Frame", icon: "file-text", group: "main", feature: "Raw PDU builder" },
+  { id: "traffic", label: "Traffic", icon: "traffic", group: "main", feature: "Request/error analytics" },
+  { id: "diagnostics", label: "Diagnostics", icon: "stethoscope", group: "main", feature: "FC07/08/11/12/17/43 tools" },
+  { id: "ibus", label: "iBus", icon: "compass", group: "main", feature: "iBus v1.1 publisher" },
   { id: "settings", label: "Settings", icon: "settings", group: "settings", feature: "Server defaults & preferences" },
 ];
 

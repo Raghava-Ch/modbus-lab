@@ -31,9 +31,5 @@ tauri-plugin-dialog = "2"
 # Pinned to a minor version range to allow patch updates without surprise breakages.
 rumqttc = { version = "0.25", default-features = false, features = ["use-rustls"] }
 rustls-native-certs = "0.8"
+ibus-core = { path = "../../../crates/ibus-core" }
 
-[profile.dev]
-# modbus-rs generates large async futures that overflow the default
-# 2 MB tokio-worker stack in fully-unoptimised debug builds.
-# opt-level 1 is enough to shrink them while preserving debug symbols.
-opt-level = 1

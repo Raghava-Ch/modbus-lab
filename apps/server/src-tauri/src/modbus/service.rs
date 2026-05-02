@@ -34,7 +34,7 @@ const SUPERVISOR_RECONNECT_MAX_BACKOFF_SECS: u64 = 30;
 
 use super::types::{
     AnalyticsContext, ApiError, ApiResult, CoilEntry, CoilWriteFailure, ConnectionStatus,
-    ConnectionStatusPayload, CustomFrameMode, CustomFrameRequest, CustomFrameResponse,
+    ConnectionStatusPayload,
     DiagnosticRequest, DiagnosticResponse, DiscreteInputEntry,
     GetComEventCounterResponse, GetComEventLogRequest, GetComEventLogResponse,
     ReadCoilsRequest, ReadCoilsResponse, ReadDeviceIdentificationRequest,
@@ -1379,59 +1379,6 @@ impl AppState {
             };
 
             Ok(DiagnosticResponse { data: response })
-        }
-
-        pub async fn send_custom_frame(
-            &self,
-            request: &CustomFrameRequest,
-        ) -> ApiResult<CustomFrameResponse> {
-            self.mark_tcp_activity().await;
-
-            let (function_code, payload) = resolve_custom_frame_request(request)?;
-            let response_payload = match self.active_connection_kind(request.analytics.clone()).await? {
-                ActiveConnectionKind::Tcp => {
-                    let (host, port, slave_id, config) =
-                        self.active_tcp_endpoint(request.analytics.clone()).await?;
-                    send_raw_modbus_request_with_retry(
-                        &host,
-                        port,
-                        slave_id,
-                        function_code,
-                        &payload,
-                        config,
-                    )
-                    .await
-                    .map_err(|err| {
-                        ApiError::backend_failure(
-                            "Custom frame send failed.",
-                            Some(err),
-                            request.analytics.clone(),
-                        )
-                    })?
-                }
-                ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
-                    self.with_serial_session(request.analytics.clone(), |session| {
-                        serial_send_request(session, function_code, &payload)
-                    })
-                    .await?
-                }
-            };
-
-            let response_ascii = decode_modbus_text(&response_payload);
-            Ok(CustomFrameResponse {
-                mode: request.mode,
-                function_code,
-                function_name: modbus_function_name(function_code).to_string(),
-                request_hex: format_hex_bytes(&payload),
-                response_hex: format_hex_bytes(&response_payload),
-                response_ascii: if response_ascii.is_empty() {
-                    None
-                } else {
-                    Some(response_ascii)
-                },
-                request_summary: describe_custom_pdu("request", function_code, &payload),
-                response_summary: describe_custom_pdu("response", function_code, &response_payload),
-            })
         }
 
         pub async fn read_file_records(
@@ -3220,47 +3167,6 @@ fn parse_hex_input(input: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn resolve_custom_frame_request(request: &CustomFrameRequest) -> ApiResult<(u8, Vec<u8>)> {
-    match request.mode {
-        CustomFrameMode::FunctionPayload => {
-            let function = request.function_code.ok_or_else(|| {
-                ApiError::invalid_request(
-                    "functionCode is required for function-payload mode.",
-                    request.analytics.clone(),
-                )
-            })?;
-            let payload_hex = request.payload_hex.clone().unwrap_or_default();
-            let payload = parse_hex_input(&payload_hex).map_err(|details| {
-                ApiError::backend_failure(
-                    "payloadHex is not valid hex.",
-                    Some(details),
-                    request.analytics.clone(),
-                )
-            })?;
-            Ok((function, payload))
-        }
-        CustomFrameMode::RawBytes => {
-            let raw_hex = request.raw_hex.clone().unwrap_or_default();
-            let raw = parse_hex_input(&raw_hex).map_err(|details| {
-                ApiError::backend_failure(
-                    "rawHex is not valid hex.",
-                    Some(details),
-                    request.analytics.clone(),
-                )
-            })?;
-
-            if raw.is_empty() {
-                return Err(ApiError::invalid_request(
-                    "rawHex must include at least one byte (function code).",
-                    request.analytics.clone(),
-                ));
-            }
-
-            Ok((raw[0], raw[1..].to_vec()))
-        }
-    }
-}
-
 fn describe_custom_pdu(mode: &str, function: u8, payload: &[u8]) -> String {
     let details = decode_pdu_details(mode, function, false, payload);
     format!(
@@ -4021,9 +3927,8 @@ fn decode_modbus_text(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::modbus::types::{CustomFrameMode, CustomFrameRequest};
     use modbus_rs::crc16;
-    use super::{describe_custom_pdu, parse_hex_input, resolve_custom_frame_request, try_extract_serial_rtu_response};
+    use super::{describe_custom_pdu, parse_hex_input, try_extract_serial_rtu_response};
 
     #[test]
     fn extracts_fc01_response_after_echoed_request_frame() {
@@ -4084,23 +3989,6 @@ mod tests {
     fn parses_hex_input_with_common_separators() {
         let parsed = parse_hex_input("07 06,00;01 00-00 00:01").expect("hex parsing should succeed");
         assert_eq!(parsed, vec![0x07, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01]);
-    }
-
-    #[test]
-    fn resolves_raw_frame_request_for_fc20_payload() {
-        let request = CustomFrameRequest {
-            mode: CustomFrameMode::RawBytes,
-            function_code: None,
-            payload_hex: None,
-            raw_hex: Some("14 07 06 00 01 00 00 00 01".to_string()),
-            analytics: None,
-        };
-
-        let (function, payload) =
-            resolve_custom_frame_request(&request).expect("raw frame should resolve");
-
-        assert_eq!(function, 0x14);
-        assert_eq!(payload, vec![0x07, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01]);
     }
 
     #[test]

@@ -40,8 +40,8 @@
   import FifoPage from "../pages/FifoPage.svelte";
   import TrafficPage from "../pages/TrafficPage.svelte";
   import DiagnosticsPage from "../pages/DiagnosticsPage.svelte";
-  import CustomFramePage from "../pages/CustomFramePage.svelte";
   import SettingsPage from "../pages/SettingsPage.svelte";
+  import IbusPage from "../pages/IbusPage.svelte";
 
   const filtered = $derived(getFilteredLogs(logState.filter));
   let showAbout = $state(false);
@@ -114,8 +114,8 @@
       <FifoPage />
     {:else if navigationState.activeTab === "traffic"}
       <TrafficPage />
-    {:else if navigationState.activeTab === "custom-frame"}
-      <CustomFramePage />
+    {:else if navigationState.activeTab === "ibus"}
+      <IbusPage />
     {:else if navigationState.activeTab === "settings"}
       <SettingsPage />
     {:else}

@@ -19,7 +19,7 @@
 
 <div class="spinner">
   <div class="spinner-ring"></div>
-  <p class="spinner-text">Loading Modbus Lab...</p>
+  <p class="spinner-text">Loading ModbusLab Client...</p>
   {#if lastInitWarning}
     <p class="spinner-notice">{lastInitWarning}</p>
   {/if}

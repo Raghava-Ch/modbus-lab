@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/client/src-tauri",
+    "apps/server/src-tauri",
+    "crates/ibus-core",
+    "tests/e2e",
+]
+
+# `modbus-rs` 0.8.0 generates large async futures that overflow the default
+# 2 MB tokio-worker stack in fully-unoptimised debug builds. Setting opt-level
+# at the workspace root keeps every member crate consistent.
+[profile.dev]
+opt-level = 1

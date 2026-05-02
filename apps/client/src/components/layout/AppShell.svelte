@@ -41,6 +41,7 @@
   import DiagnosticsPage from "../pages/DiagnosticsPage.svelte";
   import CustomFramePage from "../pages/CustomFramePage.svelte";
   import CloudBridgePage from "../pages/CloudBridgePage.svelte";
+  import IbusPage from "../pages/IbusPage.svelte";
   import SettingsPage from "../pages/SettingsPage.svelte";
 
   const filtered = $derived(getFilteredLogs(logState.filter));
@@ -113,6 +114,8 @@
       <CustomFramePage />
     {:else if navigationState.activeTab === "cloud-bridge"}
       <CloudBridgePage />
+    {:else if navigationState.activeTab === "ibus"}
+      <IbusPage />
     {:else}
       <SettingsPage />
     {/if}
@@ -168,9 +171,9 @@
     onclick={(e) => e.target === e.currentTarget && (showAbout = false)}
     onkeydown={(e) => e.key === "Escape" && (showAbout = false)}
   >
-    <div class="about-modal" role="dialog" aria-modal="true" aria-label="About Modbus Lab Project">
+    <div class="about-modal" role="dialog" aria-modal="true" aria-label="About ModbusLab Client">
       <header class="about-header">
-        <h2>About Modbus Lab Project</h2>
+        <h2>About ModbusLab Client</h2>
         <button class="close-btn" type="button" aria-label="Close" onclick={() => (showAbout = false)}>
           <X size={18} />
         </button>
@@ -184,7 +187,7 @@
         <div class="about-section">
           <h3>About</h3>
           <p>
-            Modbus Lab is a professional-grade desktop Modbus master client purpose-built for industrial automation engineers and system integrators.
+            ModbusLab Client is a professional-grade desktop Modbus master client purpose-built for industrial automation engineers and system integrators.
             It demonstrates a modern, production-ready approach to factory floor operations, IoT device management, and SCADA system testing.
           </p>
           <p style="margin-top: 8px; font-size: 0.95em; opacity: 0.9;">

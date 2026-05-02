@@ -8,7 +8,7 @@ repository = ""
 edition = "2021"
 
 [lib]
-name = "app_client_lib"
+name = "app_server_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -55,9 +55,5 @@ thiserror = "1"
 serialport = "4"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
+ibus-core = { path = "../../../crates/ibus-core" }
 
-[profile.dev]
-# modbus-rs 0.8.0 generates large async futures that overflow the default
-# 2 MB tokio-worker stack in fully-unoptimised debug builds.
-# opt-level 1 is enough to shrink them while preserving debug symbols.
-opt-level = 1

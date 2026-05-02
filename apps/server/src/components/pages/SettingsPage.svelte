@@ -10,6 +10,7 @@
     setForcedLayoutMode,
     setGlobalPollingDefaultInterval,
     setGlobalPollingMaxAddressCount,
+    setIbusEnabled,
     setLogTimeFormat,
     setLogTimePrecision,
     setMaxRetainedLogEntries,
@@ -257,6 +258,20 @@
               oninput={(e) => setFeatureDefaults("inputRegisters", { count: onNumberInput(e.currentTarget.value, settingsState.defaults.inputRegisters.count) })}
             />
           </div>
+        </section>
+
+        <section class="group">
+          <h3>Protocols</h3>
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              checked={settingsState.ibus.enabled}
+              onchange={(e) => setIbusEnabled(e.currentTarget.checked)}
+            />
+            <span>
+              Enable iBus v1.1 publisher. Adds an iBus tab where you can publish a device descriptor (HR 9000–9999).
+            </span>
+          </label>
         </section>
       </div>
     {/snippet}

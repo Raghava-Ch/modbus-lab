@@ -36,7 +36,7 @@ export interface FileRecordExecution {
 	parsedSegments: ParsedFileRecordSegment[];
 }
 
-interface BackendCustomFrameResponse {
+interface BackendFileRecordsResponse {
 	functionCode: number;
 	requestHex: string;
 	responseHex: string;
@@ -691,7 +691,7 @@ export async function executeFileRecord(notifyOnSuccess: boolean = true): Promis
 		const payloadHex = bytesToHex(payloadBytes);
 		const command = mode === "read" ? "store_read_file_records" : "store_write_file_records";
 
-		const response = await invoke<BackendCustomFrameResponse>(command, {
+		const response = await invoke<BackendFileRecordsResponse>(command, {
 			request: {
 				payloadHex,
 			},
