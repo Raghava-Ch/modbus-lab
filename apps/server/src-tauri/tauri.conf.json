@@ -1,11 +1,11 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ModbusLab Server",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "identifier": "com.modbuslab.Server",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev --workspace @modbus-lab/server",
+    "beforeBuildCommand": "npm run build --workspace @modbus-lab/server",
     "devUrl": "http://localhost:1421",
     "frontendDist": "../dist"
   },

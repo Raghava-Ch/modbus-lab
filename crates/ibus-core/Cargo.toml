@@ -1,0 +1,18 @@
+[package]
+name = "ibus-core"
+version = "0.1.0"
+edition = "2021"
+description = "iBus v1.1 protocol overlay — types, codec, overlay, parser, conformance"
+license-file = "../../LICENSE"
+publish = false
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+thiserror = "1"
+
+[dev-dependencies]
+serde_json = "1"

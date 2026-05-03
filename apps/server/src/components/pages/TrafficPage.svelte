@@ -23,7 +23,7 @@
   </div>
 {/if}
 
-<PageShell title="Traffic" feature="Request/error analytics" icon="stethoscope">
+<PageShell title="Traffic" feature="Request/error analytics" icon="traffic">
   {#snippet children()}
 
     <section class="traffic-section">

@@ -4,6 +4,7 @@
   import {
     Activity,
     Cloud,
+    Compass,
     Database,
     FileText,
     Layers,
@@ -11,6 +12,7 @@
     Plug,
     Settings2,
     Stethoscope,
+    TrafficCone,
     ToggleLeft,
   } from "lucide-svelte";
   import type { TabIcon } from "../../state/navigation.svelte";
@@ -32,10 +34,14 @@
   <FileText {size} />
 {:else if icon === "layers"}
   <Layers {size} />
+{:else if icon === "traffic"}
+  <TrafficCone {size} />
 {:else if icon === "stethoscope"}
   <Stethoscope {size} />
 {:else if icon === "cloud"}
   <Cloud {size} />
+{:else if icon === "compass"}
+  <Compass {size} />
 {:else}
   <Settings2 {size} />
 {/if}

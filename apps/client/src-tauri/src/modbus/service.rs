@@ -681,14 +681,25 @@ impl AppState {
                 .await?;
 
                 (0..request.quantity)
-                    .map(|i| {
+                    .map(|i| -> ApiResult<RegisterEntry> {
                         let addr = request.start_address + i;
-                        RegisterEntry {
-                            address: addr,
-                            value: registers.value(addr).unwrap_or(0),
-                        }
+                        let value = registers
+                            .value(addr)
+                            .or_else(|_| registers.value(i))
+                            .map_err(|_| {
+                                ApiError::backend_failure(
+                                    "Read holding registers failed.",
+                                    Some(format!(
+                                        "FC03 response missing value for address {} (offset {}).",
+                                        addr, i
+                                    )),
+                                    request.analytics.clone(),
+                                )
+                            })?;
+
+                        Ok(RegisterEntry { address: addr, value })
                     })
-                    .collect()
+                    .collect::<ApiResult<Vec<_>>>()?
             }
             ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);
@@ -757,14 +768,25 @@ impl AppState {
                 .await?;
 
                 (0..request.quantity)
-                    .map(|i| {
+                    .map(|i| -> ApiResult<RegisterEntry> {
                         let addr = request.start_address + i;
-                        RegisterEntry {
-                            address: addr,
-                            value: registers.value(addr).unwrap_or(0),
-                        }
+                        let value = registers
+                            .value(addr)
+                            .or_else(|_| registers.value(i))
+                            .map_err(|_| {
+                                ApiError::backend_failure(
+                                    "Read input registers failed.",
+                                    Some(format!(
+                                        "FC04 response missing value for address {} (offset {}).",
+                                        addr, i
+                                    )),
+                                    request.analytics.clone(),
+                                )
+                            })?;
+
+                        Ok(RegisterEntry { address: addr, value })
                     })
-                    .collect()
+                    .collect::<ApiResult<Vec<_>>>()?
             }
             ActiveConnectionKind::SerialRtu | ActiveConnectionKind::SerialAscii => {
                 let mut payload = Vec::with_capacity(4);

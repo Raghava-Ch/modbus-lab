@@ -10,6 +10,8 @@
     setForcedLayoutMode,
     setGlobalPollingDefaultInterval,
     setGlobalPollingMaxAddressCount,
+    setIbusAutoProbeOnConnect,
+    setIbusEnabled,
     setLogTimeFormat,
     setLogTimePrecision,
     setMaxRetainedLogEntries,
@@ -257,6 +259,29 @@
               oninput={(e) => setFeatureDefaults("inputRegisters", { count: onNumberInput(e.currentTarget.value, settingsState.defaults.inputRegisters.count) })}
             />
           </div>
+        </section>
+
+        <section class="group">
+          <h3>Protocols</h3>
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              checked={settingsState.ibus.enabled}
+              onchange={(e) => setIbusEnabled(e.currentTarget.checked)}
+            />
+            <span>
+              Enable iBus v1.1 client. Adds an iBus tab where you can probe a connected device for its self-describing manifest and points.
+            </span>
+          </label>
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              checked={settingsState.ibus.autoProbeOnConnect}
+              onchange={(e) => setIbusAutoProbeOnConnect(e.currentTarget.checked)}
+              disabled={!settingsState.ibus.enabled}
+            />
+            <span>Auto-probe on successful connect (planned hook).</span>
+          </label>
         </section>
       </div>
     {/snippet}

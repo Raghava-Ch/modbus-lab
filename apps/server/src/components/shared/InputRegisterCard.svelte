@@ -74,6 +74,9 @@
     if (ruleValue.type === "cycle") return `${ruleValue.minValue}/${ruleValue.maxValue} @ ${fmtInterval(ruleValue.intervalMs)}`;
     if (ruleValue.type === "sine") return `${ruleValue.minValue}-${ruleValue.maxValue} p:${fmtInterval(ruleValue.periodMs)}`;
     if (ruleValue.type === "sawtooth") return `step ${ruleValue.step} @ ${fmtInterval(ruleValue.intervalMs)}`;
+    if (ruleValue.type === "sequential") return `step ${ruleValue.step} @ ${fmtInterval(ruleValue.intervalMs)}`;
+    if (ruleValue.type === "linear-ramp") return `step ${ruleValue.step} @ ${fmtInterval(ruleValue.intervalMs)}`;
+    if (ruleValue.type === "random-uniform") return `uniform @ ${fmtInterval(ruleValue.intervalMs)}`;
     return `step ${ruleValue.step} @ ${fmtInterval(ruleValue.intervalMs)}`;
   }
 
@@ -202,7 +205,7 @@
           <SlidersHorizontal size={10} />
           {rule.minValue}-{rule.maxValue}
         </span>
-        {#if rule.type === "sawtooth" || rule.type === "triangle"}
+        {#if rule.type === "sawtooth" || rule.type === "triangle" || rule.type === "sequential" || rule.type === "linear-ramp"}
           <span class="rule-chip">st {rule.step}</span>
         {/if}
         {#if rule.type === "sine"}
@@ -227,6 +230,9 @@
               <option value="sine">Sine wave</option>
               <option value="sawtooth">Sawtooth wave</option>
               <option value="triangle">Triangle wave</option>
+              <option value="sequential">Sequential</option>
+              <option value="linear-ramp">Linear ramp</option>
+              <option value="random-uniform">Random uniform</option>
             </select>
           </label>
 
@@ -251,7 +257,7 @@
             </label>
           {/if}
 
-          {#if editRuleType === "sawtooth" || editRuleType === "triangle"}
+          {#if editRuleType === "sawtooth" || editRuleType === "triangle" || editRuleType === "sequential" || editRuleType === "linear-ramp"}
             <label class="rule-pop-field rule-pop-span2">
               <span class="rule-pop-label">Step</span>
               <input type="number" min="1" max="65535" value={editStep} oninput={(e) => { editStep = Number(e.currentTarget.value); }} />

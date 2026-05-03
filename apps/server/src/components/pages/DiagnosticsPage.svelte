@@ -131,7 +131,7 @@
   </div>
 {/if}
 
-<PageShell title="Diagnostics" feature="Server-side diagnostics from observed traffic" icon="activity">
+<PageShell title="Diagnostics" feature="Server-side diagnostics from observed traffic" icon="stethoscope">
   {#snippet children()}
 
     <section class="diag-section">

@@ -30,6 +30,35 @@ const ADDR_SPACE: usize = 65_536;
 const MAX_COIL_BYTES: usize = 250;
 /// Max registers per Modbus PDU (125 × 2 bytes = 250).
 const MAX_REG_WORDS: usize = 125;
+const IBUS_REGION_START: u16 = 9000;
+const IBUS_REGION_END: u16 = 9999;
+
+// ── FC11 / FC2B ReportServerId: identifying the simulator ────────────────────
+const SERVER_ID_STRING: &[u8] = b"ModbusLab Server";
+const RUN_INDICATOR_ON: u8 = 0xFF;
+const RUN_INDICATOR_OFF: u8 = 0x00;
+
+// ── FC0C GetCommEventLog: keep a small ring of recent events ─────────────────
+const COMM_EVENT_LOG_CAP: usize = 64;
+
+// ── FC08 Diagnostics sub-functions (Modbus Application Protocol §6.8) ───────
+mod diag_subfn {
+    pub const RETURN_QUERY_DATA: u16 = 0x0000;
+    pub const RESTART_COMMS_OPTION: u16 = 0x0001;
+    pub const RETURN_DIAG_REGISTER: u16 = 0x0002;
+    pub const CHANGE_ASCII_INPUT_DELIMITER: u16 = 0x0003;
+    pub const FORCE_LISTEN_ONLY_MODE: u16 = 0x0004;
+    pub const CLEAR_COUNTERS_AND_DIAG_REG: u16 = 0x000A;
+    pub const RETURN_BUS_MESSAGE_COUNT: u16 = 0x000B;
+    pub const RETURN_BUS_COMM_ERROR_COUNT: u16 = 0x000C;
+    pub const RETURN_BUS_EXCEPTION_ERROR_COUNT: u16 = 0x000D;
+    pub const RETURN_SERVER_MESSAGE_COUNT: u16 = 0x000E;
+    pub const RETURN_SERVER_NO_RESPONSE_COUNT: u16 = 0x000F;
+    pub const RETURN_SERVER_NAK_COUNT: u16 = 0x0010;
+    pub const RETURN_SERVER_BUSY_COUNT: u16 = 0x0011;
+    pub const RETURN_BUS_CHARACTER_OVERRUN_COUNT: u16 = 0x0012;
+    pub const CLEAR_OVERRUN_COUNTER_AND_FLAG: u16 = 0x0014;
+}
 
 const DEVICE_ID_CONFORMITY_LEVEL: u8 = 0x01;
 
@@ -37,7 +66,7 @@ fn device_id_object_value(object_id: u8) -> Option<&'static str> {
     match object_id {
         0 => Some("Modbus Lab"),
         1 => Some("MBL-SERVER"),
-        2 => Some("0.0.4"),
+        2 => Some("0.0.5"),
         3 => Some("https://github.com/Raghava-Ch/modbus-lab"),
         4 => Some("Modbus Lab Server"),
         5 => Some("Rust+Tauri"),
@@ -114,6 +143,25 @@ pub struct ServerApp {
     registered_discrete_inputs: Vec<bool>,
     registered_holding_regs: Vec<bool>,
     registered_input_regs: Vec<bool>,
+    /// FC07 Read Exception Status — 8-bit user-defined status byte.
+    exception_status: u8,
+    /// FC08 / FC0B / FC0C diagnostic counters.
+    bus_message_count: u16,
+    bus_comm_error_count: u16,
+    bus_exception_error_count: u16,
+    server_message_count: u16,
+    server_no_response_count: u16,
+    server_nak_count: u16,
+    server_busy_count: u16,
+    bus_character_overrun_count: u16,
+    diag_register: u16,
+    /// FC0B Get Comm Event Counter — number of completed commands.
+    comm_event_count: u16,
+    /// FC0C Get Comm Event Log — most-recent-first ring buffer of event bytes.
+    comm_events: Vec<u8>,
+    /// FC08 sub-function 0x04 — Force Listen Only Mode.
+    /// While true, all incoming requests are processed but suppressed (no response).
+    listen_only_mode: bool,
     /// Optional frame-level traffic sink.
     pub traffic_sink: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
 }
@@ -131,8 +179,44 @@ impl ServerApp {
             registered_discrete_inputs: vec![false; ADDR_SPACE],
             registered_holding_regs: vec![false; ADDR_SPACE],
             registered_input_regs: vec![false; ADDR_SPACE],
+            exception_status: 0,
+            bus_message_count: 0,
+            bus_comm_error_count: 0,
+            bus_exception_error_count: 0,
+            server_message_count: 0,
+            server_no_response_count: 0,
+            server_nak_count: 0,
+            server_busy_count: 0,
+            bus_character_overrun_count: 0,
+            diag_register: 0,
+            comm_event_count: 0,
+            comm_events: Vec::with_capacity(COMM_EVENT_LOG_CAP),
+            listen_only_mode: false,
             traffic_sink,
         }
+    }
+
+    // ── Diagnostics counters helpers ─────────────────────────────────────────
+
+    /// Push a Modbus event byte onto the comm-event log (most-recent first).
+    fn push_comm_event(&mut self, event: u8) {
+        if self.comm_events.len() == COMM_EVENT_LOG_CAP {
+            self.comm_events.pop();
+        }
+        self.comm_events.insert(0, event);
+    }
+
+    /// Clear all diagnostic counters and the diagnostic register (sub-fn 0x000A).
+    fn clear_all_counters(&mut self) {
+        self.bus_message_count = 0;
+        self.bus_comm_error_count = 0;
+        self.bus_exception_error_count = 0;
+        self.server_message_count = 0;
+        self.server_no_response_count = 0;
+        self.server_nak_count = 0;
+        self.server_busy_count = 0;
+        self.bus_character_overrun_count = 0;
+        self.diag_register = 0;
     }
 
     // ── Coil helpers ─────────────────────────────────────────────────────────
@@ -212,6 +296,7 @@ impl ServerApp {
     }
 
     /// Register and set multiple discrete input values.
+    #[allow(dead_code)]
     pub fn set_discrete_inputs_batch(&mut self, inputs: &[(u16, bool)]) {
         for &(address, value) in inputs {
             self.set_discrete_input(address, value);
@@ -256,6 +341,7 @@ impl ServerApp {
     }
 
     /// Register and set multiple holding register values.
+    #[allow(dead_code)]
     pub fn set_holding_regs_batch(&mut self, regs: &[(u16, u16)]) {
         for &(address, value) in regs {
             self.set_holding_reg(address, value);
@@ -269,6 +355,13 @@ impl ServerApp {
             self.registered_holding_regs[idx] = false;
             self.holding_regs[idx] = 0;
         }
+    }
+
+    /// True if `address` is currently registered as an application HR.
+    /// Used by the iBus overlap-check to warn when iBus would mask an app reg.
+    pub fn is_holding_reg_registered(&self, address: u16) -> bool {
+        let idx = address as usize;
+        idx < ADDR_SPACE && self.registered_holding_regs[idx]
     }
 
     /// Unregister all holding register addresses and reset all values.
@@ -300,6 +393,7 @@ impl ServerApp {
     }
 
     /// Register and set multiple input register values.
+    #[allow(dead_code)]
     pub fn set_input_regs_batch(&mut self, regs: &[(u16, u16)]) {
         for &(address, value) in regs {
             self.set_input_reg(address, value);
@@ -461,6 +555,45 @@ impl AsyncTrafficNotifier for ServerApp {
 
 impl AsyncAppHandler for ServerApp {
     async fn handle(&mut self, req: ModbusRequest) -> ModbusResponse {
+        // Bookkeeping for FC08 / FC0B / FC0C diagnostic counters.
+        self.bus_message_count = self.bus_message_count.wrapping_add(1);
+        self.server_message_count = self.server_message_count.wrapping_add(1);
+        // Record the function code byte in the comm-event log (Modbus spec
+        // event byte: bit7=Receive Event, low nibble = exception/info bits;
+        // we use the raw FC byte for simplicity, which is acceptable per spec
+        // §6.13 "Communication Event Log").
+        let fc_byte_for_event = req.function_code_byte();
+        self.push_comm_event(fc_byte_for_event);
+
+        // Listen-Only Mode (FC08 sub-function 0x04): all requests are still
+        // processed for counters, but no response is transmitted.
+        let suppress_response = self.listen_only_mode;
+
+        let response = self.dispatch(req).await;
+
+        // Track success vs. exception for FC0B comm-event-counter semantics:
+        // increment only on a successful (non-exception) response.
+        match &response {
+            ModbusResponse::Exception { .. } => {
+                self.bus_exception_error_count = self.bus_exception_error_count.wrapping_add(1);
+            }
+            ModbusResponse::NoResponse => {
+                self.server_no_response_count = self.server_no_response_count.wrapping_add(1);
+            }
+            _ => {
+                self.comm_event_count = self.comm_event_count.wrapping_add(1);
+            }
+        }
+
+        if suppress_response {
+            return ModbusResponse::NoResponse;
+        }
+        response
+    }
+}
+
+impl ServerApp {
+    async fn dispatch(&mut self, req: ModbusRequest) -> ModbusResponse {
         match req {
             // ── FC01: Read Coils ──────────────────────────────────────────────
             ModbusRequest::ReadCoils {
@@ -547,33 +680,57 @@ impl AsyncAppHandler for ServerApp {
             } => {
                 let start = address as usize;
                 let end = start + count as usize;
-                if end > ADDR_SPACE
-                    || count as usize > MAX_REG_WORDS
-                    || self.registered_holding_regs[start..end].iter().any(|&r| !r)
-                {
+                if end > ADDR_SPACE || count as usize > MAX_REG_WORDS {
                     return ModbusResponse::exception(
                         FunctionCode::ReadHoldingRegisters,
                         ExceptionCode::IllegalDataAddress,
                     );
                 }
-                ModbusResponse::registers(
-                    FunctionCode::ReadHoldingRegisters,
-                    &self.holding_regs[start..end],
-                )
+
+                // iBus overlay (if active) owns HR 9000..9999. Build a values
+                // window that swaps in overlay-served words for any address in
+                // the reserved region; everything else still requires the
+                // application HR to be registered.
+                let mut values: Vec<u16> = Vec::with_capacity(count as usize);
+                for offset in 0..count as usize {
+                    let addr = (start + offset) as u16;
+                    if let Some(v) = crate::ibus::read_hr(addr) {
+                        values.push(v);
+                    } else if (IBUS_REGION_START..=IBUS_REGION_END).contains(&addr) {
+                        // Reserved iBus space should remain readable as zero even
+                        // when no descriptor is installed yet.
+                        values.push(0);
+                    } else {
+                        // For non-iBus HR addresses, expose the memory table
+                        // directly (default zero for never-written addresses).
+                        values.push(self.holding_regs[start + offset]);
+                    }
+                }
+                ModbusResponse::registers(FunctionCode::ReadHoldingRegisters, &values)
             }
 
             // ── FC06: Write Single Register ───────────────────────────────────
             ModbusRequest::WriteSingleRegister {
                 address, value, ..
             } => {
+                // iBus-owned HR region is read-only while overlay is active.
+                // Return IllegalDataAddress so clients do not misinterpret a
+                // dropped write as successful persistence.
+                if crate::ibus::owns_hr(address) {
+                    return ModbusResponse::exception(
+                        FunctionCode::WriteSingleRegister,
+                        ExceptionCode::IllegalDataAddress,
+                    );
+                }
                 let idx = address as usize;
-                if idx >= ADDR_SPACE || !self.registered_holding_regs[idx] {
+                if idx >= ADDR_SPACE {
                     return ModbusResponse::exception(
                         FunctionCode::WriteSingleRegister,
                         ExceptionCode::IllegalDataAddress,
                     );
                 }
                 self.holding_regs[idx] = value;
+                self.registered_holding_regs[idx] = true;
                 ModbusResponse::echo_register(address, value)
             }
 
@@ -586,20 +743,28 @@ impl AsyncAppHandler for ServerApp {
             } => {
                 let start = address as usize;
                 let end = start + count as usize;
-                if end > ADDR_SPACE
-                    || count as usize > MAX_REG_WORDS
-                    || self.registered_holding_regs[start..end].iter().any(|&r| !r)
-                {
+                if end > ADDR_SPACE || count as usize > MAX_REG_WORDS {
                     return ModbusResponse::exception(
                         FunctionCode::WriteMultipleRegisters,
                         ExceptionCode::IllegalDataAddress,
                     );
+                }
+                // Reject writes to iBus-owned addresses (read-only tables).
+                for offset in 0..count as usize {
+                    let addr = (start + offset) as u16;
+                    if crate::ibus::owns_hr(addr) {
+                        return ModbusResponse::exception(
+                            FunctionCode::WriteMultipleRegisters,
+                            ExceptionCode::IllegalDataAddress,
+                        );
+                    }
                 }
                 // `data` is big-endian byte pairs; convert to u16 in-place.
                 for i in 0..(count as usize) {
                     let hi = data[i * 2] as u16;
                     let lo = data[i * 2 + 1] as u16;
                     self.holding_regs[start + i] = (hi << 8) | lo;
+                    self.registered_holding_regs[start + i] = true;
                 }
                 ModbusResponse::echo_multi_write(
                     FunctionCode::WriteMultipleRegisters,
@@ -820,6 +985,107 @@ impl AsyncAppHandler for ServerApp {
                     next_object_id: 0,
                     objects,
                 }
+            }
+
+            // ── FC07: Read Exception Status ──────────────────────────────────
+            ModbusRequest::ReadExceptionStatus { .. } => {
+                ModbusResponse::read_exception_status(self.exception_status)
+            }
+
+            // ── FC08: Diagnostics ────────────────────────────────────────────
+            ModbusRequest::Diagnostics { sub_function, data, .. } => {
+                use diag_subfn::*;
+                match sub_function {
+                    RETURN_QUERY_DATA => ModbusResponse::diagnostics_echo(sub_function, data),
+                    RESTART_COMMS_OPTION => {
+                        // 0x0000 = leave log intact; 0xFF00 = clear log.
+                        if data == 0xFF00 {
+                            self.comm_events.clear();
+                        }
+                        self.listen_only_mode = false;
+                        ModbusResponse::diagnostics_echo(sub_function, data)
+                    }
+                    RETURN_DIAG_REGISTER => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.diag_register)
+                    }
+                    CHANGE_ASCII_INPUT_DELIMITER => {
+                        // Modbus serial-only feature; echo back as success.
+                        ModbusResponse::diagnostics_echo(sub_function, data)
+                    }
+                    FORCE_LISTEN_ONLY_MODE => {
+                        self.listen_only_mode = true;
+                        ModbusResponse::NoResponse
+                    }
+                    CLEAR_COUNTERS_AND_DIAG_REG => {
+                        self.clear_all_counters();
+                        ModbusResponse::diagnostics_echo(sub_function, 0)
+                    }
+                    RETURN_BUS_MESSAGE_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.bus_message_count)
+                    }
+                    RETURN_BUS_COMM_ERROR_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.bus_comm_error_count)
+                    }
+                    RETURN_BUS_EXCEPTION_ERROR_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.bus_exception_error_count)
+                    }
+                    RETURN_SERVER_MESSAGE_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.server_message_count)
+                    }
+                    RETURN_SERVER_NO_RESPONSE_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.server_no_response_count)
+                    }
+                    RETURN_SERVER_NAK_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.server_nak_count)
+                    }
+                    RETURN_SERVER_BUSY_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.server_busy_count)
+                    }
+                    RETURN_BUS_CHARACTER_OVERRUN_COUNT => {
+                        ModbusResponse::diagnostics_echo(sub_function, self.bus_character_overrun_count)
+                    }
+                    CLEAR_OVERRUN_COUNTER_AND_FLAG => {
+                        self.bus_character_overrun_count = 0;
+                        ModbusResponse::diagnostics_echo(sub_function, 0)
+                    }
+                    _ => ModbusResponse::exception(
+                        FunctionCode::Diagnostics,
+                        ExceptionCode::IllegalDataValue,
+                    ),
+                }
+            }
+
+            // ── FC0B: Get Comm Event Counter ─────────────────────────────────
+            ModbusRequest::GetCommEventCounter { .. } => {
+                // Status word: 0xFFFF = busy (previous request still running),
+                // 0x0000 = ready. We're synchronous, so always ready.
+                ModbusResponse::comm_event_counter(0x0000, self.comm_event_count)
+            }
+
+            // ── FC0C: Get Comm Event Log ─────────────────────────────────────
+            ModbusRequest::GetCommEventLog { .. } => {
+                // Payload: status(2) | event_count(2) | message_count(2) | events(N)
+                // Cap events at MAX_ADU_FRAME_LEN minus the 6-byte fixed header.
+                let max_events = COMM_EVENT_LOG_CAP.min(self.comm_events.len());
+                let mut payload: Vec<u8> = Vec::with_capacity(6 + max_events);
+                payload.extend_from_slice(&0x0000u16.to_be_bytes()); // status: ready
+                payload.extend_from_slice(&self.comm_event_count.to_be_bytes());
+                payload.extend_from_slice(&self.bus_message_count.to_be_bytes());
+                payload.extend_from_slice(&self.comm_events[..max_events]);
+                ModbusResponse::comm_event_log(&payload)
+            }
+
+            // ── FC11: Report Server ID ───────────────────────────────────────
+            ModbusRequest::ReportServerId { .. } => {
+                // Payload = server_id_string + run_indicator_status_byte
+                let mut payload: Vec<u8> = Vec::with_capacity(SERVER_ID_STRING.len() + 1);
+                payload.extend_from_slice(SERVER_ID_STRING);
+                payload.push(if self.listen_only_mode {
+                    RUN_INDICATOR_OFF
+                } else {
+                    RUN_INDICATOR_ON
+                });
+                ModbusResponse::report_server_id(&payload)
             }
 
             // ── All other FCs: reply with Illegal Function ────────────────────

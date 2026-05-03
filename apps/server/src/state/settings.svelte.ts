@@ -32,6 +32,9 @@ export interface AppSettings {
     holdingRegisters: FeatureDefaults;
     inputRegisters: FeatureDefaults;
   };
+  ibus: {
+    enabled: boolean;
+  };
 }
 
 const SETTINGS_KEY = "Modbus-Lab.settings.v1";
@@ -58,6 +61,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     discreteInputs: { startAddress: 0, count: 8, view: "table" },
     holdingRegisters: { startAddress: 0, count: 16, view: "table" },
     inputRegisters: { startAddress: 0, count: 16, view: "table" },
+  },
+  ibus: {
+    enabled: false,
   },
 };
 
@@ -116,6 +122,9 @@ function normalizeSettings(raw: unknown): AppSettings {
   base.defaults.discreteInputs = normalizeFeatureDefaults(defaults.discreteInputs, base.defaults.discreteInputs);
   base.defaults.holdingRegisters = normalizeFeatureDefaults(defaults.holdingRegisters, base.defaults.holdingRegisters);
   base.defaults.inputRegisters = normalizeFeatureDefaults(defaults.inputRegisters, base.defaults.inputRegisters);
+
+  const ibus: Partial<AppSettings["ibus"]> = incoming.ibus ?? {};
+  base.ibus.enabled = typeof ibus.enabled === "boolean" ? ibus.enabled : base.ibus.enabled;
 
   return base;
 }
@@ -219,6 +228,11 @@ export function setMaxRetainedLogEntries(count: number): void {
 export function setFeatureDefaults(feature: keyof AppSettings["defaults"], patch: Partial<FeatureDefaults>): void {
   const current = settingsState.defaults[feature];
   settingsState.defaults[feature] = normalizeFeatureDefaults({ ...current, ...patch }, current);
+  persist();
+}
+
+export function setIbusEnabled(value: boolean): void {
+  settingsState.ibus.enabled = value;
   persist();
 }
 

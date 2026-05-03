@@ -140,11 +140,32 @@ const HOLDING_VIEW_KEY = "Modbus-Lab.holdingView";
 const HOLDING_MAX_COUNT = 65536;
 const HOLDING_ADDRESS_MIN = 0;
 const HOLDING_ADDRESS_MAX = HOLDING_MAX_COUNT - 1;
+const IBUS_RESERVED_HR_START = 9000;
+const IBUS_RESERVED_HR_END = 9999;
 const HOLDING_READ_CHUNK_MAX = 125;
 const HOLDING_WRITE_BATCH_CHUNK_MAX = 120;
 const HOLDING_PERF_WARN_THRESHOLD = 5000;
 let largeDatasetWarned = false;
 let pollClampWarnedForInterval: number | null = null;
+
+function isIbusModeEnabled(): boolean {
+  return getSettingsSnapshot().ibus.enabled;
+}
+
+function isIbusReservedHoldingAddress(address: number): boolean {
+  return address >= IBUS_RESERVED_HR_START && address <= IBUS_RESERVED_HR_END;
+}
+
+function filterIbusReservedHoldingEntries(entries: HoldingRegisterEntry[]): HoldingRegisterEntry[] {
+  if (!isIbusModeEnabled()) return entries;
+  const blocked = entries.filter((entry) => isIbusReservedHoldingAddress(entry.address)).length;
+  if (blocked > 0) {
+    warnLocal(
+      `iBus mode reserves HR ${IBUS_RESERVED_HR_START}-${IBUS_RESERVED_HR_END}. Blocked ${blocked} holding register${blocked === 1 ? "" : "s"}.`,
+    );
+  }
+  return entries.filter((entry) => !isIbusReservedHoldingAddress(entry.address));
+}
 
 function getPracticalHoldingPollIntervalMs(count: number): number {
   if (count >= 5000) return 5000;
@@ -237,6 +258,11 @@ export function initHoldingRegisterState(): void {
         settings.defaults.holdingRegisters.count,
       );
     }
+  }
+
+  const sanitized = filterIbusReservedHoldingEntries(holdingRegisterState.entries);
+  if (sanitized.length !== holdingRegisterState.entries.length) {
+    holdingRegisterState.entries = [...sanitized].sort((a, b) => a.address - b.address);
   }
 
   setHoldingRegisterPollInterval(settings.polling.defaultIntervalMs);
@@ -557,6 +583,7 @@ async function runHoldingRegisterPollTick(): Promise<void> {
 export async function writeHoldingRegister(address: number): Promise<void> {
   const entry = holdingRegisterState.entries.find((e) => e.address === address);
   if (!entry) return;
+  const requestedValue = entry.desiredValue;
 
   entry.pending = true;
   entry.writeError = null;
@@ -566,11 +593,19 @@ export async function writeHoldingRegister(address: number): Promise<void> {
       request: { address, value: entry.desiredValue },
     });
 
-    entry.slaveValue = response.value;
     entry.pending = false;
     entry.writeError = null;
     entry.lastWriteAt = Date.now();
     addLog("info", `fc06.write ok addr=${address} val=${response.value}`);
+
+    // Verify with an explicit read-back; some devices echo-write but clamp or
+    // ignore value internally.
+    await readHoldingRegister(address);
+    if (entry.slaveValue !== requestedValue) {
+      const msg = `Write acknowledged as ${response.value}, read-back is ${entry.slaveValue}.`;
+      entry.writeError = msg;
+      addLog("warn", `fc06.verify warn addr=${address} requested=${requestedValue} got=${entry.slaveValue}`);
+    }
   } catch (err) {
     entry.pending = false;
     entry.writeError = parseInvokeError(err);
@@ -630,10 +665,15 @@ export async function writePendingHoldingRegisters(): Promise<number> {
     if (failure) {
       entry.writeError = failure;
     } else {
-      entry.slaveValue = entry.desiredValue;
       entry.writeError = null;
       entry.lastWriteAt = Date.now();
     }
+  }
+
+  // Refresh all written addresses from device read-back instead of trusting
+  // FC16 acknowledgment payload.
+  if (writtenTotal > 0) {
+    await readAllHoldingRegisters({ markPending: false, queueIfBusy: false });
   }
 
   if (chunkFailureMessage) {
@@ -699,8 +739,9 @@ export function applyHoldingRegisterRange(startAddress: number, count: number): 
     warnLocal(`Address is invalid. Accepted address range is ${acceptedCustomMin}-${acceptedCustomMax} for custom registers at this range; dropped ${droppedCustom} custom register${droppedCustom === 1 ? "" : "s"}.`);
   }
 
-  next.sort((a, b) => a.address - b.address);
-  holdingRegisterState.entries = next;
+  const sanitized = filterIbusReservedHoldingEntries(next);
+  sanitized.sort((a, b) => a.address - b.address);
+  holdingRegisterState.entries = sanitized;
 
   const maxCount = getGlobalPollingMaxAddressCount();
   if (holdingRegisterState.pollActive && holdingRegisterState.entries.length > maxCount) {
@@ -745,7 +786,8 @@ export function addHoldingRegisterRange(startAddress: number, count: number): vo
     });
   }
 
-  holdingRegisterState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
+  const sanitized = filterIbusReservedHoldingEntries([...existingByAddress.values()]);
+  holdingRegisterState.entries = sanitized.sort((a, b) => a.address - b.address);
 
   const maxCount = getGlobalPollingMaxAddressCount();
   if (holdingRegisterState.pollActive && holdingRegisterState.entries.length > maxCount) {
@@ -769,6 +811,11 @@ export function addExclusiveHoldingRegister(address: number): boolean {
   const normalized = Math.floor(address);
   if (!Number.isFinite(normalized) || normalized < HOLDING_ADDRESS_MIN || normalized > HOLDING_ADDRESS_MAX) {
     warnLocal(`Address is invalid. Accepted address range is ${HOLDING_ADDRESS_MIN}-${HOLDING_ADDRESS_MAX}.`);
+    return false;
+  }
+
+  if (isIbusModeEnabled() && isIbusReservedHoldingAddress(normalized)) {
+    warnLocal(`iBus mode reserves HR ${IBUS_RESERVED_HR_START}-${IBUS_RESERVED_HR_END}. Address ${normalized} is blocked.`);
     return false;
   }
 
@@ -820,10 +867,12 @@ export function generateRandomExclusiveHoldingRegisterAddress(): number | null {
   const used = new Set(holdingRegisterState.entries.map((e) => e.address));
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const addr = Math.floor(Math.random() * (HOLDING_ADDRESS_MAX + 1));
+    if (isIbusModeEnabled() && isIbusReservedHoldingAddress(addr)) continue;
     if (!used.has(addr)) return addr;
   }
 
   for (let addr = HOLDING_ADDRESS_MIN; addr <= HOLDING_ADDRESS_MAX; addr += 1) {
+    if (isIbusModeEnabled() && isIbusReservedHoldingAddress(addr)) continue;
     if (!used.has(addr)) return addr;
   }
 

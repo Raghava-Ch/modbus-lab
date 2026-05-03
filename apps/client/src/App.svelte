@@ -85,8 +85,8 @@
     }
 
     seeded = true;
-    console.log("[App] Initializing Modbus Lab...");
-    addLog("info", "Modbus Lab shell initialized.");
+    console.log("[App] Initializing ModbusLab Client...");
+    addLog("info", "ModbusLab Client shell initialized.");
 
     // Initialize settings and layout state
     initSettingsState();

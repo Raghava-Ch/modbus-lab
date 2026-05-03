@@ -32,7 +32,7 @@
 
   <IconButton
     label="About"
-    title="About Modbus Lab"
+    title="About ModbusLab Client"
     compact={true}
     onclick={onShowAbout}
   >

@@ -96,6 +96,12 @@
     return raw;
   });
 
+  const protocolChangeLocked = $derived.by(() => {
+    const status = connectionState.status;
+    const backend = connectionState.backendStatus.toLowerCase();
+    return status !== "disconnected" || backend === "reconnecting";
+  });
+
   interface AnalyticsContext {
     traceId?: string;
     sessionId?: string;
@@ -237,6 +243,7 @@
   }
 
   function handleProtocolChange(proto: ModbusProtocol): void {
+    if (protocolChangeLocked) return;
     setProtocol(proto);
     addLog("info", `Protocol changed to ${proto.toUpperCase()}.`);
 
@@ -306,6 +313,7 @@
               class:active={connectionState.protocol === "tcp"}
               type="button"
               onclick={() => handleProtocolChange("tcp")}
+              disabled={protocolChangeLocked}
             >
               <span class="label">Modbus TCP</span>
               <span class="desc">Ethernet/IP</span>
@@ -314,6 +322,7 @@
               class:active={connectionState.protocol === "serial-rtu"}
               type="button"
               onclick={() => handleProtocolChange("serial-rtu")}
+              disabled={protocolChangeLocked}
             >
               <span class="label">Serial RTU</span>
               <span class="desc">Binary protocol</span>
@@ -322,6 +331,7 @@
               class:active={connectionState.protocol === "serial-ascii"}
               type="button"
               onclick={() => handleProtocolChange("serial-ascii")}
+              disabled={protocolChangeLocked}
             >
               <span class="label">Serial ASCII</span>
               <span class="desc">Text protocol</span>
@@ -758,6 +768,17 @@
 
   .protocol-buttons button.active .label {
     color: var(--c-accent);
+  }
+
+  .protocol-buttons button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .protocol-buttons button:disabled:hover {
+    border-color: var(--c-border);
+    color: var(--c-text-2);
+    background: var(--c-surface-2);
   }
 
   .label {

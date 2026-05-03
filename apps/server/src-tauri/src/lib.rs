@@ -1,10 +1,11 @@
+mod ibus;
 mod modbus;
 
 use modbus::commands::{
     connect_modbus_serial_ascii, connect_modbus_serial_rtu, connect_modbus_tcp, disconnect_modbus,
     diagnostic, get_com_event_counter, get_com_event_log, get_modbus_connection_status,
     listener_clients, listener_start, listener_status, listener_stop,
-    list_serial_ports, send_custom_frame,
+    list_serial_ports,
     read_coils, read_device_identification, read_discrete_inputs, read_exception_status,
     read_fifo_queue, read_holding_registers, read_input_registers, report_server_id, write_coil,
     write_coils_batch, write_holding_register, write_holding_registers_batch,
@@ -52,7 +53,6 @@ pub fn run() {
             read_fifo_queue,
             read_exception_status,
             diagnostic,
-            send_custom_frame,
             get_com_event_counter,
             get_com_event_log,
             report_server_id,
@@ -89,7 +89,16 @@ pub fn run() {
             store_write_file_records,
             read_file_records,
             write_file_records,
+            ibus::ibus_set_descriptor,
+            ibus::ibus_get_descriptor,
+            ibus::ibus_clear,
+            ibus::ibus_export_descriptor,
+            ibus::ibus_import_descriptor,
         ])
+        .setup(|app| {
+            ibus::load_persisted(&app.handle());
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

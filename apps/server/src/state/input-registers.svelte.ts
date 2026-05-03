@@ -15,7 +15,7 @@ export type InputRegisterView = "table" | "cards";
 export type InputRegisterFilter = "all" | "non-zero" | "zero";
 export type InputRegisterOrigin = "range" | "custom";
 export type InputRegRule = {
-  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle";
+  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle" | "sequential" | "linear-ramp" | "random-uniform";
   intervalMs: number;
   minValue: number;
   maxValue: number;
@@ -830,6 +830,34 @@ export function setInputRegisterRule(address: number, rule: InputRegRule): void 
     ruleTimers.set(address, timer);
   }
 
+  if (entry.rule.type === "sequential") {
+    let cursor = entry.rule.minValue;
+    const timer = setInterval(() => {
+      const current = inputRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = cursor;
+      cursor = cursor + current.rule.step > current.rule.maxValue
+        ? current.rule.minValue
+        : cursor + current.rule.step;
+      current.desiredValue = next;
+      void writeInputRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "linear-ramp") {
+    const timer = setInterval(() => {
+      const current = inputRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = Math.min(current.rule.maxValue, current.value + current.rule.step);
+      current.desiredValue = next;
+      void writeInputRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
   if (entry.rule.type === "triangle") {
     let direction: 1 | -1 = 1;
     const timer = setInterval(() => {
@@ -863,6 +891,19 @@ export function setInputRegisterRule(address: number, rule: InputRegRule): void 
       const center = (current.rule.minValue + current.rule.maxValue) / 2;
       const amplitude = (current.rule.maxValue - current.rule.minValue) / 2;
       const nextValue = normalizeU16(Math.round(center + amplitude * Math.sin(radians)), current.value);
+      current.desiredValue = nextValue;
+      void writeInputRegisterValue(address, nextValue);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "random-uniform") {
+    const timer = setInterval(() => {
+      const current = inputRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const span = current.rule.maxValue - current.rule.minValue + 1;
+      const nextValue = current.rule.minValue + Math.floor(Math.random() * Math.max(1, span));
       current.desiredValue = nextValue;
       void writeInputRegisterValue(address, nextValue);
     }, Math.max(100, entry.rule.intervalMs));

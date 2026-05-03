@@ -10,7 +10,7 @@ export type HoldingRegisterFilter = "all" | "non-zero" | "zero";
 export type HoldingRegisterOrigin = "range" | "custom";
 
 export type HoldingRegRule = {
-  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle";
+  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle" | "sequential" | "linear-ramp" | "random-uniform";
   intervalMs: number;
   minValue: number;
   maxValue: number;
@@ -80,11 +80,32 @@ const HOLDING_VIEW_KEY = "Modbus-Lab.holdingView";
 const HOLDING_MAX_COUNT = 65536;
 const HOLDING_ADDRESS_MIN = 0;
 const HOLDING_ADDRESS_MAX = HOLDING_MAX_COUNT - 1;
+const IBUS_RESERVED_HR_START = 9000;
+const IBUS_RESERVED_HR_END = 9999;
 const HOLDING_PERF_WARN_THRESHOLD = 5000;
 const HOLDING_UI_SYNC_INTERVAL_MS = 400;
 let largeDatasetWarned = false;
 let uiSyncTimer: ReturnType<typeof setInterval> | null = null;
 let uiSyncInFlight = false;
+
+function isIbusModeEnabled(): boolean {
+  return getSettingsSnapshot().ibus.enabled;
+}
+
+function isIbusReservedHoldingAddress(address: number): boolean {
+  return address >= IBUS_RESERVED_HR_START && address <= IBUS_RESERVED_HR_END;
+}
+
+function filterIbusReservedHoldingEntries(entries: HoldingRegisterEntry[]): HoldingRegisterEntry[] {
+  if (!isIbusModeEnabled()) return entries;
+  const blocked = entries.filter((entry) => isIbusReservedHoldingAddress(entry.address)).length;
+  if (blocked > 0) {
+    warnLocal(
+      `iBus mode reserves HR ${IBUS_RESERVED_HR_START}-${IBUS_RESERVED_HR_END}. Blocked ${blocked} holding register${blocked === 1 ? "" : "s"}.`,
+    );
+  }
+  return entries.filter((entry) => !isIbusReservedHoldingAddress(entry.address));
+}
 
 type StoreReadU16Entry = {
   address: number;
@@ -261,6 +282,12 @@ export function initHoldingRegisterState(): void {
     }
   }
 
+  const sanitized = filterIbusReservedHoldingEntries(holdingRegisterState.entries);
+  if (sanitized.length !== holdingRegisterState.entries.length) {
+    holdingRegisterState.entries = [...sanitized].sort((a, b) => a.address - b.address);
+    syncHoldingRegAddressesToBackend();
+  }
+
   startHoldingRegisterUiSync();
 }
 
@@ -370,8 +397,9 @@ export function applyHoldingRegisterRange(startAddress: number, count: number): 
     warnLocal(`Address is invalid. Accepted address range is ${acceptedCustomMin}-${acceptedCustomMax} for custom registers at this range; dropped ${droppedCustom} custom register${droppedCustom === 1 ? "" : "s"}.`);
   }
 
-  next.sort((a, b) => a.address - b.address);
-  holdingRegisterState.entries = next;
+  const sanitized = filterIbusReservedHoldingEntries(next);
+  sanitized.sort((a, b) => a.address - b.address);
+  holdingRegisterState.entries = sanitized;
 
   warnLargeDatasetConsequences(holdingRegisterState.entries.length);
   syncHoldingRegAddressesToBackend();
@@ -408,7 +436,8 @@ export function addHoldingRegisterRange(startAddress: number, count: number): vo
     });
   }
 
-  holdingRegisterState.entries = [...existingByAddress.values()].sort((a, b) => a.address - b.address);
+  const sanitized = filterIbusReservedHoldingEntries([...existingByAddress.values()]);
+  holdingRegisterState.entries = sanitized.sort((a, b) => a.address - b.address);
 
   warnLargeDatasetConsequences(holdingRegisterState.entries.length);
   syncHoldingRegAddressesToBackend();
@@ -424,6 +453,11 @@ export function addExclusiveHoldingRegister(address: number): boolean {
   const normalized = Math.floor(address);
   if (!Number.isFinite(normalized) || normalized < HOLDING_ADDRESS_MIN || normalized > HOLDING_ADDRESS_MAX) {
     warnLocal(`Address is invalid. Accepted address range is ${HOLDING_ADDRESS_MIN}-${HOLDING_ADDRESS_MAX}.`);
+    return false;
+  }
+
+  if (isIbusModeEnabled() && isIbusReservedHoldingAddress(normalized)) {
+    warnLocal(`iBus mode reserves HR ${IBUS_RESERVED_HR_START}-${IBUS_RESERVED_HR_END}. Address ${normalized} is blocked.`);
     return false;
   }
 
@@ -469,10 +503,12 @@ export function generateRandomExclusiveHoldingRegisterAddress(): number | null {
   const used = new Set(holdingRegisterState.entries.map((e) => e.address));
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const addr = Math.floor(Math.random() * (HOLDING_ADDRESS_MAX + 1));
+    if (isIbusModeEnabled() && isIbusReservedHoldingAddress(addr)) continue;
     if (!used.has(addr)) return addr;
   }
 
   for (let addr = HOLDING_ADDRESS_MIN; addr <= HOLDING_ADDRESS_MAX; addr += 1) {
+    if (isIbusModeEnabled() && isIbusReservedHoldingAddress(addr)) continue;
     if (!used.has(addr)) return addr;
   }
 
@@ -550,6 +586,34 @@ export function setHoldingRegisterRule(address: number, rule: HoldingRegRule): v
     ruleTimers.set(address, timer);
   }
 
+  if (entry.rule.type === "sequential") {
+    let cursor = entry.rule.minValue;
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = cursor;
+      cursor = cursor + current.rule.step > current.rule.maxValue
+        ? current.rule.minValue
+        : cursor + current.rule.step;
+      current.desiredValue = next;
+      void writeHoldingRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "linear-ramp") {
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = Math.min(current.rule.maxValue, current.slaveValue + current.rule.step);
+      current.desiredValue = next;
+      void writeHoldingRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
   if (entry.rule.type === "triangle") {
     let direction: 1 | -1 = 1;
     const timer = setInterval(() => {
@@ -583,6 +647,19 @@ export function setHoldingRegisterRule(address: number, rule: HoldingRegRule): v
       const center = (current.rule.minValue + current.rule.maxValue) / 2;
       const amplitude = (current.rule.maxValue - current.rule.minValue) / 2;
       const nextValue = normalizeU16(Math.round(center + amplitude * Math.sin(radians)), current.slaveValue);
+      current.desiredValue = nextValue;
+      void writeHoldingRegisterValue(address, nextValue);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "random-uniform") {
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const span = current.rule.maxValue - current.rule.minValue + 1;
+      const nextValue = current.rule.minValue + Math.floor(Math.random() * Math.max(1, span));
       current.desiredValue = nextValue;
       void writeHoldingRegisterValue(address, nextValue);
     }, Math.max(100, entry.rule.intervalMs));

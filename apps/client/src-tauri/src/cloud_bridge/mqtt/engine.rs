@@ -82,7 +82,6 @@ pub async fn start(
     }
     if broker.use_tls {
         // Build a rustls ClientConfig using the OS root certificate store.
-        // Custom CA / mTLS support is left for the paid tier.
         let mut roots = rumqttc::tokio_rustls::rustls::RootCertStore::empty();
         let native = rustls_native_certs::load_native_certs();
         for cert in native.certs {

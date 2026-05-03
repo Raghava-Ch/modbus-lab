@@ -86,6 +86,9 @@
     if (rule.type === "sine") return `Sine ${rule.minValue}-${rule.maxValue}`;
     if (rule.type === "sawtooth") return `Saw ${rule.minValue}-${rule.maxValue}`;
     if (rule.type === "triangle") return `Triangle ${rule.minValue}-${rule.maxValue}`;
+    if (rule.type === "sequential") return `Sequential ${rule.minValue}-${rule.maxValue}`;
+    if (rule.type === "linear-ramp") return `Linear ramp ${rule.minValue}-${rule.maxValue}`;
+    if (rule.type === "random-uniform") return `Random uniform ${rule.minValue}-${rule.maxValue}`;
     return "Set write rule";
   }
 
@@ -301,6 +304,36 @@
               />
               Triangle wave
             </label>
+            <label class="rule-radio">
+              <input
+                type="radio"
+                name="rule-type-{entry.address}"
+                value="sequential"
+                checked={editRuleType === "sequential"}
+                onchange={() => { editRuleType = "sequential"; }}
+              />
+              Sequential
+            </label>
+            <label class="rule-radio">
+              <input
+                type="radio"
+                name="rule-type-{entry.address}"
+                value="linear-ramp"
+                checked={editRuleType === "linear-ramp"}
+                onchange={() => { editRuleType = "linear-ramp"; }}
+              />
+              Linear ramp
+            </label>
+            <label class="rule-radio">
+              <input
+                type="radio"
+                name="rule-type-{entry.address}"
+                value="random-uniform"
+                checked={editRuleType === "random-uniform"}
+                onchange={() => { editRuleType = "random-uniform"; }}
+              />
+              Random uniform
+            </label>
           </div>
           {#if isWaveRule(editRuleType)}
             <div class="rule-pop-interval">
@@ -340,7 +373,7 @@
               />
             </div>
           {/if}
-          {#if editRuleType === "sawtooth" || editRuleType === "triangle"}
+          {#if editRuleType === "sawtooth" || editRuleType === "triangle" || editRuleType === "sequential" || editRuleType === "linear-ramp"}
             <div class="rule-pop-interval">
               <span class="rule-pop-interval-label">Step</span>
               <input
