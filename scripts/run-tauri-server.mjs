@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 const args = process.argv.slice(2);
 const serverDevPort = 1421;
+const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function isDevCommand(argv) {
   return argv.length === 0 || argv.includes("dev");
@@ -54,7 +55,7 @@ async function main() {
   }
 
   const child = spawn(
-    "npm",
+    npmCmd,
     ["run", "tauri", "--workspace", "@modbus-lab/server", ...args],
     {
       stdio: "inherit",
