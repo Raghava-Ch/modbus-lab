@@ -358,6 +358,24 @@ describe("setHoldingRegisterRule — normalizeRule", () => {
     setHoldingRegisterRule(10, makeRule({ type: "sine" }));
     expect(holdingRegisterState.entries[0].rule.type).toBe("sine");
   });
+
+  it("sets type 'sequential'", () => {
+    holdingRegisterState.entries = [makeEntry(10)];
+    setHoldingRegisterRule(10, makeRule({ type: "sequential" }));
+    expect(holdingRegisterState.entries[0].rule.type).toBe("sequential");
+  });
+
+  it("sets type 'linear-ramp'", () => {
+    holdingRegisterState.entries = [makeEntry(10)];
+    setHoldingRegisterRule(10, makeRule({ type: "linear-ramp" }));
+    expect(holdingRegisterState.entries[0].rule.type).toBe("linear-ramp");
+  });
+
+  it("sets type 'random-uniform'", () => {
+    holdingRegisterState.entries = [makeEntry(10)];
+    setHoldingRegisterRule(10, makeRule({ type: "random-uniform" }));
+    expect(holdingRegisterState.entries[0].rule.type).toBe("random-uniform");
+  });
 });
 
 // ── clearAllHoldingRegisterRules ──────────────────────────────────────────────
@@ -367,6 +385,14 @@ describe("clearAllHoldingRegisterRules", () => {
     holdingRegisterState.entries = [makeEntry(0), makeEntry(1)];
     setHoldingRegisterRule(0, makeRule({ type: "cycle" }));
     setHoldingRegisterRule(1, makeRule({ type: "sawtooth" }));
+    expect(() => clearAllHoldingRegisterRules()).not.toThrow();
+  });
+
+  it("clears sequential, linear-ramp, and random-uniform timers without throwing", () => {
+    holdingRegisterState.entries = [makeEntry(0), makeEntry(1), makeEntry(2)];
+    setHoldingRegisterRule(0, makeRule({ type: "sequential" }));
+    setHoldingRegisterRule(1, makeRule({ type: "linear-ramp" }));
+    setHoldingRegisterRule(2, makeRule({ type: "random-uniform" }));
     expect(() => clearAllHoldingRegisterRules()).not.toThrow();
   });
 });
