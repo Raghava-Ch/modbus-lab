@@ -71,6 +71,24 @@ fn uninstall() {
 
 const STORE_FILE: &str = "ibus_descriptor.json";
 
+const DEFAULT_DEVICE_NAME: &str = "ModbusLab Server";
+const DEFAULT_VENDOR: &str = "ModbsLab";
+const DEFAULT_MODEL: &str = "SrvSim";
+const DEFAULT_FIRMWARE: &str = "0.04";
+
+fn migrate_legacy_identity(descriptor: &mut IbusDescriptor) -> bool {
+    let changed = descriptor.identity.device_name != DEFAULT_DEVICE_NAME
+        || descriptor.identity.vendor != DEFAULT_VENDOR
+        || descriptor.identity.model != DEFAULT_MODEL
+        || descriptor.identity.firmware != DEFAULT_FIRMWARE;
+
+    descriptor.identity.device_name = DEFAULT_DEVICE_NAME.to_string();
+    descriptor.identity.vendor = DEFAULT_VENDOR.to_string();
+    descriptor.identity.model = DEFAULT_MODEL.to_string();
+    descriptor.identity.firmware = DEFAULT_FIRMWARE.to_string();
+    changed
+}
+
 fn descriptor_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join(STORE_FILE))
 }
@@ -98,9 +116,13 @@ fn delete_from_disk(app: &AppHandle) {
 pub fn load_persisted(app: &AppHandle) {
     let Some(path) = descriptor_path(app) else { return; };
     let Ok(text) = std::fs::read_to_string(&path) else { return; };
-    let Ok(d): Result<IbusDescriptor, _> = serde_json::from_str(&text) else { return; };
-    if let Ok(o) = Overlay::new(d) {
+    let Ok(mut d): Result<IbusDescriptor, _> = serde_json::from_str(&text) else { return; };
+    let migrated = migrate_legacy_identity(&mut d);
+    if let Ok(o) = Overlay::new(d.clone()) {
         install(o);
+        if migrated {
+            save_to_disk(app, &d);
+        }
     }
 }
 

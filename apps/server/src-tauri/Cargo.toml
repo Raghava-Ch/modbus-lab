@@ -1,6 +1,6 @@
 [package]
 name = "modbus-lab-server"
-version = "0.0.4"
+version = "0.0.5"
 description = "ModbusLab Client desktop application"
 authors = ["Raghav"]
 license = "../../../LICENSE"

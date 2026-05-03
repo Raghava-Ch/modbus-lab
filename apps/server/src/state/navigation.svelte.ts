@@ -33,7 +33,7 @@ export interface TabDef {
 }
 
 export const tabDefs: TabDef[] = [
-  { id: "listener", label: "Listener", icon: "plug", group: "main", feature: "Start/stop server and manage clients" },
+  { id: "listener", label: "Listener", icon: "plug", group: "settings", feature: "Start/stop server and manage clients" },
   { id: "coils", label: "Coils", icon: "toggle-left", group: "main", feature: "FC 01/05/15 (Read/Write)" },
   { id: "discrete-inputs", label: "Discrete Inputs", icon: "list", group: "main", feature: "FC 02 (Read-Only)" },
   { id: "holding-registers", label: "Holding Registers", icon: "database", group: "main", feature: "FC 03/06/16 (Read/Write)" },

@@ -10,7 +10,7 @@ export type HoldingRegisterFilter = "all" | "non-zero" | "zero";
 export type HoldingRegisterOrigin = "range" | "custom";
 
 export type HoldingRegRule = {
-  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle";
+  type: "none" | "cycle" | "sine" | "sawtooth" | "triangle" | "sequential" | "linear-ramp" | "random-uniform";
   intervalMs: number;
   minValue: number;
   maxValue: number;
@@ -586,6 +586,34 @@ export function setHoldingRegisterRule(address: number, rule: HoldingRegRule): v
     ruleTimers.set(address, timer);
   }
 
+  if (entry.rule.type === "sequential") {
+    let cursor = entry.rule.minValue;
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = cursor;
+      cursor = cursor + current.rule.step > current.rule.maxValue
+        ? current.rule.minValue
+        : cursor + current.rule.step;
+      current.desiredValue = next;
+      void writeHoldingRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "linear-ramp") {
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const next = Math.min(current.rule.maxValue, current.slaveValue + current.rule.step);
+      current.desiredValue = next;
+      void writeHoldingRegisterValue(address, next);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
   if (entry.rule.type === "triangle") {
     let direction: 1 | -1 = 1;
     const timer = setInterval(() => {
@@ -619,6 +647,19 @@ export function setHoldingRegisterRule(address: number, rule: HoldingRegRule): v
       const center = (current.rule.minValue + current.rule.maxValue) / 2;
       const amplitude = (current.rule.maxValue - current.rule.minValue) / 2;
       const nextValue = normalizeU16(Math.round(center + amplitude * Math.sin(radians)), current.slaveValue);
+      current.desiredValue = nextValue;
+      void writeHoldingRegisterValue(address, nextValue);
+    }, Math.max(100, entry.rule.intervalMs));
+    ruleTimers.set(address, timer);
+  }
+
+  if (entry.rule.type === "random-uniform") {
+    const timer = setInterval(() => {
+      const current = holdingRegisterState.entries.find((e) => e.address === address);
+      if (!current || current.pending) return;
+
+      const span = current.rule.maxValue - current.rule.minValue + 1;
+      const nextValue = current.rule.minValue + Math.floor(Math.random() * Math.max(1, span));
       current.desiredValue = nextValue;
       void writeHoldingRegisterValue(address, nextValue);
     }, Math.max(100, entry.rule.intervalMs));

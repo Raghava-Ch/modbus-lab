@@ -70,7 +70,7 @@ interface IbusState {
 
 export function emptyDescriptor(): IbusDescriptor {
   return {
-    identity: { deviceName: "", vendor: "", model: "", firmware: "" },
+    identity: { deviceName: "ModbusLab Server", vendor: "Modbus Lab", model: "SrvSim", firmware: "0.04" },
     manifest: [],
     points: [],
     manifestAddr: 9040,
@@ -80,10 +80,10 @@ export function emptyDescriptor(): IbusDescriptor {
 export function sampleDescriptor(): IbusDescriptor {
   return {
     identity: {
-      deviceName: "Zone01 Thermost1",
-      vendor: "Acme Co.",
-      model: "T-100",
-      firmware: "1.02",
+      deviceName: "ModbusLab Server",
+      vendor: "Modbus Lab",
+      model: "SrvSim",
+      firmware: "0.04",
     },
     manifestAddr: 9040,
     manifest: [
@@ -260,10 +260,21 @@ function buildManifestBlock(
 ): IbusManifestEntry | null {
   if (addresses.length === 0) return null;
   const sorted = [...addresses].sort((a, b) => a - b);
+  const name = truncate(
+    blockType === "HoldingRegister"
+      ? "Holding"
+      : blockType === "InputRegister"
+        ? "Input"
+        : blockType === "DiscreteInput"
+          ? "Discrete"
+          : "Coil",
+    8,
+  );
   return {
     blockType,
     startAddress: sorted[0],
     length: sorted[sorted.length - 1] - sorted[0] + 1,
+    name,
   };
 }
 

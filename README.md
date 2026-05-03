@@ -103,6 +103,38 @@ Learn more: **[ibusnetwork.org →](https://www.ibusnetwork.org)**
 * **Conformance checks:** The client runs the full iBus conformance suite (signature, version, identity, manifest, point table, unused-range) and reports a pass/fail with per-check detail.
 * **Shared core:** The on-the-wire byte layout is byte-exact with the C/Python reference implementations and lives in `crates/ibus-core/`.
 
+#### Point Descriptor Fields
+
+Each iBus data point carries the following metadata, encoded into 20 consecutive Modbus holding registers:
+
+| Field | Column | Description |
+|-------|--------|-------------|
+| **Block** | `blockType` | Which Modbus block: `HoldingRegister`, `InputRegister`, `Coil`, `DiscreteInput` |
+| **Addr** | `address` | Modbus register/coil address within that block |
+| **Type** | `dataType` | Wire type: `Int16`, `UInt16`, `Int32`, `UInt32`, `Float32`, `Ascii`, `Bool`, `Int64`, `Float64` |
+| **Num** | `scaleNum` | Scale numerator — Engineering value = `raw × Num / Den` |
+| **Den** | `scaleDen` | Scale denominator — allows fractional scaling without floating-point registers |
+| **Unit** | `unitCode` | ASHRAE 135 unit code (e.g. `0x2F` = °C, `0x31` = %, `0x70` = no units) |
+| **Flags** | `flags` | Bitmask: `W` (0x0001) = Writable, `P` (0x0004) = Persistent |
+| **Name** | `name` | Up to 12 ASCII characters, packed into 6 registers |
+| **Desc** | `description` | Up to 10 ASCII characters, packed into 5 registers |
+
+**Supported unit codes** (ASHRAE 135 subset):
+
+| Code | Symbol | Label |
+|------|--------|-------|
+| `0x05` | A | Amperes |
+| `0x08` | V | Volts |
+| `0x11` | Hz | Hertz |
+| `0x1F` | W | Watts |
+| `0x20` | kW | Kilowatts |
+| `0x27` | kWh | Kilowatt-hours |
+| `0x2F` | °C | Degrees Celsius |
+| `0x31` | % | Percent |
+| `0x3A` | m³/h | Cubic meters per hour |
+| `0x62` | %RH | Relative Humidity |
+| `0x70` | — | No units |
+
 ### �📝 Logging & Settings
 * **Live Traffic Logs:** Filter by `ALL`, `INFO`, `WARN`, and `ERROR`.
 * **Plan Logs:** Scheduling and plan logs for grouped read/write operations.

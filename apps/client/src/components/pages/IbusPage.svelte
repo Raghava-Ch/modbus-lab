@@ -10,6 +10,7 @@
     type EngineeringValue,
     type IbusPointDesc,
   } from "../../state/ibus.svelte";
+  import { lookupUnit } from "@shared-frontend/ibus/units";
   import { connectionState } from "../../state/connection.svelte";
   import PageShell from "./PageShell.svelte";
   import PanelFrame from "../shared/PanelFrame.svelte";
@@ -100,6 +101,14 @@
     if (point.flags & 0x0004) parts.push("P");
     return parts.join("/") || "—";
   }
+
+  function unitDisplay(code: number): string {
+    const u = lookupUnit(code);
+    if (!u) return `0x${code.toString(16).toUpperCase().padStart(2, "0")}`;
+    const hex = `0x${code.toString(16).toUpperCase().padStart(2, "0")}`;
+    if (u.symbol) return `${u.symbol} (${hex})`;
+    return `${u.label} (${hex})`;
+  }
 </script>
 
 <PageShell title="iBus" feature="iBus v1.1 discovery" icon="compass">
@@ -186,7 +195,7 @@
                 <td>{reading.point.address}</td>
                 <td>{reading.point.dataType}</td>
                 <td>{reading.point.scaleNum}/{reading.point.scaleDen}</td>
-                <td>0x{reading.point.unitCode.toString(16).toUpperCase().padStart(2, "0")}</td>
+                <td>{unitDisplay(reading.point.unitCode)}</td>
                 <td>{flagsLabel(reading.point)}</td>
                 <td>{reading.point.name}</td>
                 <td>{reading.point.description}</td>

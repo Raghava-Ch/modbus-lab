@@ -77,6 +77,30 @@
     "Float64",
   ];
 
+  const FLAG_WRITABLE = 0x0001;
+  const FLAG_PERSISTENT = 0x0004;
+
+  const unitOptions: { code: number; label: string }[] = [
+    { code: 0x05, label: "A — Amperes" },
+    { code: 0x08, label: "V — Volts" },
+    { code: 0x11, label: "Hz — Hertz" },
+    { code: 0x1F, label: "W — Watts" },
+    { code: 0x20, label: "kW — Kilowatts" },
+    { code: 0x27, label: "kWh — Kilowatt-hours" },
+    { code: 0x2F, label: "°C — Degrees Celsius" },
+    { code: 0x31, label: "% — Percent" },
+    { code: 0x3A, label: "m³/h — Cubic meters/hour" },
+    { code: 0x62, label: "%RH — Relative Humidity" },
+    { code: 0x70, label: "— No units" },
+  ];
+
+  const knownUnitCodes = new Set(unitOptions.map((u) => u.code));
+
+  function unitLabel(code: number): string {
+    const found = unitOptions.find((u) => u.code === code);
+    return found ? found.label : `0x${code.toString(16).toUpperCase().padStart(2, "0")}`;
+  }
+
   function loadSample(): void {
     setDescriptor(sampleDescriptor());
   }
@@ -313,8 +337,48 @@
                 </td>
                 <td><input type="number" bind:value={point.scaleNum} /></td>
                 <td><input type="number" bind:value={point.scaleDen} /></td>
-                <td><input type="number" min="0" max="65535" bind:value={point.unitCode} /></td>
-                <td><input type="number" min="0" max="65535" bind:value={point.flags} /></td>
+                <td>
+                  {#if knownUnitCodes.has(point.unitCode)}
+                    <select bind:value={point.unitCode}>
+                      {#each unitOptions as u}<option value={u.code}>{u.label}</option>{/each}
+                    </select>
+                  {:else}
+                    <div class="unit-custom">
+                      <select
+                        value={-1}
+                        onchange={(e) => {
+                          const v = Number((e.target as HTMLSelectElement).value);
+                          if (v !== -1) point.unitCode = v;
+                        }}
+                      >
+                        <option value={-1}>{unitLabel(point.unitCode)}</option>
+                        {#each unitOptions as u}<option value={u.code}>{u.label}</option>{/each}
+                      </select>
+                    </div>
+                  {/if}
+                </td>
+                <td class="flags-cell">
+                  <label class="flag-check" title="Writable (0x0001)">
+                    <input
+                      type="checkbox"
+                      checked={!!(point.flags & FLAG_WRITABLE)}
+                      onchange={(e) => {
+                        if ((e.target as HTMLInputElement).checked) point.flags |= FLAG_WRITABLE;
+                        else point.flags &= ~FLAG_WRITABLE;
+                      }}
+                    /> W
+                  </label>
+                  <label class="flag-check" title="Persistent (0x0004)">
+                    <input
+                      type="checkbox"
+                      checked={!!(point.flags & FLAG_PERSISTENT)}
+                      onchange={(e) => {
+                        if ((e.target as HTMLInputElement).checked) point.flags |= FLAG_PERSISTENT;
+                        else point.flags &= ~FLAG_PERSISTENT;
+                      }}
+                    /> P
+                  </label>
+                </td>
                 <td><input type="text" maxlength="12" bind:value={point.name} /></td>
                 <td><input type="text" maxlength="10" bind:value={point.description} /></td>
                 <td><button type="button" onclick={() => removePointRow(idx)}>×</button></td>
@@ -384,6 +448,9 @@
   th { color: var(--c-text-2); font-weight: 600; }
   td input[type="number"] { width: 70px; }
   td input[type="text"] { width: 100px; }
+  .flags-cell { white-space: nowrap; }
+  .flag-check { display: inline-flex; align-items: center; gap: 2px; font-size: 0.7rem; cursor: pointer; margin-right: 4px; }
+  .flag-check input[type="checkbox"] { width: auto; padding: 0; }
   .error { color: var(--c-danger, #c33); font-size: 0.72rem; }
   .ok { color: var(--c-success, #2a8); font-size: 0.72rem; }
   .hint { color: var(--c-text-2); font-size: 0.75rem; font-style: italic; margin-top: 16px; }
