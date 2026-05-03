@@ -13,11 +13,11 @@
     "dev:client": "npm run dev --workspace @modbus-lab/client",
     "build:client": "npm run build --workspace @modbus-lab/client",
     "check:client": "npm run check --workspace @modbus-lab/client",
-    "tauri:client": "node ./scripts/run-tauri-client.mjs",
+    "tauri:client": "npm --workspace @modbus-lab/client run tauri --",
     "dev:server": "npm run dev --workspace @modbus-lab/server",
     "build:server": "npm run build --workspace @modbus-lab/server",
     "check:server": "npm run check --workspace @modbus-lab/server",
-    "tauri:server": "node ./scripts/run-tauri-server.mjs"
+    "tauri:server": "npm --workspace @modbus-lab/server run tauri --"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
