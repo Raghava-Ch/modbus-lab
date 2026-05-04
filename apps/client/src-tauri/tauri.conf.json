@@ -1,7 +1,7 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ModbusLab Client",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "identifier": "com.modbuslab.client",
   "build": {
     "beforeDevCommand": "npm run dev --workspace @modbus-lab/client",

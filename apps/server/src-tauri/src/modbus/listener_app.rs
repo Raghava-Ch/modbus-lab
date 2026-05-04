@@ -66,7 +66,7 @@ fn device_id_object_value(object_id: u8) -> Option<&'static str> {
     match object_id {
         0 => Some("Modbus Lab"),
         1 => Some("MBL-SERVER"),
-        2 => Some("0.0.5"),
+        2 => Some("0.0.6"),
         3 => Some("https://github.com/Raghava-Ch/modbus-lab"),
         4 => Some("Modbus Lab Server"),
         5 => Some("Rust+Tauri"),
