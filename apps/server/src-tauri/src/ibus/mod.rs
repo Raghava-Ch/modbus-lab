@@ -74,7 +74,7 @@ const STORE_FILE: &str = "ibus_descriptor.json";
 const DEFAULT_DEVICE_NAME: &str = "ModbusLab Server";
 const DEFAULT_VENDOR: &str = "ModbsLab";
 const DEFAULT_MODEL: &str = "SrvSim";
-const DEFAULT_FIRMWARE: &str = "0.04";
+const DEFAULT_FIRMWARE: &str = "0.06";
 
 fn migrate_legacy_identity(descriptor: &mut IbusDescriptor) -> bool {
     let changed = descriptor.identity.device_name != DEFAULT_DEVICE_NAME
