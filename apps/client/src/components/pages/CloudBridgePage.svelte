@@ -166,7 +166,7 @@
 </script>
 
 <div class="cloud-bridge-page">
-  <SectionHeader title="Cloud Bridge" subtitle="Modbus ↔ MQTT (free-tier — fresh state every launch)">
+  <SectionHeader title="Cloud Bridge" subtitle="Modbus ↔ MQTT">
     {#snippet actions()}
       <span class="status-badge" class:running={cloudBridgeState.status.running}
         class:connected={cloudBridgeState.status.connected}>

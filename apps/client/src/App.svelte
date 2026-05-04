@@ -5,6 +5,7 @@
   import { listen } from "@tauri-apps/api/event";
   import AppShell from "./components/layout/AppShell.svelte";
   import { addLog } from "./state/logs.svelte";
+  import { connectionState } from "./state/connection.svelte";
   import { applyBackendConnectionStatus } from "./state/connection.svelte";
   import { notifyError, notifyInfo } from "./state/notifications.svelte";
   import { initLayoutState } from "./state/layout.svelte";
@@ -58,6 +59,19 @@
     return status === "reconnecting" || status === "disconnected";
   }
 
+  function statusPollIntervalMs(connectedStableSince: number | null): number {
+    if (connectionState.status !== "connected") {
+      return 1000;
+    }
+
+    if (connectedStableSince == null) {
+      return 5000;
+    }
+
+    const stableForMs = Date.now() - connectedStableSince;
+    return stableForMs >= 30_000 ? 15_000 : 5000;
+  }
+
   function maybeNotifyServerDown(nextStatusRaw: string | undefined, details?: string): void {
     const nextStatus = normalizeStatus(nextStatusRaw);
     const previousStatus = normalizeStatus(previousBackendStatus ?? undefined);
@@ -93,7 +107,8 @@
     initLayoutState();
 
     let unlisten: (() => void) | undefined;
-    let statusPollTimer: ReturnType<typeof setInterval> | undefined;
+    let statusPollTimer: ReturnType<typeof setTimeout> | undefined;
+    let connectedStableSince: number | null = null;
 
     const setup = async (): Promise<void> => {
       console.log("[App] Setup starting...");
@@ -127,16 +142,32 @@
       }
 
       console.log("[App] Starting status poll timer...");
-      statusPollTimer = setInterval(() => {
+      const statusPollTick = (): void => {
         void invoke<{ status: string; details?: string }>("get_modbus_connection_status")
           .then((status) => {
             maybeNotifyServerDown(status.status, status.details);
             applyBackendConnectionStatus(status.status, status.details);
+
+            if (connectionState.status === "connected") {
+              if (connectedStableSince == null) {
+                connectedStableSince = Date.now();
+              }
+            } else {
+              connectedStableSince = null;
+            }
           })
           .catch(() => {
             // Keep polling silent
+            connectedStableSince = null;
+          })
+          .finally(() => {
+            // Keep reconnect/disconnect detection responsive, but use deep idle backoff after a stable connection window.
+            const intervalMs = statusPollIntervalMs(connectedStableSince);
+            statusPollTimer = setTimeout(statusPollTick, intervalMs);
           });
-      }, 1000);
+      };
+
+      statusPollTimer = setTimeout(statusPollTick, 1000);
     };
 
     console.log("[App] Calling setup...");
@@ -148,7 +179,7 @@
         unlisten();
       }
       if (statusPollTimer) {
-        clearInterval(statusPollTimer);
+        clearTimeout(statusPollTimer);
       }
     };
   });

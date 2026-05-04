@@ -6,6 +6,8 @@
   const label = $derived(
     connectionState.status === "connected"
       ? "Connected"
+      : connectionState.status === "reconnecting"
+        ? "Reconnecting"
       : connectionState.status === "connecting"
         ? "Connecting"
         : "Disconnected",
@@ -38,6 +40,11 @@
     border-radius: 50%;
     background: var(--c-warn);
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-warn) 45%, transparent);
+    animation: none;
+  }
+
+  .badge.connecting .dot,
+  .badge.reconnecting .dot {
     animation: pulse 1.7s infinite;
   }
 
