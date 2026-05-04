@@ -1,7 +1,6 @@
 // Frontend state for the MQTT cloud bridge.
 //
 // All state is in-memory. Nothing is written to localStorage / disk —
-// every app launch is a fresh start (free-tier scope).
 
 export type BridgeDirection = "publish" | "subscribe" | "bidirectional";
 export type ModbusArea = "coil" | "discreteInput" | "holdingRegister" | "inputRegister";

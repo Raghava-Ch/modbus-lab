@@ -70,7 +70,7 @@ interface IbusState {
 
 export function emptyDescriptor(): IbusDescriptor {
   return {
-    identity: { deviceName: "ModbusLab Server", vendor: "Modbus Lab", model: "SrvSim", firmware: "0.04" },
+    identity: { deviceName: "ModbusLab Server", vendor: "Modbus Lab", model: "SrvSim", firmware: "0.06" },
     manifest: [],
     points: [],
     manifestAddr: 9040,
@@ -83,7 +83,7 @@ export function sampleDescriptor(): IbusDescriptor {
       deviceName: "ModbusLab Server",
       vendor: "Modbus Lab",
       model: "SrvSim",
-      firmware: "0.04",
+      firmware: "0.06",
     },
     manifestAddr: 9040,
     manifest: [

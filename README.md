@@ -151,14 +151,18 @@ Each iBus data point carries the following metadata, encoded into 20 consecutive
 
 ### Connection
 ![Connection Settings](screenshots/ConnectionSettings.png)
+### Cloud Bridge(mqtt)
+![Cloud Bridge](screenshots/CloudBridge.png)
 
 ### Coils
 ![Coils - Switch View](screenshots/CoilsSwitchView.png)
 ![Coils - Table View](screenshots/CoilsTableView.png)
 
 ### Holding Registers
-![Holding Registers - Switch View](screenshots/HoldingRegistersSwitchView.png)
-![Holding Registers - Table View](screenshots/HoldingRegistersTableView.png)
+![Client Holding Registers - Switch View](screenshots/HoldingRegistersSwitchView.png)
+![Client Holding Registers - Table View](screenshots/HoldingRegistersTableView.png)
+#### Server/Slave Holding Registers
+![Server Holding Registers - Table View](screenshots/ServerHR.png)
 
 ### Bitwise Register View
 ![Holding Registers - Bitwise View](screenshots/BitwiseDetailsView.png)
@@ -167,6 +171,11 @@ Each iBus data point carries the following metadata, encoded into 20 consecutive
 ![Discrete Inputs - Table View](screenshots/DiscreteInputsTableView.png)
 ![Discrete Inputs - Switch View](screenshots/DiscreteInputsSwitchView.png)
 
+### Fifo
+![FIFO](screenshots/ServerFIFO.png)
+
+### iBus
+![IBUS](screenshots/ServeriBus.png)
 
 ### Input Registers
 ![Input Registers - Table View](screenshots/InputRegistersTableView.png)
@@ -289,9 +298,10 @@ npm run tauri:client -- build
 
 ## 📄 License
 
-This project is dual-licensed:
+This crate is dual-licensed under GPLv3 and a commercial license. If you require a commercial license to use this crate in a proprietary project, please contact [ch.raghava44@gmail.com](mailto:ch.raghava44@gmail.com) to purchase a license.
 
-- Will always be **GPL v3** for open-source use 
+
+This project is licensed under the **GNU General Public License v3.0 (GPLv3)** — see [GPL v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
 
 For contributing, see the [Contributing](CONTRIBUTING.md) guidelines.
 

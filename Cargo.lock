@@ -2006,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "modbus-lab-client"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "ibus-core",
  "mbus-core",
@@ -2036,7 +2036,7 @@ dependencies = [
 
 [[package]]
 name = "modbus-lab-server"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "ibus-core",
  "mbus-core",
