@@ -2,10 +2,12 @@ import { resolve } from "node:path";
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 
 export default defineConfig({
-  plugins: [wasm(), topLevelAwait(), svelte()],
+  plugins: [wasm(), svelte()],
+  build: {
+    target: 'esnext',
+  },
   resolve: {
     alias: {
       "@shared-frontend": resolve(__dirname, "../../packages/shared-frontend/src"),
