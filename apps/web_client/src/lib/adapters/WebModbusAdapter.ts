@@ -1,4 +1,12 @@
-import { request_serial_port, WasmSerialModbusClient, WasmModbusClient, WasmTcpTransport, WasmSerialTransport } from "modbus-rs-wasm";
+import init, { request_serial_port, WasmSerialModbusClient, WasmModbusClient, WasmTcpTransport, WasmSerialTransport } from "modbus-rs-wasm/web";
+
+let wasmInitialized = false;
+async function ensureInitialized() {
+  if (!wasmInitialized) {
+    await init();
+    wasmInitialized = true;
+  }
+}
 import type {
   IModbusAdapter,
   CommandAck,
@@ -43,6 +51,7 @@ export class WebModbusAdapter implements IModbusAdapter {
   private transport: WasmSerialTransport | WasmTcpTransport | null = null;
 
   public async connectTcp(request: WebSocketConnectRequest): Promise<CommandAck> {
+    await ensureInitialized();
 
     addLog("info", `Connecting to WebSocket Modbus gateway at ${request.wsUrl}...`);
 
@@ -108,6 +117,7 @@ export class WebModbusAdapter implements IModbusAdapter {
   }
 
   public async connectSerial(request: SerialConnectRequest): Promise<CommandAck> {
+    await ensureInitialized();
 
     addLog("info", `Connecting to Serial port using Web Serial...`);
 
