@@ -24,7 +24,6 @@
     "rollup": "^4.24.0",
     "svelte": "^5.55.1",
     "typescript": "^6.0.2",
-    "vite-plugin-wasm": "^3.6.0",
     "vitest": "^4.1.5"
   }
 }
