@@ -1,4 +1,4 @@
-import init, { request_serial_port, WasmSerialModbusClient, WasmModbusClient, WasmTcpTransport, WasmSerialTransport } from "modbus-rs-wasm/web";
+import init, { request_serial_port, WasmSerialModbusClient, WasmModbusClient, WasmTcpTransport, WasmSerialTransport } from "modbus-rs-wasm/dist/web/modbus-rs.js";
 
 let wasmInitialized = false;
 async function ensureInitialized() {
