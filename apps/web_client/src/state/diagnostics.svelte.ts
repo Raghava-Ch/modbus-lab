@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { modbusAdapter } from "../lib/adapters/WebModbusAdapter";
 import { addLog } from "./logs.svelte";
 import { notifyWarning } from "./notifications.svelte";
 import { connectionState } from "./connection.svelte";
@@ -169,7 +169,7 @@ export async function readExceptionStatus(): Promise<void> {
 
   try {
     addLog("info", `fc07.read start`);
-    const response = await invoke<{ status: number }>("read_exception_status");
+    const response = await modbusAdapter.readExceptionStatus();
     const bytes = [response.status & 0xff];
     diagnosticsState.exceptionStatus = {
       rawHex: hexFromBytes(bytes),
@@ -203,7 +203,7 @@ export async function runDiagnostic(subfunction: number, payloadHex?: string): P
     }
 
     addLog("info", `fc08.run sub=${subfunction} payload=${hexFromBytes(data)}`);
-    const response = await invoke<{ data: number[] }>("diagnostic", { request: { subfunction, data } });
+    const response = await modbusAdapter.diagnostics(subfunction, data);
     diagnosticsState.lastDiagnostic = {
       rawHex: hexFromBytes(response.data),
       ascii: tryAscii(response.data),
@@ -226,7 +226,7 @@ export async function getComEventCounter(): Promise<void> {
   diagnosticsState.cancelRequested = false;
   try {
     addLog("info", `fc11.read start`);
-    const response = await invoke<{ status: number; eventCount: number }>("get_com_event_counter");
+    const response = await modbusAdapter.getComEventCounter();
     const bytes = [
       (response.status >> 8) & 0xff,
       response.status & 0xff,
@@ -255,9 +255,7 @@ export async function getComEventLog(start?: number, count?: number): Promise<vo
   diagnosticsState.cancelRequested = false;
   try {
     addLog("info", `fc12.read start start=${String(start)} count=${String(count)}`);
-    const response = await invoke<{ entries: Array<{ data: number[] }> }>("get_com_event_log", {
-      request: { start: start ?? 0, count: count ?? 100 },
-    });
+    const response = await modbusAdapter.getComEventLog(start, count);
     diagnosticsState.comEventLog = response.entries.map((e) => ({
       rawHex: hexFromBytes(e.data),
       ascii: tryAscii(e.data),
@@ -280,7 +278,7 @@ export async function reportServerId(): Promise<void> {
   diagnosticsState.cancelRequested = false;
   try {
     addLog("info", `fc17.read start`);
-    const response = await invoke<{ data: number[] }>("report_server_id");
+    const response = await modbusAdapter.reportServerId();
     diagnosticsState.serverId = {
       rawHex: hexFromBytes(response.data),
       ascii: tryAscii(response.data),
@@ -305,10 +303,7 @@ export async function readDeviceIdentification(level: number, objectId?: number)
     const normalizedObjectId = Math.max(0, Math.min(255, Math.floor(objectId ?? 0)));
 
     addLog("info", `fc43.read start level=${normalizedLevel} object=${normalizedObjectId}`);
-    const response = await invoke<{ conformity?: number; objects: Array<{ id: number; value: string }> }>(
-      "read_device_identification",
-      { request: { level: normalizedLevel, objectId: normalizedObjectId } },
-    );
+    const response = await modbusAdapter.readDeviceIdentification(normalizedLevel, normalizedObjectId);
 
     diagnosticsState.deviceIdentification = {
       rawHex: "",

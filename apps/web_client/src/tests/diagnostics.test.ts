@@ -1,6 +1,6 @@
 // Diagnostics state — serial-only guards, FC07/08/11/12/17/43 parse helpers
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
+import { modbusAdapter } from "../lib/adapters/WebModbusAdapter";
 import {
   diagnosticsState,
   readExceptionStatus,
@@ -14,7 +14,16 @@ import {
 } from "../state/diagnostics.svelte";
 import { connectionState } from "../state/connection.svelte";
 
-const mockedInvoke = vi.mocked(invoke);
+vi.mock("../lib/adapters/WebModbusAdapter", () => ({
+  modbusAdapter: {
+    readExceptionStatus: vi.fn(),
+    diagnostics: vi.fn(),
+    getComEventCounter: vi.fn(),
+    getComEventLog: vi.fn(),
+    reportServerId: vi.fn(),
+    readDeviceIdentification: vi.fn(),
+  },
+}));
 
 function resetState() {
   diagnosticsState.readInProgress = false;
@@ -42,46 +51,46 @@ describe("serial-only guard (FC07, FC08, FC11, FC12, FC17)", () => {
 
   it("readExceptionStatus does not invoke when protocol is TCP", async () => {
     await readExceptionStatus();
-    expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(modbusAdapter.readExceptionStatus).not.toHaveBeenCalled();
   });
 
   it("runDiagnostic does not invoke when protocol is TCP", async () => {
     await runDiagnostic(0, "0000");
-    expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(modbusAdapter.diagnostics).not.toHaveBeenCalled();
   });
 
   it("getComEventCounter does not invoke when protocol is TCP", async () => {
     await getComEventCounter();
-    expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(modbusAdapter.getComEventCounter).not.toHaveBeenCalled();
   });
 
   it("getComEventLog does not invoke when protocol is TCP", async () => {
     await getComEventLog();
-    expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(modbusAdapter.getComEventLog).not.toHaveBeenCalled();
   });
 
   it("reportServerId does not invoke when protocol is TCP", async () => {
     await reportServerId();
-    expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(modbusAdapter.reportServerId).not.toHaveBeenCalled();
   });
 });
 
 // ── readExceptionStatus ───────────────────────────────────────────────────────
 
 describe("readExceptionStatus", () => {
-  it("calls invoke('read_exception_status') and stores parsed result", async () => {
-    mockedInvoke.mockResolvedValueOnce({ status: 0b10100001 });
+  it("calls modbusAdapter.readExceptionStatus and stores parsed result", async () => {
+    vi.mocked(modbusAdapter.readExceptionStatus).mockResolvedValueOnce({ status: 0b10100001 });
 
     await readExceptionStatus();
 
-    expect(mockedInvoke).toHaveBeenCalledWith("read_exception_status");
+    expect(modbusAdapter.readExceptionStatus).toHaveBeenCalled();
     expect(diagnosticsState.exceptionStatus).not.toBeNull();
     expect(diagnosticsState.exceptionStatus?.rawHex).toBeTruthy();
     expect(diagnosticsState.exceptionStatus?.parsed).toBeDefined();
   });
 
   it("stores bit map in parsed output", async () => {
-    mockedInvoke.mockResolvedValueOnce({ status: 0xFF });
+    vi.mocked(modbusAdapter.readExceptionStatus).mockResolvedValueOnce({ status: 0xFF });
 
     await readExceptionStatus();
 
@@ -94,13 +103,13 @@ describe("readExceptionStatus", () => {
   });
 
   it("clears readInProgress after success", async () => {
-    mockedInvoke.mockResolvedValueOnce({ status: 0 });
+    vi.mocked(modbusAdapter.readExceptionStatus).mockResolvedValueOnce({ status: 0 });
     await readExceptionStatus();
     expect(diagnosticsState.readInProgress).toBe(false);
   });
 
   it("clears readInProgress after error", async () => {
-    mockedInvoke.mockRejectedValueOnce(JSON.stringify({ message: "Serial error", details: "" }));
+    vi.mocked(modbusAdapter.readExceptionStatus).mockRejectedValueOnce(new Error("Serial error"));
     await readExceptionStatus();
     expect(diagnosticsState.readInProgress).toBe(false);
   });
@@ -109,18 +118,16 @@ describe("readExceptionStatus", () => {
 // ── runDiagnostic ─────────────────────────────────────────────────────────────
 
 describe("runDiagnostic", () => {
-  it("calls invoke('diagnostic') with correct subfunction and data", async () => {
-    mockedInvoke.mockResolvedValueOnce({ data: [0x00, 0x00, 0xAB, 0xCD] });
+  it("calls modbusAdapter.diagnostics with correct subfunction and data", async () => {
+    vi.mocked(modbusAdapter.diagnostics).mockResolvedValueOnce({ data: [0x00, 0x00, 0xAB, 0xCD] });
 
     await runDiagnostic(0, "ABCD");
 
-    expect(mockedInvoke).toHaveBeenCalledWith("diagnostic", {
-      request: { subfunction: 0, data: [0xAB, 0xCD] },
-    });
+    expect(modbusAdapter.diagnostics).toHaveBeenCalledWith(0, [0xAB, 0xCD]);
   });
 
   it("parses subfunction 0 as 'Return Query Data'", async () => {
-    mockedInvoke.mockResolvedValueOnce({ data: [0x00, 0x00, 0x11, 0x22] });
+    vi.mocked(modbusAdapter.diagnostics).mockResolvedValueOnce({ data: [0x00, 0x00, 0x11, 0x22] });
 
     await runDiagnostic(0, "1122");
 
@@ -129,7 +136,7 @@ describe("runDiagnostic", () => {
   });
 
   it("stores rawHex of the response", async () => {
-    mockedInvoke.mockResolvedValueOnce({ data: [0xDE, 0xAD] });
+    vi.mocked(modbusAdapter.diagnostics).mockResolvedValueOnce({ data: [0xDE, 0xAD] });
 
     await runDiagnostic(1, "");
 
@@ -137,17 +144,15 @@ describe("runDiagnostic", () => {
   });
 
   it("handles empty payload hex gracefully", async () => {
-    mockedInvoke.mockResolvedValueOnce({ data: [] });
+    vi.mocked(modbusAdapter.diagnostics).mockResolvedValueOnce({ data: [] });
 
     await runDiagnostic(5, "");
 
-    expect(mockedInvoke).toHaveBeenCalledWith("diagnostic", {
-      request: { subfunction: 5, data: [] },
-    });
+    expect(modbusAdapter.diagnostics).toHaveBeenCalledWith(5, []);
   });
 
   it("clears readInProgress after error", async () => {
-    mockedInvoke.mockRejectedValueOnce(JSON.stringify({ message: "Timeout", details: "" }));
+    vi.mocked(modbusAdapter.diagnostics).mockRejectedValueOnce(new Error("Timeout"));
     await runDiagnostic(0, "");
     expect(diagnosticsState.readInProgress).toBe(false);
   });
@@ -156,25 +161,25 @@ describe("runDiagnostic", () => {
 // ── getComEventCounter ────────────────────────────────────────────────────────
 
 describe("getComEventCounter", () => {
-  it("calls invoke('get_com_event_counter') and parses result", async () => {
-    mockedInvoke.mockResolvedValueOnce({ status: 0xFFFF, eventCount: 42 });
+  it("calls modbusAdapter.getComEventCounter and parses result", async () => {
+    vi.mocked(modbusAdapter.getComEventCounter).mockResolvedValueOnce({ status: 0xFFFF, eventCount: 42 });
 
     await getComEventCounter();
 
-    expect(mockedInvoke).toHaveBeenCalledWith("get_com_event_counter");
+    expect(modbusAdapter.getComEventCounter).toHaveBeenCalled();
     const parsed = diagnosticsState.comEventCounter?.parsed as Record<string, unknown>;
     expect(parsed?.eventCount).toBe(42);
     expect(parsed?.status).toBe(0xFFFF);
   });
 
   it("clears readInProgress after success", async () => {
-    mockedInvoke.mockResolvedValueOnce({ status: 0, eventCount: 0 });
+    vi.mocked(modbusAdapter.getComEventCounter).mockResolvedValueOnce({ status: 0, eventCount: 0 });
     await getComEventCounter();
     expect(diagnosticsState.readInProgress).toBe(false);
   });
 
   it("clears readInProgress after failure", async () => {
-    mockedInvoke.mockRejectedValueOnce("Serial timeout");
+    vi.mocked(modbusAdapter.getComEventCounter).mockRejectedValueOnce(new Error("Serial timeout"));
     await getComEventCounter();
     expect(diagnosticsState.readInProgress).toBe(false);
   });
@@ -183,8 +188,8 @@ describe("getComEventCounter", () => {
 // ── getComEventLog ────────────────────────────────────────────────────────────
 
 describe("getComEventLog", () => {
-  it("calls invoke('get_com_event_log') and populates comEventLog", async () => {
-    mockedInvoke.mockResolvedValueOnce({
+  it("calls modbusAdapter.getComEventLog and populates comEventLog", async () => {
+    vi.mocked(modbusAdapter.getComEventLog).mockResolvedValueOnce({
       entries: [
         { data: [0x01, 0x02] },
         { data: [0x03] },
@@ -199,35 +204,31 @@ describe("getComEventLog", () => {
   });
 
   it("passes start and count parameters", async () => {
-    mockedInvoke.mockResolvedValueOnce({ entries: [] });
+    vi.mocked(modbusAdapter.getComEventLog).mockResolvedValueOnce({ entries: [] });
 
     await getComEventLog(5, 20);
 
-    expect(mockedInvoke).toHaveBeenCalledWith("get_com_event_log", {
-      request: { start: 5, count: 20 },
-    });
+    expect(modbusAdapter.getComEventLog).toHaveBeenCalledWith(5, 20);
   });
 
-  it("uses default start=0 count=100 when not specified", async () => {
-    mockedInvoke.mockResolvedValueOnce({ entries: [] });
+  it("uses default start=undefined count=undefined when not specified", async () => {
+    vi.mocked(modbusAdapter.getComEventLog).mockResolvedValueOnce({ entries: [] });
 
     await getComEventLog();
 
-    expect(mockedInvoke).toHaveBeenCalledWith("get_com_event_log", {
-      request: { start: 0, count: 100 },
-    });
+    expect(modbusAdapter.getComEventLog).toHaveBeenCalledWith(undefined, undefined);
   });
 });
 
 // ── reportServerId ────────────────────────────────────────────────────────────
 
 describe("reportServerId", () => {
-  it("calls invoke('report_server_id') and stores parsed result", async () => {
-    mockedInvoke.mockResolvedValueOnce({ data: [0x02, 0x01, 0xFF, 0xAB] });
+  it("calls modbusAdapter.reportServerId and stores parsed result", async () => {
+    vi.mocked(modbusAdapter.reportServerId).mockResolvedValueOnce({ data: [0x02, 0x01, 0xFF, 0xAB] });
 
     await reportServerId();
 
-    expect(mockedInvoke).toHaveBeenCalledWith("report_server_id");
+    expect(modbusAdapter.reportServerId).toHaveBeenCalled();
     expect(diagnosticsState.serverId).not.toBeNull();
     const parsed = diagnosticsState.serverId?.parsed as Record<string, unknown>;
     expect(parsed?.serverId).toBe(0x01);
@@ -235,7 +236,7 @@ describe("reportServerId", () => {
   });
 
   it("marks isRunning=false when runIndicator is not 0xFF", async () => {
-    mockedInvoke.mockResolvedValueOnce({ data: [0x02, 0x01, 0x00] });
+    vi.mocked(modbusAdapter.reportServerId).mockResolvedValueOnce({ data: [0x02, 0x01, 0x00] });
 
     await reportServerId();
 
@@ -247,8 +248,8 @@ describe("reportServerId", () => {
 // ── readDeviceIdentification ──────────────────────────────────────────────────
 
 describe("readDeviceIdentification", () => {
-  it("calls invoke('read_device_identification') and stores result", async () => {
-    mockedInvoke.mockResolvedValueOnce({
+  it("calls modbusAdapter.readDeviceIdentification and stores result", async () => {
+    vi.mocked(modbusAdapter.readDeviceIdentification).mockResolvedValueOnce({
       conformity: 1,
       objects: [
         { id: 0, value: "ACME Corp" },
@@ -259,9 +260,7 @@ describe("readDeviceIdentification", () => {
 
     await readDeviceIdentification(1);
 
-    expect(mockedInvoke).toHaveBeenCalledWith("read_device_identification", {
-      request: { level: 1, objectId: 0 },
-    });
+    expect(modbusAdapter.readDeviceIdentification).toHaveBeenCalledWith(1, 0);
     expect(diagnosticsState.deviceIdentification).not.toBeNull();
     const parsed = diagnosticsState.deviceIdentification?.parsed as Record<string, unknown>;
     const objects = parsed?.objects as Array<{ name: string; value: string }>;
@@ -269,36 +268,32 @@ describe("readDeviceIdentification", () => {
   });
 
   it("clamps level to 1–4 range", async () => {
-    mockedInvoke.mockResolvedValueOnce({ conformity: 1, objects: [] });
+    vi.mocked(modbusAdapter.readDeviceIdentification).mockResolvedValueOnce({ conformity: 1, objects: [] });
 
     await readDeviceIdentification(99);
 
-    expect(mockedInvoke).toHaveBeenCalledWith("read_device_identification", {
-      request: { level: 4, objectId: 0 },
-    });
+    expect(modbusAdapter.readDeviceIdentification).toHaveBeenCalledWith(4, 0);
   });
 
   it("clamps level below 1 to 1", async () => {
-    mockedInvoke.mockResolvedValueOnce({ conformity: 1, objects: [] });
+    vi.mocked(modbusAdapter.readDeviceIdentification).mockResolvedValueOnce({ conformity: 1, objects: [] });
 
     await readDeviceIdentification(0);
 
-    expect(mockedInvoke).toHaveBeenCalledWith("read_device_identification", {
-      request: { level: 1, objectId: 0 },
-    });
+    expect(modbusAdapter.readDeviceIdentification).toHaveBeenCalledWith(1, 0);
   });
 
   it("is NOT serial-only (works with TCP)", async () => {
     connectionState.protocol = "tcp";
-    mockedInvoke.mockResolvedValueOnce({ conformity: 1, objects: [] });
+    vi.mocked(modbusAdapter.readDeviceIdentification).mockResolvedValueOnce({ conformity: 1, objects: [] });
 
     await readDeviceIdentification(1);
 
-    expect(mockedInvoke).toHaveBeenCalled();
+    expect(modbusAdapter.readDeviceIdentification).toHaveBeenCalled();
   });
 
   it("clears readInProgress after error", async () => {
-    mockedInvoke.mockRejectedValueOnce("Connection error");
+    vi.mocked(modbusAdapter.readDeviceIdentification).mockRejectedValueOnce(new Error("Connection error"));
     await readDeviceIdentification(1);
     expect(diagnosticsState.readInProgress).toBe(false);
   });

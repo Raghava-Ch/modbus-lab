@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
+import { modbusAdapter } from "../lib/adapters/WebModbusAdapter";
 import { connectionState } from "../state/connection.svelte";
 import {
   addFileRecordSegment,
@@ -18,6 +18,13 @@ import {
   setFileRecordSegmentWriteValues,
   teardownFileRecordState,
 } from "../state/file-records.svelte";
+
+vi.mock("../lib/adapters/WebModbusAdapter", () => ({
+  modbusAdapter: {
+    readFileRecords: vi.fn(),
+    writeFileRecords: vi.fn(),
+  },
+}));
 
 function resetFileRecordState(): void {
   teardownFileRecordState();
@@ -47,7 +54,7 @@ describe("file-records state", () => {
   });
 
   it("executes FC20 read and parses returned values", async () => {
-    vi.mocked(invoke).mockResolvedValueOnce({
+    vi.mocked(modbusAdapter.readFileRecords).mockResolvedValueOnce({
       functionCode: 0x14,
       requestHex: "0706000100000001",
       responseHex: "0403061234",
@@ -57,11 +64,7 @@ describe("file-records state", () => {
 
     await executeFileRecord(false);
 
-    expect(invoke).toHaveBeenCalledWith("read_file_records", {
-      request: {
-        payloadHex: "0706000100000001",
-      },
-    });
+    expect(modbusAdapter.readFileRecords).toHaveBeenCalledWith("0706000100000001");
 
     expect(fileRecordState.error).toBe("");
     expect(fileRecordState.lastExecution).not.toBeNull();
@@ -75,7 +78,7 @@ describe("file-records state", () => {
     setFileRecordSegmentNumber(fileRecordState.segments[0].id, "wordCount", 1);
     setFileRecordSegmentWriteValues(fileRecordState.segments[0].id, "0x000A");
 
-    vi.mocked(invoke).mockResolvedValueOnce({
+    vi.mocked(modbusAdapter.writeFileRecords).mockResolvedValueOnce({
       functionCode: 0x15,
       requestHex: "0906000100000001000A",
       responseHex: "0906000100000001000A",
@@ -85,11 +88,7 @@ describe("file-records state", () => {
 
     await executeFileRecord(false);
 
-    expect(invoke).toHaveBeenCalledWith("write_file_records", {
-      request: {
-        payloadHex: "0906000100000001000A",
-      },
-    });
+    expect(modbusAdapter.writeFileRecords).toHaveBeenCalledWith("0906000100000001000A");
 
     expect(fileRecordState.error).toBe("");
     expect(fileRecordState.lastExecution?.functionCode).toBe(0x15);
@@ -103,7 +102,7 @@ describe("file-records state", () => {
 
     await executeFileRecord(false);
 
-    expect(invoke).not.toHaveBeenCalled();
+    expect(modbusAdapter.writeFileRecords).not.toHaveBeenCalled();
     expect(fileRecordState.error).toContain("expects 2 values, got 1");
   });
 
@@ -156,7 +155,7 @@ describe("file-records state", () => {
     setFileRecordSegmentNumber(fileRecordState.segments[1].id, "recordNumber", 1);
     setFileRecordSegmentNumber(fileRecordState.segments[1].id, "wordCount", 1);
 
-    vi.mocked(invoke).mockResolvedValueOnce({
+    vi.mocked(modbusAdapter.readFileRecords).mockResolvedValueOnce({
       functionCode: 0x14,
       requestHex: "0706000900010001",
       responseHex: "0403060063",
@@ -166,10 +165,6 @@ describe("file-records state", () => {
 
     await executeFileRecordSegment(fileRecordState.segments[1].id, false);
 
-    expect(invoke).toHaveBeenCalledWith("read_file_records", {
-      request: {
-        payloadHex: "0706000900010001",
-      },
-    });
+    expect(modbusAdapter.readFileRecords).toHaveBeenCalledWith("0706000900010001");
   });
 });

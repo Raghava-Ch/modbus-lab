@@ -8,11 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "tauri": "tauri",
     "test": "vitest",
     "test:run": "vitest run"
   },
   "dependencies": {
+    "lucide-svelte": "^1.0.1",
     "modbus-rs-wasm": "^0.14.1",
     "mqtt": "^5.15.1"
   },

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { modbusAdapter } from "../lib/adapters/WebModbusAdapter";
 import { connectionState } from "./connection.svelte";
 import { addLog } from "./logs.svelte";
 import { notifyError, notifyInfo, notifyWarning } from "./notifications.svelte";
@@ -198,13 +198,11 @@ export async function sendCustomFrame(): Promise<void> {
   }
 
   try {
-    const response = await invoke<CustomFrameResponse>("send_custom_frame", {
-      request: {
-        mode: customFrameState.mode,
-        functionCode: customFrameState.mode === "function-payload" ? customFrameState.functionCode : undefined,
-        payloadHex: customFrameState.mode === "function-payload" ? customFrameState.payloadHex : undefined,
-        rawHex: customFrameState.mode === "raw-bytes" ? customFrameState.rawHex : undefined,
-      },
+    const response = await modbusAdapter.sendCustomFrame({
+      mode: customFrameState.mode,
+      functionCode: customFrameState.mode === "function-payload" ? customFrameState.functionCode : undefined,
+      payloadHex: customFrameState.mode === "function-payload" ? customFrameState.payloadHex : undefined,
+      rawHex: customFrameState.mode === "raw-bytes" ? customFrameState.rawHex : undefined,
     });
 
     customFrameState.response = response;

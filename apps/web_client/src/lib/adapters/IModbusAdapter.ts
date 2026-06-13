@@ -93,4 +93,15 @@ export interface IModbusAdapter {
   writeHoldingRegistersBatch(registers: Array<{ address: number; value: number }>): Promise<BackendWriteMassHoldingRegistersResponse>;
   readInputRegisters(startAddress: number, quantity: number): Promise<BackendReadInputRegistersResponse>;
   readFifoQueue(address: number): Promise<Uint16Array>;
+
+  // Diagnostics and Special function codes
+  readExceptionStatus(): Promise<{ status: number }>;
+  diagnostics(subfunction: number, data: number[]): Promise<{ data: number[] }>;
+  getComEventCounter(): Promise<{ status: number; eventCount: number }>;
+  getComEventLog(start?: number, count?: number): Promise<{ entries: Array<{ data: number[] }> }>;
+  reportServerId(): Promise<{ data: number[] }>;
+  readDeviceIdentification(level: number, objectId?: number): Promise<{ conformity?: number; objects: Array<{ id: number; value: string }> }>;
+  sendCustomFrame(request: { mode: string; functionCode?: number; payloadHex?: string; rawHex?: string }): Promise<any>;
+  readFileRecords(payloadHex: string): Promise<any>;
+  writeFileRecords(payloadHex: string): Promise<any>;
 }

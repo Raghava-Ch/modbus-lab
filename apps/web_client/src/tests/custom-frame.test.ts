@@ -1,6 +1,6 @@
 // Custom Frame state — warnings, presets, mode/function/hex setters
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
+import { modbusAdapter } from "../lib/adapters/WebModbusAdapter";
 import {
   customFrameState,
   customFramePresets,
@@ -14,7 +14,11 @@ import {
 } from "../state/custom-frame.svelte";
 import { connectionState } from "../state/connection.svelte";
 
-const mockedInvoke = vi.mocked(invoke);
+vi.mock("../lib/adapters/WebModbusAdapter", () => ({
+  modbusAdapter: {
+    sendCustomFrame: vi.fn(),
+  },
+}));
 
 function resetState() {
   customFrameState.mode = "function-payload";
@@ -191,12 +195,12 @@ describe("sendCustomFrame", () => {
   it("sets error without invoking when not connected", async () => {
     connectionState.status = "disconnected";
     await sendCustomFrame();
-    expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(modbusAdapter.sendCustomFrame).not.toHaveBeenCalled();
     expect(customFrameState.error).toBeTruthy();
   });
 
-  it("calls invoke('send_custom_frame') when connected", async () => {
-    mockedInvoke.mockResolvedValueOnce({
+  it("calls modbusAdapter.sendCustomFrame when connected", async () => {
+    vi.mocked(modbusAdapter.sendCustomFrame).mockResolvedValueOnce({
       mode: "function-payload",
       functionCode: 3,
       functionName: "Read Holding Registers",
@@ -208,7 +212,7 @@ describe("sendCustomFrame", () => {
 
     await sendCustomFrame();
 
-    expect(mockedInvoke).toHaveBeenCalledWith("send_custom_frame", expect.any(Object));
+    expect(modbusAdapter.sendCustomFrame).toHaveBeenCalledWith(expect.any(Object));
   });
 
   it("stores the response on success", async () => {
@@ -221,7 +225,7 @@ describe("sendCustomFrame", () => {
       requestSummary: "req",
       responseSummary: "resp",
     };
-    mockedInvoke.mockResolvedValueOnce(mockResp);
+    vi.mocked(modbusAdapter.sendCustomFrame).mockResolvedValueOnce(mockResp);
 
     await sendCustomFrame();
 
@@ -231,7 +235,7 @@ describe("sendCustomFrame", () => {
   });
 
   it("stores error string on failure", async () => {
-    mockedInvoke.mockRejectedValueOnce(JSON.stringify({ message: "Device unreachable", details: "" }));
+    vi.mocked(modbusAdapter.sendCustomFrame).mockRejectedValueOnce(new Error("Device unreachable"));
 
     await sendCustomFrame();
 
@@ -242,7 +246,7 @@ describe("sendCustomFrame", () => {
 
   it("sets pending=true while invoke is in-flight and false after", async () => {
     const pendingStates: boolean[] = [];
-    mockedInvoke.mockImplementationOnce(async () => {
+    vi.mocked(modbusAdapter.sendCustomFrame).mockImplementationOnce(async () => {
       pendingStates.push(customFrameState.pending);
       return {
         mode: "function-payload",

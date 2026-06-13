@@ -428,6 +428,158 @@ export class WebModbusAdapter implements IModbusAdapter {
     if (!this.client) throw new Error("Not connected");
     return await this.client.read_fifo_queue(address);
   }
+
+  public async readExceptionStatus(): Promise<{ status: number }> {
+    if (!this.client) throw new Error("Not connected");
+    const status = await this.client.read_exception_status();
+    return { status };
+  }
+
+  public async diagnostics(subfunction: number, data: number[]): Promise<{ data: number[] }> {
+    if (!this.client) throw new Error("Not connected");
+    const u16Data = new Uint16Array(data);
+    const res = await this.client.diagnostics(subfunction, u16Data);
+    const responseData = Array.from(res.data || []);
+    return { data: responseData };
+  }
+
+  public async getComEventCounter(): Promise<{ status: number; eventCount: number }> {
+    if (!this.client) throw new Error("Not connected");
+    const res = await this.client.get_comm_event_counter();
+    return {
+      status: res.status ?? 0,
+      eventCount: res.eventCount ?? 0,
+    };
+  }
+
+  public async getComEventLog(start?: number, count?: number): Promise<{ entries: Array<{ data: number[] }> }> {
+    if (!this.client) throw new Error("Not connected");
+    const res = await this.client.get_comm_event_log();
+    const events: Uint8Array = res.events || new Uint8Array();
+    const sliced = events.subarray(start ?? 0, (start ?? 0) + (count ?? 100));
+    const entries = Array.from(sliced).map((byte) => ({
+      data: [byte],
+    }));
+    return { entries };
+  }
+
+  public async reportServerId(): Promise<{ data: number[] }> {
+    if (!this.client) throw new Error("Not connected");
+    const res = await this.client.report_server_id();
+    return { data: Array.from(res) };
+  }
+
+  public async readDeviceIdentification(level: number, objectId?: number): Promise<{ conformity?: number; objects: Array<{ id: number; value: string }> }> {
+    if (!this.client) throw new Error("Not connected");
+    const res = await this.client.read_device_identification(level, objectId ?? 0);
+    return {
+      conformity: res.conformityLevel,
+      objects: (res.objects || []).map((o: any) => ({
+        id: o.id,
+        value: o.value,
+      })),
+    };
+  }
+
+  public async sendCustomFrame(request: { mode: string; functionCode?: number; payloadHex?: string; rawHex?: string }): Promise<any> {
+    throw new Error("Custom frame sending is not supported in the web/WASM client.");
+  }
+
+  public async readFileRecords(payloadHex: string): Promise<any> {
+    if (!this.client) throw new Error("Not connected");
+    const bytes = parseHexToBytes(payloadHex);
+    let cursor = 1;
+    const results: number[] = [];
+    while (cursor < bytes.length) {
+      const refType = bytes[cursor];
+      const fileNumber = (bytes[cursor + 1] << 8) | bytes[cursor + 2];
+      const recordNumber = (bytes[cursor + 3] << 8) | bytes[cursor + 4];
+      const recordLength = (bytes[cursor + 5] << 8) | bytes[cursor + 6];
+      cursor += 7;
+
+      const res = await this.client.read_file_record(fileNumber, recordNumber, recordLength);
+      const recordData = res[0]?.data || new Uint16Array(recordLength);
+
+      const subResponse: number[] = [1 + 2 * recordLength, refType];
+      for (let i = 0; i < recordLength; i++) {
+        const val = recordData[i] || 0;
+        subResponse.push((val >> 8) & 0xff, val & 0xff);
+      }
+      results.push(...subResponse);
+    }
+
+    const responseBytes = [results.length, ...results];
+    const responseHex = bytesToHex(responseBytes);
+
+    return {
+      functionCode: 0x14,
+      requestHex: payloadHex,
+      responseHex,
+      requestSummary: "",
+      responseSummary: "",
+    };
+  }
+
+  public async writeFileRecords(payloadHex: string): Promise<any> {
+    if (!this.client) throw new Error("Not connected");
+    const bytes = parseHexToBytes(payloadHex);
+    let cursor = 1;
+    const results: number[] = [];
+    while (cursor < bytes.length) {
+      const refType = bytes[cursor];
+      const fileNumber = (bytes[cursor + 1] << 8) | bytes[cursor + 2];
+      const recordNumber = (bytes[cursor + 3] << 8) | bytes[cursor + 4];
+      const recordLength = (bytes[cursor + 5] << 8) | bytes[cursor + 6];
+      cursor += 7;
+
+      const words = new Uint16Array(recordLength);
+      for (let i = 0; i < recordLength; i++) {
+        words[i] = (bytes[cursor] << 8) | bytes[cursor + 1];
+        cursor += 2;
+      }
+
+      await this.client.write_file_record(fileNumber, recordNumber, words);
+
+      const subResponse: number[] = [
+        refType,
+        (fileNumber >> 8) & 0xff, fileNumber & 0xff,
+        (recordNumber >> 8) & 0xff, recordNumber & 0xff,
+        (recordLength >> 8) & 0xff, recordLength & 0xff,
+      ];
+      for (let i = 0; i < recordLength; i++) {
+        const val = words[i];
+        subResponse.push((val >> 8) & 0xff, val & 0xff);
+      }
+      results.push(...subResponse);
+    }
+
+    const responseBytes = [results.length, ...results];
+    const responseHex = bytesToHex(responseBytes);
+
+    return {
+      functionCode: 0x15,
+      requestHex: payloadHex,
+      responseHex,
+      requestSummary: "",
+      responseSummary: "",
+    };
+  }
+}
+
+function parseHexToBytes(hex: string): number[] {
+  const cleaned = hex.replace(/[^0-9a-f]/gi, "");
+  if (cleaned.length === 0) return [];
+  const bytes: number[] = [];
+  for (let i = 0; i < cleaned.length; i += 2) {
+    bytes.push(Number.parseInt(cleaned.slice(i, i + 2), 16));
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes: number[] | Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => (byte & 0xff).toString(16).toUpperCase().padStart(2, "0"))
+    .join("");
 }
 
 export const modbusAdapter = new WebModbusAdapter();

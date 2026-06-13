@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { modbusAdapter } from "../lib/adapters/WebModbusAdapter";
 import { connectionState } from "./connection.svelte";
 import { addLog } from "./logs.svelte";
 import { notifyError, notifyInfo, notifyWarning } from "./notifications.svelte";
@@ -746,13 +746,9 @@ async function executeFileRecordWithSegments(
 			? buildReadPayload(requestSegments)
 			: buildWritePayload(requestSegments);
 		const payloadHex = bytesToHex(payloadBytes);
-		const command = mode === "read" ? "read_file_records" : "write_file_records";
-
-		const response = await invoke<BackendCustomFrameResponse>(command, {
-			request: {
-				payloadHex,
-			},
-		});
+		const response = mode === "read"
+			? await modbusAdapter.readFileRecords(payloadHex)
+			: await modbusAdapter.writeFileRecords(payloadHex);
 
 		const parsedSegments = parseExecutionResponse(mode, response.responseHex, requestSegments);
 		const execution: FileRecordExecution = {

@@ -1,7 +1,6 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
   import { X } from "lucide-svelte";
   import { applyBackendConnectionStatus } from "../../state/connection.svelte";
   import {
@@ -252,13 +251,13 @@
           <h3>Tech Stack</h3>
           <ul>
             <li>Frontend: Svelte 5 + TypeScript + Vite</li>
-            <li>Desktop Runtime: Tauri v2 (cross-platform native)</li>
+            <li>Web Runtime: WebAssembly + Web Serial (browser native)</li>
             <li>
-              Backend: Rust + <a
+              Engine: Rust + <a
                 href="https://github.com/Raghava-Ch/modbus-rs"
                 target="_blank"
                 style="color: inherit; text-decoration: underline;">modbus-rs</a
-              > engine
+              > compiled to WASM
             </li>
           </ul>
           <p style="margin-top: 8px; font-size: 0.9em; opacity: 0.85;">
