@@ -1,7 +1,7 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ModbusLab Server",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "identifier": "com.modbuslab.Server",
   "build": {
     "beforeDevCommand": "npm run dev --workspace @modbus-lab/server",
@@ -13,7 +13,9 @@
     "withGlobalTauri": false,
     "security": {
       "csp": null,
-      "capabilities": ["default"]
+      "capabilities": [
+        "default"
+      ]
     },
     "windows": [
       {

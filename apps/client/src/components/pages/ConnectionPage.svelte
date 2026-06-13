@@ -507,12 +507,12 @@
               </div>
             </div>
 
-            <div class="form-row">
+             <div class="form-row">
               <div class="form-group">
                 <label for="baud-rate">Baud Rate</label>
                 <select
                   id="baud-rate"
-                  value={connectionState.serial.baudRate}
+                  value={String(connectionState.serial.baudRate)}
                   onchange={(e) => updateSerialSettings({ baudRate: Number(e.currentTarget.value) })}
                 >
                   <option value="1200">1200</option>
@@ -530,7 +530,7 @@
                 <label for="data-bits">Data Bits</label>
                 <select
                   id="data-bits"
-                  value={connectionState.serial.dataBits}
+                  value={String(connectionState.serial.dataBits)}
                   onchange={(e) => updateSerialSettings({ dataBits: Number(e.currentTarget.value) as 5 | 6 | 7 | 8 })}
                 >
                   <option value="5">5</option>
@@ -546,7 +546,7 @@
                 <label for="stop-bits">Stop Bits</label>
                 <select
                   id="stop-bits"
-                  value={connectionState.serial.stopBits}
+                  value={String(connectionState.serial.stopBits)}
                   onchange={(e) => updateSerialSettings({ stopBits: Number(e.currentTarget.value) as 1 | 2 })}
                 >
                   <option value="1">1</option>
