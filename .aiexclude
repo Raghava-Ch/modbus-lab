@@ -1,0 +1,28 @@
+# ==============================================================================
+# .aiignore - Prevents the AI assistant from indexing heavy/irrelevant files
+# ==============================================================================
+
+# Node & Web dependencies
+node_modules/
+.npm/
+
+# Rust & Tauri build artifacts
+target/
+src-tauri/target/
+Cargo.lock
+
+# Web Build outputs
+dist/
+build/
+.svelte-kit/
+
+# Installers and packages
+*.dmg
+*.exe
+*.msi
+*.AppImage
+*.deb
+
+# Environment and temporary files
+.env*
+*.tmp.*

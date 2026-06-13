@@ -1,6 +1,5 @@
-/// <reference types="vitest" />
 import { resolve } from "node:path";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 const mobile =
@@ -8,7 +7,7 @@ const mobile =
   process.env.TAURI_ENV_PLATFORM === "ios";
 
 // https://vitejs.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig({
   plugins: [svelte()],
   resolve: {
     alias: {
@@ -39,4 +38,4 @@ export default defineConfig(async () => ({
     setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.test.ts"],
   },
-}));
+});

@@ -2,7 +2,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { modbusAdapter } from "../../lib/adapters/WebModbusAdapter";
   import { Link2, LogOut } from "lucide-svelte";
   import {
     applyBackendConnectionStatus,
@@ -13,10 +13,15 @@
     updateTcpSettings,
     updateSerialSettings,
     type ModbusProtocol,
-    type RetryBackoffStrategy,
     type RetryJitterStrategy,
+    type RetryBackoffStrategy,
     type SerialParity,
   } from "../../state/connection.svelte";
+  import type {
+    CommandAck,
+    SerialConnectRequest,
+    WebSocketConnectRequest,
+  } from "../../lib/adapters/IModbusAdapter";
   import { addLog } from "../../state/logs.svelte";
   import { settingsState } from "../../state/settings.svelte";
   import IconButton from "../shared/IconButton.svelte";
@@ -30,7 +35,9 @@
   const filteredSerialPorts = $derived.by(() => {
     const query = connectionState.serial.port.trim().toLowerCase();
     if (!query) return availableSerialPorts;
-    return availableSerialPorts.filter((port) => port.toLowerCase().includes(query));
+    return availableSerialPorts.filter((port) =>
+      port.toLowerCase().includes(query),
+    );
   });
   const backendSource = $derived.by(() => {
     const normalized = connectionState.backendStatus.toLowerCase();
@@ -102,45 +109,6 @@
     return status !== "disconnected" || backend === "reconnecting";
   });
 
-  interface AnalyticsContext {
-    traceId?: string;
-    sessionId?: string;
-    tags?: string[];
-  }
-
-  interface TcpConnectRequest {
-    host: string;
-    port: number;
-    slaveId: number;
-    connectionTimeoutMs?: number;
-    responseTimeoutMs?: number;
-    retryAttempts?: number;
-    retryBackoffStrategy?: RetryBackoffStrategy;
-    retryJitterStrategy?: RetryJitterStrategy;
-    heartbeatIdleAfterMs?: number;
-    analytics?: AnalyticsContext;
-  }
-
-  interface SerialConnectRequest {
-    port: string;
-    baudRate: number;
-    dataBits: number;
-    stopBits: number;
-    parity: string;
-    slaveId: number;
-    timeoutMs?: number;
-    analytics?: AnalyticsContext;
-  }
-
-  interface CommandAck {
-    ok: boolean;
-    message: string;
-    status: {
-      status: string;
-      details?: string;
-    };
-  }
-
   interface ApiErrorPayload {
     code?: string;
     message?: string;
@@ -176,48 +144,36 @@
       let response: CommandAck;
 
       if (connectionState.protocol === "tcp") {
-        const request: TcpConnectRequest = {
-          host: connectionState.tcp.host.trim(),
-          port: connectionState.tcp.port,
+        response = await modbusAdapter.connectTcp({
+          wsUrl: connectionState.tcp.wsProxyUrl,
           slaveId: connectionState.slaveId,
-          connectionTimeoutMs: connectionState.tcp.connectionTimeoutMs,
           responseTimeoutMs: connectionState.tcp.responseTimeoutMs,
-          retryAttempts: connectionState.tcp.retryAttempts,
-          retryBackoffStrategy: connectionState.tcp.retryBackoffStrategy,
-          retryJitterStrategy: connectionState.tcp.retryJitterStrategy,
-          heartbeatIdleAfterMs: settingsState.tcpHealth.heartbeatEnabled
-            ? settingsState.tcpHealth.heartbeatIdleAfterMs
-            : 0,
-        };
-
-        response = await invoke<CommandAck>("connect_modbus_tcp", { request });
+        });
       } else {
-        const request: SerialConnectRequest = {
-          port: connectionState.serial.port.trim(),
+        response = await modbusAdapter.connectSerial({
           baudRate: connectionState.serial.baudRate,
           dataBits: connectionState.serial.dataBits,
           stopBits: connectionState.serial.stopBits,
           parity: connectionState.serial.parity,
           slaveId: connectionState.slaveId,
           timeoutMs: 2000,
-        };
-
-        response = await invoke<CommandAck>(
-          connectionState.protocol === "serial-rtu"
-            ? "connect_modbus_serial_rtu"
-            : "connect_modbus_serial_ascii",
-          { request },
-        );
+          mode: connectionState.protocol === "serial-rtu" ? "rtu" : "ascii",
+        });
       }
 
-      applyBackendConnectionStatus(response.status.status, response.status.details);
+      applyBackendConnectionStatus(
+        response.status.status,
+        response.status.details,
+      );
     } catch (err) {
       const parsed = parseApiError(err);
-      applyBackendConnectionStatus("disconnected", parsed.details ?? parsed.message);
+      applyBackendConnectionStatus(
+        "disconnected",
+        parsed.details ?? parsed.message,
+      );
 
-      // Serial commands are scaffolded in this phase; keep UX explicit and non-alarming.
       if (parsed.code === "NOT_IMPLEMENTED_YET") {
-        addLog("warn", parsed.message ?? "Serial connection is scaffolded for next phase.");
+        addLog("warn", parsed.message ?? "Feature is not yet implemented.");
       } else if (parsed.message) {
         const extra = parsed.details ? ` (${parsed.details})` : "";
         addLog("error", `${parsed.message}${extra}`);
@@ -231,10 +187,11 @@
 
   async function handleDisconnect(): Promise<void> {
     try {
-      const response = await invoke<CommandAck>("disconnect_modbus", {
-        request: {},
-      });
-      applyBackendConnectionStatus(response.status.status, response.status.details);
+      const response = await modbusAdapter.disconnect();
+      applyBackendConnectionStatus(
+        response.status.status,
+        response.status.details,
+      );
     } catch (err) {
       const parsed = parseApiError(err);
       addLog("error", parsed.message ?? "Disconnect command failed.");
@@ -257,9 +214,11 @@
 
     listingPorts = true;
     try {
-      const ports = await invoke<string[]>("list_serial_ports");
-      availableSerialPorts = ports;
-      addLog("info", `Serial ports refreshed (${ports.length} found).`);
+      availableSerialPorts = [];
+      addLog(
+        "info",
+        "Web Serial: port is selected via the browser's native picker when you click Connect.",
+      );
     } catch (err) {
       const parsed = parseApiError(err);
       const msg = parsed.message ?? "Failed to list serial ports.";
@@ -276,17 +235,26 @@
   }
 
   onMount(() => {
-    if (connectionState.protocol === "serial-rtu" || connectionState.protocol === "serial-ascii") {
+    if (
+      connectionState.protocol === "serial-rtu" ||
+      connectionState.protocol === "serial-ascii"
+    ) {
       void refreshSerialPorts();
     }
   });
 </script>
 
 <div class="connection-page">
-  <SectionHeader title="Connection Settings" subtitle="Configure Modbus device connection">
+  <SectionHeader
+    title="Connection Settings"
+    subtitle="Configure Modbus device connection"
+  >
     {#snippet actions()}
       <div class="header-status-cluster">
-        <div class="connection-status" class:connected={connectionState.status === "connected"}>
+        <div
+          class="connection-status"
+          class:connected={connectionState.status === "connected"}
+        >
           <span class="status-dot"></span>
           <span class="status-text">{connectionState.status}</span>
         </div>
@@ -294,7 +262,10 @@
           <span class="status-chip">{backendSource}</span>
         {/if}
         {#if compactBackendDetails}
-          <span class="status-chip details has-tip" data-tip={connectionState.backendDetails}>
+          <span
+            class="status-chip details has-tip"
+            data-tip={connectionState.backendDetails}
+          >
             {compactBackendDetails}
           </span>
         {/if}
@@ -348,28 +319,25 @@
           <div class="section">
             <div class="section-title">TCP Settings</div>
 
-            <div class="tcp-fields">
-              <div class="form-group tcp-host">
-                <label for="tcp-host">Host / IP Address</label>
-                <input
-                  id="tcp-host"
-                  type="text"
-                  placeholder="192.168.55.200"
-                  value={connectionState.tcp.host}
-                  onchange={(e) => updateTcpSettings({ host: e.currentTarget.value })}
-                />
-              </div>
-
-              <div class="form-group tcp-port">
-                <label for="tcp-port">Port</label>
-                <input
-                  id="tcp-port"
-                  type="number"
-                  min="1"
-                  max="65535"
-                  value={connectionState.tcp.port}
-                  onchange={(e) => updateTcpSettings({ port: Number(e.currentTarget.value) })}
-                />
+            <div
+              class="form-group tcp-proxy-url"
+              style="margin-top: 12px; margin-bottom: 12px;"
+            >
+              <label for="ws-proxy-url">WebSocket Proxy URL</label>
+              <input
+                id="ws-proxy-url"
+                type="text"
+                placeholder="ws://localhost:8765"
+                value={connectionState.tcp.wsProxyUrl}
+                onchange={(e) =>
+                  updateTcpSettings({ wsProxyUrl: e.currentTarget.value })}
+              />
+              <div
+                class="info-banner"
+                style="margin-top: 8px; padding: 8px 12px; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 12px; color: #93c5fd; line-height: 1.4;"
+              >
+                🔌 <strong>WebSocket Proxy Mode:</strong> Standard browsers cannot make direct raw TCP connections, so a WebSocket-to-TCP proxy is required.
+                Ensure your proxy is running. You can use <a href="https://crates.io/crates/modbus-gateway" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">modbus-gateway</a> as a ready-made gateway.
               </div>
             </div>
 
@@ -377,7 +345,9 @@
 
             <div class="form-row">
               <div class="form-group">
-                <label for="tcp-connection-timeout">Connection Timeout (ms)</label>
+                <label for="tcp-connection-timeout"
+                  >Connection Timeout (ms)</label
+                >
                 <input
                   id="tcp-connection-timeout"
                   type="number"
@@ -385,7 +355,10 @@
                   max="600000"
                   step="100"
                   value={connectionState.tcp.connectionTimeoutMs}
-                  onchange={(e) => updateTcpSettings({ connectionTimeoutMs: Number(e.currentTarget.value) })}
+                  onchange={(e) =>
+                    updateTcpSettings({
+                      connectionTimeoutMs: Number(e.currentTarget.value),
+                    })}
                 />
               </div>
 
@@ -398,7 +371,10 @@
                   max="600000"
                   step="100"
                   value={connectionState.tcp.responseTimeoutMs}
-                  onchange={(e) => updateTcpSettings({ responseTimeoutMs: Number(e.currentTarget.value) })}
+                  onchange={(e) =>
+                    updateTcpSettings({
+                      responseTimeoutMs: Number(e.currentTarget.value),
+                    })}
                 />
               </div>
             </div>
@@ -412,7 +388,10 @@
                   min="0"
                   max="10"
                   value={connectionState.tcp.retryAttempts}
-                  onchange={(e) => updateTcpSettings({ retryAttempts: Number(e.currentTarget.value) })}
+                  onchange={(e) =>
+                    updateTcpSettings({
+                      retryAttempts: Number(e.currentTarget.value),
+                    })}
                 />
               </div>
 
@@ -421,7 +400,11 @@
                 <select
                   id="tcp-backoff-strategy"
                   value={connectionState.tcp.retryBackoffStrategy}
-                  onchange={(e) => updateTcpSettings({ retryBackoffStrategy: e.currentTarget.value as RetryBackoffStrategy })}
+                  onchange={(e) =>
+                    updateTcpSettings({
+                      retryBackoffStrategy: e.currentTarget
+                        .value as RetryBackoffStrategy,
+                    })}
                 >
                   <option value="fixed">Fixed</option>
                   <option value="linear">Linear</option>
@@ -435,7 +418,11 @@
               <select
                 id="tcp-jitter-strategy"
                 value={connectionState.tcp.retryJitterStrategy}
-                onchange={(e) => updateTcpSettings({ retryJitterStrategy: e.currentTarget.value as RetryJitterStrategy })}
+                onchange={(e) =>
+                  updateTcpSettings({
+                    retryJitterStrategy: e.currentTarget
+                      .value as RetryJitterStrategy,
+                  })}
               >
                 <option value="none">None</option>
                 <option value="full">Full</option>
@@ -453,67 +440,32 @@
         {#snippet children()}
           <div class="section">
             <div class="section-title">
-              {connectionState.protocol === "serial-rtu" ? "Serial RTU" : "Serial ASCII"} Settings
+              {connectionState.protocol === "serial-rtu"
+                ? "Serial RTU"
+                : "Serial ASCII"} Settings
             </div>
-
-            <div class="form-group">
-              <label for="serial-port-input">Port</label>
-              <div class="serial-port-row">
-                <div class="serial-port-combobox">
-                  <input
-                    id="serial-port-input"
-                    type="text"
-                    placeholder="/dev/ttyUSB0 or COM3"
-                    value={connectionState.serial.port}
-                    onfocus={() => (showSerialPortDropdown = true)}
-                    oninput={(e) => {
-                      updateSerialSettings({ port: e.currentTarget.value });
-                      showSerialPortDropdown = true;
-                    }}
-                    onblur={() => {
-                      setTimeout(() => {
-                        showSerialPortDropdown = false;
-                      }, 120);
-                    }}
-                  />
-
-                  {#if showSerialPortDropdown}
-                    <div class="serial-port-list" role="listbox">
-                      {#if filteredSerialPorts.length === 0}
-                        <div class="serial-port-empty">No detected ports match.</div>
-                      {:else}
-                        {#each filteredSerialPorts as port}
-                          <button
-                            type="button"
-                            class="serial-port-option"
-                            onclick={() => selectSerialPort(port)}
-                          >
-                            {port}
-                          </button>
-                        {/each}
-                      {/if}
-                    </div>
-                  {/if}
-                </div>
-
-                <button
-                  class="btn btn-inline"
-                  type="button"
-                  onclick={() => void refreshSerialPorts()}
-                  disabled={listingPorts}
-                >
-                  {listingPorts ? "Refreshing..." : "Refresh Ports"}
-                </button>
-              </div>
+            <div
+              class="info-banner"
+              style="margin-top: 8px; padding: 8px 12px; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 12px; color: #93c5fd; line-height: 1.4;"
+            >
+              🔌 <strong>Direct Serial Connection:</strong> Communicates
+              directly with your device via the Web Serial API. This requires a
+              Chromium-based browser (like Google Chrome, Microsoft Edge, or
+              Opera).
+              <br />
+              <strong>How to connect:</strong> Click <strong>Connect</strong> below,
+              then select your serial port from the browser prompt and grant permission.
             </div>
-
-             <div class="form-row">
+            <div class="form-row">
               <div class="form-group">
                 <label for="baud-rate">Baud Rate</label>
                 <select
                   id="baud-rate"
                   value={String(connectionState.serial.baudRate)}
-                  onchange={(e) => updateSerialSettings({ baudRate: Number(e.currentTarget.value) })}
+                  onchange={(e) =>
+                    updateSerialSettings({
+                      baudRate: Number(e.currentTarget.value),
+                    })}
                 >
                   <option value="1200">1200</option>
                   <option value="2400">2400</option>
@@ -531,7 +483,10 @@
                 <select
                   id="data-bits"
                   value={String(connectionState.serial.dataBits)}
-                  onchange={(e) => updateSerialSettings({ dataBits: Number(e.currentTarget.value) as 5 | 6 | 7 | 8 })}
+                  onchange={(e) =>
+                    updateSerialSettings({
+                      dataBits: Number(e.currentTarget.value) as 5 | 6 | 7 | 8,
+                    })}
                 >
                   <option value="5">5</option>
                   <option value="6">6</option>
@@ -547,7 +502,10 @@
                 <select
                   id="stop-bits"
                   value={String(connectionState.serial.stopBits)}
-                  onchange={(e) => updateSerialSettings({ stopBits: Number(e.currentTarget.value) as 1 | 2 })}
+                  onchange={(e) =>
+                    updateSerialSettings({
+                      stopBits: Number(e.currentTarget.value) as 1 | 2,
+                    })}
                 >
                   <option value="1">1</option>
                   <option value="2">2</option>
@@ -559,7 +517,10 @@
                 <select
                   id="parity"
                   value={connectionState.serial.parity}
-                  onchange={(e) => updateSerialSettings({ parity: e.currentTarget.value as SerialParity })}
+                  onchange={(e) =>
+                    updateSerialSettings({
+                      parity: e.currentTarget.value as SerialParity,
+                    })}
                 >
                   <option value="none">None</option>
                   <option value="even">Even</option>
@@ -591,23 +552,32 @@
               />
             </div>
 
-          <div class="actions">
-            {#if connectionState.status === "disconnected"}
-              <button class="btn btn-primary" type="button" onclick={handleConnect} disabled={connecting}>
-                {#if connecting}
-                  <span class="spinner"></span>
-                {:else}
-                  <Link2 size={16} />
-                {/if}
-                {connecting ? "Connecting..." : "Connect"}
-              </button>
-            {:else}
-              <button class="btn btn-secondary" type="button" onclick={handleDisconnect}>
-                <LogOut size={16} />
-                Disconnect
-              </button>
-            {/if}
-          </div>
+            <div class="actions">
+              {#if connectionState.status === "disconnected"}
+                <button
+                  class="btn btn-primary"
+                  type="button"
+                  onclick={handleConnect}
+                  disabled={connecting}
+                >
+                  {#if connecting}
+                    <span class="spinner"></span>
+                  {:else}
+                    <Link2 size={16} />
+                  {/if}
+                  {connecting ? "Connecting..." : "Connect"}
+                </button>
+              {:else}
+                <button
+                  class="btn btn-secondary"
+                  type="button"
+                  onclick={handleDisconnect}
+                >
+                  <LogOut size={16} />
+                  Disconnect
+                </button>
+              {/if}
+            </div>
           </div>
         </div>
       {/snippet}
@@ -760,10 +730,15 @@
   }
 
   .protocol-buttons button.active {
-    border-color: color-mix(in srgb, var(--c-border-strong) 88%, var(--c-surface-3));
+    border-color: color-mix(
+      in srgb,
+      var(--c-border-strong) 88%,
+      var(--c-surface-3)
+    );
     background: color-mix(in srgb, var(--c-accent) 8%, var(--c-surface-2));
     color: var(--c-text-1);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 18%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--c-accent) 18%, transparent);
   }
 
   .protocol-buttons button.active .label {
@@ -804,81 +779,6 @@
     color: var(--c-text-1);
     text-transform: uppercase;
     letter-spacing: 0.02em;
-  }
-
-  .serial-port-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: stretch;
-    gap: 8px;
-  }
-
-  .serial-port-combobox {
-    position: relative;
-    width: 100%;
-    min-width: 0;
-  }
-
-  .serial-port-combobox input {
-    width: 100%;
-    padding-right: 28px;
-  }
-
-  .serial-port-combobox::after {
-    content: "";
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    width: 10px;
-    height: 6px;
-    transform: translateY(-50%);
-    pointer-events: none;
-    opacity: 0.85;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23c9cfda' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-size: 10px 6px;
-  }
-
-  .serial-port-combobox:focus-within::after {
-    opacity: 1;
-  }
-
-  .serial-port-list {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    z-index: 15;
-    max-height: 180px;
-    overflow-y: auto;
-    border: 1px solid var(--c-border-strong);
-    border-radius: 8px;
-    background: var(--c-surface-2);
-    box-shadow: 0 10px 24px color-mix(in srgb, var(--c-bg) 70%, transparent);
-    padding: 4px;
-  }
-
-  .serial-port-option {
-    width: 100%;
-    text-align: left;
-    border: 0;
-    border-radius: 6px;
-    padding: 6px 8px;
-    background: transparent;
-    color: var(--c-text-1);
-    font: inherit;
-    font-size: 0.74rem;
-    cursor: pointer;
-  }
-
-  .serial-port-option:hover {
-    background: color-mix(in srgb, var(--c-accent) 12%, var(--c-surface-2));
-  }
-
-  .serial-port-empty {
-    padding: 6px 8px;
-    color: var(--c-text-2);
-    font-size: 0.72rem;
   }
 
   input,
@@ -924,16 +824,6 @@
     gap: 8px;
   }
 
-  .tcp-fields {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-  }
-
-  .tcp-host { flex: 1; }
-
-  .tcp-port { width: 110px; }
-
   .device-fields {
     display: flex;
     gap: 8px;
@@ -941,7 +831,9 @@
     margin-top: 6px;
   }
 
-  .slave-id-group { width: 110px; }
+  .slave-id-group {
+    width: 110px;
+  }
 
   .actions {
     flex: 1;
@@ -993,22 +885,6 @@
   .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
-  }
-
-  .btn-inline {
-    min-height: 34px;
-    padding: 0 10px;
-    flex: 0;
-    font-size: 0.7rem;
-    font-weight: 500;
-    border-color: color-mix(in srgb, var(--c-border) 85%, var(--c-surface-3));
-    background: color-mix(in srgb, var(--c-surface-2) 90%, var(--c-bg));
-    color: var(--c-text-2);
-  }
-
-  .btn-inline:hover:not(:disabled) {
-    border-color: var(--c-border-strong);
-    color: var(--c-text-1);
   }
 
   .spinner {
