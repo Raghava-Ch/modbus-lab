@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 /// Modbus server application — direct `AsyncAppHandler` implementation.
 ///
 /// This is the "Level 2" explicit-loop approach recommended for tool
@@ -11,7 +12,6 @@
 /// UI. Any Modbus request that touches an address not in the registration mask
 /// is rejected with `IllegalDataAddress`.
 use std::sync::Arc;
-use std::collections::BTreeMap;
 
 use mbus_core::errors::ExceptionCode;
 use mbus_core::function_codes::public::FunctionCode;
@@ -66,7 +66,7 @@ fn device_id_object_value(object_id: u8) -> Option<&'static str> {
     match object_id {
         0 => Some("Modbus Lab"),
         1 => Some("MBL-SERVER"),
-        2 => Some("0.0.6"),
+        2 => Some("0.0.7"),
         3 => Some("https://github.com/Raghava-Ch/modbus-lab"),
         4 => Some("Modbus Lab Server"),
         5 => Some("Rust+Tauri"),
@@ -75,7 +75,10 @@ fn device_id_object_value(object_id: u8) -> Option<&'static str> {
     }
 }
 
-fn collect_device_id_object_ids(read_device_id_code: u8, object_id: u8) -> Result<[u8; 7], ExceptionCode> {
+fn collect_device_id_object_ids(
+    read_device_id_code: u8,
+    object_id: u8,
+) -> Result<[u8; 7], ExceptionCode> {
     match read_device_id_code {
         // Basic
         1 => Ok([0, 1, 2, 255, 255, 255, 255]),
@@ -93,7 +96,10 @@ fn collect_device_id_object_ids(read_device_id_code: u8, object_id: u8) -> Resul
     }
 }
 
-fn encode_device_id_objects(read_device_id_code: u8, object_id: u8) -> Result<HeaplessVec<u8, MAX_ADU_FRAME_LEN>, ExceptionCode> {
+fn encode_device_id_objects(
+    read_device_id_code: u8,
+    object_id: u8,
+) -> Result<HeaplessVec<u8, MAX_ADU_FRAME_LEN>, ExceptionCode> {
     let ids = collect_device_id_object_ids(read_device_id_code, object_id)?;
     let mut encoded: HeaplessVec<u8, MAX_ADU_FRAME_LEN> = HeaplessVec::new();
 
@@ -112,12 +118,16 @@ fn encode_device_id_objects(read_device_id_code: u8, object_id: u8) -> Result<He
             return Err(ExceptionCode::IllegalDataValue);
         }
 
-        encoded.push(id).map_err(|_| ExceptionCode::IllegalDataValue)?;
+        encoded
+            .push(id)
+            .map_err(|_| ExceptionCode::IllegalDataValue)?;
         encoded
             .push(value_bytes.len() as u8)
             .map_err(|_| ExceptionCode::IllegalDataValue)?;
         for byte in value_bytes {
-            encoded.push(*byte).map_err(|_| ExceptionCode::IllegalDataValue)?;
+            encoded
+                .push(*byte)
+                .map_err(|_| ExceptionCode::IllegalDataValue)?;
         }
     }
 
@@ -435,7 +445,11 @@ impl ServerApp {
             .iter()
             .map(|&addr| {
                 let idx = addr as usize;
-                let value = if idx < ADDR_SPACE { self.coils[idx] } else { false };
+                let value = if idx < ADDR_SPACE {
+                    self.coils[idx]
+                } else {
+                    false
+                };
                 (addr, value)
             })
             .collect()
@@ -447,7 +461,11 @@ impl ServerApp {
             .iter()
             .map(|&addr| {
                 let idx = addr as usize;
-                let value = if idx < ADDR_SPACE { self.discrete_inputs[idx] } else { false };
+                let value = if idx < ADDR_SPACE {
+                    self.discrete_inputs[idx]
+                } else {
+                    false
+                };
                 (addr, value)
             })
             .collect()
@@ -459,7 +477,11 @@ impl ServerApp {
             .iter()
             .map(|&addr| {
                 let idx = addr as usize;
-                let value = if idx < ADDR_SPACE { self.holding_regs[idx] } else { 0 };
+                let value = if idx < ADDR_SPACE {
+                    self.holding_regs[idx]
+                } else {
+                    0
+                };
                 (addr, value)
             })
             .collect()
@@ -511,7 +533,12 @@ impl ServerApp {
     }
 
     /// Read up to `word_count` words for a file-record tuple, zero-filling missing values.
-    pub fn get_file_record(&self, file_number: u16, record_number: u16, word_count: u16) -> Vec<u16> {
+    pub fn get_file_record(
+        &self,
+        file_number: u16,
+        record_number: u16,
+        word_count: u16,
+    ) -> Vec<u16> {
         let needed = word_count as usize;
         let mut out = vec![0_u16; needed];
         if let Some(values) = self.file_records.get(&(file_number, record_number)) {
@@ -596,14 +623,10 @@ impl ServerApp {
     async fn dispatch(&mut self, req: ModbusRequest) -> ModbusResponse {
         match req {
             // ── FC01: Read Coils ──────────────────────────────────────────────
-            ModbusRequest::ReadCoils {
-                address, count, ..
-            } => {
+            ModbusRequest::ReadCoils { address, count, .. } => {
                 let start = address as usize;
                 let end = start + count as usize;
-                if end > ADDR_SPACE
-                    || self.registered_coils[start..end].iter().any(|&r| !r)
-                {
+                if end > ADDR_SPACE || self.registered_coils[start..end].iter().any(|&r| !r) {
                     return ModbusResponse::exception(
                         FunctionCode::ReadCoils,
                         ExceptionCode::IllegalDataAddress,
@@ -614,9 +637,7 @@ impl ServerApp {
             }
 
             // ── FC05: Write Single Coil ───────────────────────────────────────
-            ModbusRequest::WriteSingleCoil {
-                address, value, ..
-            } => {
+            ModbusRequest::WriteSingleCoil { address, value, .. } => {
                 let idx = address as usize;
                 if idx >= ADDR_SPACE || !self.registered_coils[idx] {
                     return ModbusResponse::exception(
@@ -637,30 +658,24 @@ impl ServerApp {
             } => {
                 let start = address as usize;
                 let end = start + count as usize;
-                if end > ADDR_SPACE
-                    || self.registered_coils[start..end].iter().any(|&r| !r)
-                {
+                if end > ADDR_SPACE || self.registered_coils[start..end].iter().any(|&r| !r) {
                     return ModbusResponse::exception(
                         FunctionCode::WriteMultipleCoils,
                         ExceptionCode::IllegalDataAddress,
                     );
                 }
                 Self::unpack_coils(&mut self.coils[start..end], &data);
-                ModbusResponse::echo_multi_write(
-                    FunctionCode::WriteMultipleCoils,
-                    address,
-                    count,
-                )
+                ModbusResponse::echo_multi_write(FunctionCode::WriteMultipleCoils, address, count)
             }
 
             // ── FC02: Read Discrete Inputs ────────────────────────────────────
-            ModbusRequest::ReadDiscreteInputs {
-                address, count, ..
-            } => {
+            ModbusRequest::ReadDiscreteInputs { address, count, .. } => {
                 let start = address as usize;
                 let end = start + count as usize;
                 if end > ADDR_SPACE
-                    || self.registered_discrete_inputs[start..end].iter().any(|&r| !r)
+                    || self.registered_discrete_inputs[start..end]
+                        .iter()
+                        .any(|&r| !r)
                 {
                     return ModbusResponse::exception(
                         FunctionCode::ReadDiscreteInputs,
@@ -668,16 +683,11 @@ impl ServerApp {
                     );
                 }
                 let (buf, byte_count) = Self::pack_bools(&self.discrete_inputs[start..end]);
-                ModbusResponse::packed_bits(
-                    FunctionCode::ReadDiscreteInputs,
-                    &buf[..byte_count],
-                )
+                ModbusResponse::packed_bits(FunctionCode::ReadDiscreteInputs, &buf[..byte_count])
             }
 
             // ── FC03: Read Holding Registers ──────────────────────────────────
-            ModbusRequest::ReadHoldingRegisters {
-                address, count, ..
-            } => {
+            ModbusRequest::ReadHoldingRegisters { address, count, .. } => {
                 let start = address as usize;
                 let end = start + count as usize;
                 if end > ADDR_SPACE || count as usize > MAX_REG_WORDS {
@@ -710,9 +720,7 @@ impl ServerApp {
             }
 
             // ── FC06: Write Single Register ───────────────────────────────────
-            ModbusRequest::WriteSingleRegister {
-                address, value, ..
-            } => {
+            ModbusRequest::WriteSingleRegister { address, value, .. } => {
                 // iBus-owned HR region is read-only while overlay is active.
                 // Return IllegalDataAddress so clients do not misinterpret a
                 // dropped write as successful persistence.
@@ -774,9 +782,7 @@ impl ServerApp {
             }
 
             // ── FC04: Read Input Registers ────────────────────────────────────
-            ModbusRequest::ReadInputRegisters {
-                address, count, ..
-            } => {
+            ModbusRequest::ReadInputRegisters { address, count, .. } => {
                 let start = address as usize;
                 let end = start + count as usize;
                 if end > ADDR_SPACE
@@ -796,8 +802,7 @@ impl ServerApp {
 
             // ── FC18: Read FIFO Queue ────────────────────────────────────────
             ModbusRequest::ReadFifoQueue {
-                pointer_address,
-                ..
+                pointer_address, ..
             } => {
                 let (fifo_count, values) = self.get_fifo_queue(pointer_address);
                 if values.len() > 31 || fifo_count as usize != values.len() {
@@ -808,7 +813,10 @@ impl ServerApp {
                 }
 
                 let mut payload: HeaplessVec<u8, MAX_ADU_FRAME_LEN> = HeaplessVec::new();
-                if payload.extend_from_slice(&fifo_count.to_be_bytes()).is_err() {
+                if payload
+                    .extend_from_slice(&fifo_count.to_be_bytes())
+                    .is_err()
+                {
                     return ModbusResponse::exception(
                         FunctionCode::ReadFifoQueue,
                         ExceptionCode::ServerDeviceFailure,
@@ -831,11 +839,8 @@ impl ServerApp {
                 let mut payload: HeaplessVec<u8, MAX_ADU_FRAME_LEN> = HeaplessVec::new();
 
                 for sub in sub_requests {
-                    let values = self.get_file_record(
-                        sub.file_number,
-                        sub.record_number,
-                        sub.record_length,
-                    );
+                    let values =
+                        self.get_file_record(sub.file_number, sub.record_number, sub.record_length);
                     let data_len = 1 + values.len() * 2;
                     if data_len > u8::MAX as usize {
                         return ModbusResponse::exception(
@@ -949,9 +954,7 @@ impl ServerApp {
             }
 
             // ── FC2B/MEI 0x0E: Read Device Identification ───────────────────
-            ModbusRequest::EncapsulatedInterfaceTransport {
-                mei_type, data, ..
-            } => {
+            ModbusRequest::EncapsulatedInterfaceTransport { mei_type, data, .. } => {
                 if mei_type != 0x0E {
                     return ModbusResponse::exception(
                         FunctionCode::EncapsulatedInterfaceTransport,
@@ -993,7 +996,9 @@ impl ServerApp {
             }
 
             // ── FC08: Diagnostics ────────────────────────────────────────────
-            ModbusRequest::Diagnostics { sub_function, data, .. } => {
+            ModbusRequest::Diagnostics {
+                sub_function, data, ..
+            } => {
                 use diag_subfn::*;
                 match sub_function {
                     RETURN_QUERY_DATA => ModbusResponse::diagnostics_echo(sub_function, data),
@@ -1026,24 +1031,27 @@ impl ServerApp {
                     RETURN_BUS_COMM_ERROR_COUNT => {
                         ModbusResponse::diagnostics_echo(sub_function, self.bus_comm_error_count)
                     }
-                    RETURN_BUS_EXCEPTION_ERROR_COUNT => {
-                        ModbusResponse::diagnostics_echo(sub_function, self.bus_exception_error_count)
-                    }
+                    RETURN_BUS_EXCEPTION_ERROR_COUNT => ModbusResponse::diagnostics_echo(
+                        sub_function,
+                        self.bus_exception_error_count,
+                    ),
                     RETURN_SERVER_MESSAGE_COUNT => {
                         ModbusResponse::diagnostics_echo(sub_function, self.server_message_count)
                     }
-                    RETURN_SERVER_NO_RESPONSE_COUNT => {
-                        ModbusResponse::diagnostics_echo(sub_function, self.server_no_response_count)
-                    }
+                    RETURN_SERVER_NO_RESPONSE_COUNT => ModbusResponse::diagnostics_echo(
+                        sub_function,
+                        self.server_no_response_count,
+                    ),
                     RETURN_SERVER_NAK_COUNT => {
                         ModbusResponse::diagnostics_echo(sub_function, self.server_nak_count)
                     }
                     RETURN_SERVER_BUSY_COUNT => {
                         ModbusResponse::diagnostics_echo(sub_function, self.server_busy_count)
                     }
-                    RETURN_BUS_CHARACTER_OVERRUN_COUNT => {
-                        ModbusResponse::diagnostics_echo(sub_function, self.bus_character_overrun_count)
-                    }
+                    RETURN_BUS_CHARACTER_OVERRUN_COUNT => ModbusResponse::diagnostics_echo(
+                        sub_function,
+                        self.bus_character_overrun_count,
+                    ),
                     CLEAR_OVERRUN_COUNTER_AND_FLAG => {
                         self.bus_character_overrun_count = 0;
                         ModbusResponse::diagnostics_echo(sub_function, 0)
@@ -1091,8 +1099,7 @@ impl ServerApp {
             // ── All other FCs: reply with Illegal Function ────────────────────
             other => {
                 let fc_byte = other.function_code_byte();
-                let fc = FunctionCode::try_from(fc_byte)
-                    .unwrap_or(FunctionCode::ReadCoils); // fallback; never reached for known FCs
+                let fc = FunctionCode::try_from(fc_byte).unwrap_or(FunctionCode::ReadCoils); // fallback; never reached for known FCs
                 ModbusResponse::exception(fc, ExceptionCode::IllegalFunction)
             }
         }
@@ -1104,7 +1111,10 @@ impl ServerApp {
 // ---------------------------------------------------------------------------
 
 fn fmt_hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02X}")).collect::<Vec<_>>().join(" ")
+    b.iter()
+        .map(|x| format!("{x:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,7 +1200,13 @@ mod tests {
             })
             .await;
         assert!(
-            matches!(resp, ModbusResponse::EchoCoil { address: 3, raw_value: 0xFF00 }),
+            matches!(
+                resp,
+                ModbusResponse::EchoCoil {
+                    address: 3,
+                    raw_value: 0xFF00
+                }
+            ),
             "unexpected: {resp:?}"
         );
         // Verify persistence via FC01 read of addr 3 only
@@ -1353,7 +1369,13 @@ mod tests {
             })
             .await;
         assert!(
-            matches!(resp, ModbusResponse::EchoRegister { address: 10, value: 0xABCD }),
+            matches!(
+                resp,
+                ModbusResponse::EchoRegister {
+                    address: 10,
+                    value: 0xABCD
+                }
+            ),
             "unexpected: {resp:?}"
         );
         // Read back and verify
@@ -1588,7 +1610,10 @@ mod tests {
         // All coils start false
         let coils = client.read_multiple_coils(UID, 0, 4).await.unwrap();
         for addr in coils.from_address()..coils.from_address() + coils.quantity() {
-            assert!(!coils.value(addr).unwrap(), "coil {addr} should initially be false");
+            assert!(
+                !coils.value(addr).unwrap(),
+                "coil {addr} should initially be false"
+            );
         }
 
         // Write coil 2 = true
@@ -1653,12 +1678,19 @@ mod tests {
 
         let di = client.read_discrete_inputs(UID, 0, 4).await.unwrap();
         for addr in di.from_address()..di.from_address() + di.quantity() {
-            assert!(!di.value(addr).unwrap(), "discrete input {addr} should be false");
+            assert!(
+                !di.value(addr).unwrap(),
+                "discrete input {addr} should be false"
+            );
         }
 
         let ir = client.read_input_registers(UID, 0, 4).await.unwrap();
         for addr in ir.from_address()..ir.from_address() + ir.quantity() {
-            assert_eq!(ir.value(addr).unwrap(), 0, "input reg {addr} should be zero");
+            assert_eq!(
+                ir.value(addr).unwrap(),
+                0,
+                "input reg {addr} should be zero"
+            );
         }
     }
 

@@ -1,9 +1,9 @@
 [package]
 name = "modbus-lab-client"
-version = "0.0.6"
+version = "0.0.7"
 description = "ModbusLab Client desktop application"
 authors = ["Raghav"]
-license-file= "../../../LICENSE"
+license-file = "../../../LICENSE"
 repository = ""
 edition = "2021"
 
@@ -18,9 +18,32 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-mbus-core = { version = "0.8.0", default-features = false, features = ["coils", "discrete-inputs", "registers", "diagnostics", "fifo"] }
-modbus-rs = { version = "0.8.0", features = ["async", "client", "server", "network-tcp", "coils", "discrete-inputs", "registers", "diagnostics", "traffic"] }
-tokio = { version = "1", features = ["io-util", "net", "sync", "rt-multi-thread", "macros", "time"] }
+mbus-core = { version = "0.8.0", default-features = false, features = [
+    "coils",
+    "discrete-inputs",
+    "registers",
+    "diagnostics",
+    "fifo",
+] }
+modbus-rs = { version = "0.8.0", features = [
+    "async",
+    "client",
+    "server",
+    "network-tcp",
+    "coils",
+    "discrete-inputs",
+    "registers",
+    "diagnostics",
+    "traffic",
+] }
+tokio = { version = "1", features = [
+    "io-util",
+    "net",
+    "sync",
+    "rt-multi-thread",
+    "macros",
+    "time",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
@@ -29,7 +52,8 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 # MQTT client for Cloud Bridge (Apache-2.0 — commercial-use friendly).
 # Pinned to a minor version range to allow patch updates without surprise breakages.
-rumqttc = { version = "0.25", default-features = false, features = ["use-rustls"] }
+rumqttc = { version = "0.25", default-features = false, features = [
+    "use-rustls",
+] }
 rustls-native-certs = "0.8"
 ibus-core = { path = "../../../crates/ibus-core" }
-

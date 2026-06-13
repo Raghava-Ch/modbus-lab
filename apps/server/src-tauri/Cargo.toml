@@ -1,6 +1,6 @@
 [package]
 name = "modbus-lab-server"
-version = "0.0.6"
+version = "0.0.7"
 description = "ModbusLab Client desktop application"
 authors = ["Raghav"]
 license = "../../../LICENSE"
@@ -56,4 +56,3 @@ serialport = "4"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 ibus-core = { path = "../../../crates/ibus-core" }
-

@@ -46,8 +46,12 @@
   const filtered = $derived(getFilteredLogs(logState.filter));
   let showAbout = $state(false);
   let selectedEntry = $state<LogEntry | null>(null);
-  const appVersion = "0.0.6";
-  const buildDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const appVersion = "0.0.7";
+  const buildDate = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 
   interface BackendEventPayload {
     level?: "info" | "warn" | "error";
@@ -61,7 +65,9 @@
 
   let listenersReady = false;
 
-  function toLogLevel(level: string | undefined): "info" | "warn" | "error" | "traffic" {
+  function toLogLevel(
+    level: string | undefined,
+  ): "info" | "warn" | "error" | "traffic" {
     if (level === "warn" || level === "error" || level === "traffic") {
       return level;
     }
@@ -83,7 +89,11 @@
   }
 
   function handleSave(scope: LogExportScope): void {
-    saveLogsToFile(scope === "all" ? logState.entries : filtered, scope, logState.filter);
+    saveLogsToFile(
+      scope === "all" ? logState.entries : filtered,
+      scope,
+      logState.filter,
+    );
   }
 </script>
 
@@ -91,7 +101,9 @@
   class="app-shell"
   class:force-mobile={settingsState.forcedLayoutMode === "mobile"}
   class:force-desktop={settingsState.forcedLayoutMode === "desktop"}
-  style:--log-panel-height="{layoutState.logCollapsed ? 52 : layoutState.logHeight}px"
+  style:--log-panel-height="{layoutState.logCollapsed
+    ? 52
+    : layoutState.logHeight}px"
 >
   <StatusBar onShowAbout={() => (showAbout = true)} />
   <AppNotifications />
@@ -127,11 +139,20 @@
 </div>
 
 {#if layoutState.mobileLogOpen && settingsState.forcedLayoutMode !== "desktop"}
-  <div class="mobile-log-overlay" class:force-open={settingsState.forcedLayoutMode === "mobile"} role="dialog" aria-label="Log panel">
+  <div
+    class="mobile-log-overlay"
+    class:force-open={settingsState.forcedLayoutMode === "mobile"}
+    role="dialog"
+    aria-label="Log panel"
+  >
     <section class="mobile-log-sheet">
       <header class="mobile-log-head">
         <strong>Logs</strong>
-        <IconButton label="Close logs" title="Close logs" onclick={closeMobileLog}>
+        <IconButton
+          label="Close logs"
+          title="Close logs"
+          onclick={closeMobileLog}
+        >
           {#snippet children()}
             <X size={16} />
           {/snippet}
@@ -151,7 +172,10 @@
       />
       {#if !layoutState.logCollapsed}
         {#if layoutState.logPanelView === "logs"}
-          <LogList entries={filtered} onopen={(entry) => (selectedEntry = entry)} />
+          <LogList
+            entries={filtered}
+            onopen={(entry) => (selectedEntry = entry)}
+          />
         {:else}
           <RegisterDetailsPanel inline={true} />
         {/if}
@@ -161,7 +185,10 @@
 {/if}
 
 {#if selectedEntry}
-  <LogEntryDetailModal entry={selectedEntry} onclose={() => (selectedEntry = null)} />
+  <LogEntryDetailModal
+    entry={selectedEntry}
+    onclose={() => (selectedEntry = null)}
+  />
 {/if}
 
 {#if showAbout}
@@ -173,10 +200,20 @@
     onclick={(e) => e.target === e.currentTarget && (showAbout = false)}
     onkeydown={(e) => e.key === "Escape" && (showAbout = false)}
   >
-    <div class="about-modal" role="dialog" aria-modal="true" aria-label="About Modbus Lab Project">
+    <div
+      class="about-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="About Modbus Lab Project"
+    >
       <header class="about-header">
         <h2>About Modbus Lab Project</h2>
-        <button class="close-btn" type="button" aria-label="Close" onclick={() => (showAbout = false)}>
+        <button
+          class="close-btn"
+          type="button"
+          aria-label="Close"
+          onclick={() => (showAbout = false)}
+        >
           <X size={18} />
         </button>
       </header>
@@ -189,12 +226,15 @@
         <div class="about-section">
           <h3>About</h3>
           <p>
-            Modbus Lab Server is a professional-grade Modbus slave server purpose-built for industrial automation engineers and system integrators.
-            It demonstrates a modern, production-ready approach to Modbus server hosting, device simulation, and SCADA system testing.
+            Modbus Lab Server is a professional-grade Modbus slave server
+            purpose-built for industrial automation engineers and system
+            integrators. It demonstrates a modern, production-ready approach to
+            Modbus server hosting, device simulation, and SCADA system testing.
           </p>
           <p style="margin-top: 8px; font-size: 0.95em; opacity: 0.9;">
-            Built on deterministic, embedded-grade Rust with a responsive TypeScript frontend and native desktop runtime.
-            Validated across desktop, embedded (no_std), RTOS, and Linux deployments.
+            Built on deterministic, embedded-grade Rust with a responsive
+            TypeScript frontend and native desktop runtime. Validated across
+            desktop, embedded (no_std), RTOS, and Linux deployments.
           </p>
         </div>
 
@@ -212,10 +252,22 @@
           <ul>
             <li>Frontend: Svelte 5 + TypeScript + Vite</li>
             <li>Desktop Runtime: Tauri v2 (cross-platform native)</li>
-            <li>Backend: Rust + <a href="https://github.com/Raghava-Ch/modbus-rs" target="_blank" style="color: inherit; text-decoration: underline;">modbus-rs</a> engine</li>
+            <li>
+              Backend: Rust + <a
+                href="https://github.com/Raghava-Ch/modbus-rs"
+                target="_blank"
+                style="color: inherit; text-decoration: underline;">modbus-rs</a
+              > engine
+            </li>
           </ul>
           <p style="margin-top: 8px; font-size: 0.9em; opacity: 0.85;">
-            The <a href="https://github.com/Raghava-Ch/modbus-rs" target="_blank" style="color: inherit; text-decoration: underline;"><strong>modbus-rs</strong></a> stack delivers deterministic, embedded-grade Modbus protocol handling with efficient memory usage and minimal dependencies.
+            The <a
+              href="https://github.com/Raghava-Ch/modbus-rs"
+              target="_blank"
+              style="color: inherit; text-decoration: underline;"
+              ><strong>modbus-rs</strong></a
+            > stack delivers deterministic, embedded-grade Modbus protocol handling
+            with efficient memory usage and minimal dependencies.
           </p>
         </div>
 
@@ -228,15 +280,31 @@
         <div class="about-section">
           <h3>Resources</h3>
           <ul>
-            <li><a href="https://github.com/Raghava-Ch/modbus-rs" target="_blank" style="color: inherit; text-decoration: underline;">modbus-rs GitHub</a> – Core Modbus protocol engine</li>
-            <li><a href="https://github.com/Raghava-Ch/modbus-lab" target="_blank" style="color: inherit; text-decoration: underline;">modbus-lab GitHub</a> – This application</li>
+            <li>
+              <a
+                href="https://github.com/Raghava-Ch/modbus-rs"
+                target="_blank"
+                style="color: inherit; text-decoration: underline;"
+                >modbus-rs GitHub</a
+              > – Core Modbus protocol engine
+            </li>
+            <li>
+              <a
+                href="https://github.com/Raghava-Ch/modbus-lab"
+                target="_blank"
+                style="color: inherit; text-decoration: underline;"
+                >modbus-lab GitHub</a
+              > – This application
+            </li>
           </ul>
         </div>
 
         <div class="about-section">
           <h3>Creator</h3>
           <p><strong>Raghava Ch</strong></p>
-          <p><a href="mailto:ch.raghava44@gmail.com">ch.raghava44@gmail.com</a></p>
+          <p>
+            <a href="mailto:ch.raghava44@gmail.com">ch.raghava44@gmail.com</a>
+          </p>
         </div>
       </div>
     </div>
@@ -344,7 +412,11 @@
       align-items: stretch;
       padding: 4px;
       gap: 4px;
-      background: color-mix(in srgb, var(--c-surface-1) 88%, var(--c-surface-2));
+      background: color-mix(
+        in srgb,
+        var(--c-surface-1) 88%,
+        var(--c-surface-2)
+      );
       overflow-x: auto;
       overflow-y: hidden;
       scrollbar-width: thin;
@@ -370,7 +442,9 @@
       padding: 0 2px;
     }
 
-    .app-shell :global(.nav-collapse-btn) { display: none; }
+    .app-shell :global(.nav-collapse-btn) {
+      display: none;
+    }
 
     .app-shell :global(.main-nav),
     .app-shell :global(.settings-nav) {
@@ -379,7 +453,10 @@
       background: none;
     }
 
-    .app-shell :global(.main-nav) { flex: 1; min-width: 0; }
+    .app-shell :global(.main-nav) {
+      flex: 1;
+      min-width: 0;
+    }
 
     .app-shell :global(.nav-item) {
       grid-template-columns: 1fr;
@@ -409,12 +486,18 @@
 
     .app-shell :global(.nav-item.active) {
       color: var(--c-text-1);
-      background: color-mix(in srgb, var(--c-surface-3) 60%, var(--c-surface-2));
+      background: color-mix(
+        in srgb,
+        var(--c-surface-3) 60%,
+        var(--c-surface-2)
+      );
       border-left-color: transparent;
       border-bottom-color: var(--c-accent);
     }
 
-    .app-shell :global(.nav-item.active svg) { color: var(--c-accent); }
+    .app-shell :global(.nav-item.active svg) {
+      color: var(--c-accent);
+    }
   }
 
   /* ── Force Desktop — always sidebar, ignore media query ── */
@@ -554,7 +637,9 @@
     padding: 0 2px;
   }
 
-  .app-shell.force-mobile :global(.nav-collapse-btn) { display: none !important; }
+  .app-shell.force-mobile :global(.nav-collapse-btn) {
+    display: none !important;
+  }
 
   .app-shell.force-mobile :global(.main-nav),
   .app-shell.force-mobile :global(.settings-nav) {
@@ -563,7 +648,10 @@
     background: none;
   }
 
-  .app-shell.force-mobile :global(.main-nav) { flex: 1; min-width: 0; }
+  .app-shell.force-mobile :global(.main-nav) {
+    flex: 1;
+    min-width: 0;
+  }
 
   .app-shell.force-mobile :global(.nav-item) {
     grid-template-columns: 1fr;
@@ -598,13 +686,14 @@
     border-bottom-color: var(--c-accent);
   }
 
-  .app-shell.force-mobile :global(.nav-item.active svg) { color: var(--c-accent); }
+  .app-shell.force-mobile :global(.nav-item.active svg) {
+    color: var(--c-accent);
+  }
 
   /* Keep mobile-log overlay visible when force-open */
   .mobile-log-overlay.force-open {
     display: flex;
   }
-
 
   .about-backdrop {
     position: fixed;
@@ -640,27 +729,80 @@
     background: var(--c-surface-1);
     border-bottom: 1px solid var(--c-border);
   }
-  .about-header h2 { margin: 0; font-size: 1.1rem; color: var(--c-text-1); }
+  .about-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--c-text-1);
+  }
   .close-btn {
-    background: none; border: none; color: var(--c-text-2); cursor: pointer;
-    padding: 4px; display: flex; align-items: center; justify-content: center;
-    border-radius: 6px; transition: background 120ms ease;
+    background: none;
+    border: none;
+    color: var(--c-text-2);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: background 120ms ease;
   }
-  .close-btn:hover { background: var(--c-surface-2); color: var(--c-text-1); }
+  .close-btn:hover {
+    background: var(--c-surface-2);
+    color: var(--c-text-1);
+  }
   .about-body {
-    min-height: 0; overflow-y: auto; padding: 16px; display: grid;
-    gap: 12px; font-size: 0.9rem; color: var(--c-text-1); line-height: 1.5;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+    font-size: 0.9rem;
+    color: var(--c-text-1);
+    line-height: 1.5;
   }
-  .about-section { display: grid; gap: 6px; }
-  .about-section h3 { margin: 0; font-size: 0.95rem; color: var(--c-accent); font-weight: 600; }
-  .about-section p { margin: 0; }
-  .about-section ul { margin: 0; padding-left: 20px; }
-  .about-section li { margin: 4px 0; }
-  .about-section a { color: var(--c-accent); text-decoration: none; }
-  .about-section a:hover { text-decoration: underline; }
-  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  .about-section {
+    display: grid;
+    gap: 6px;
+  }
+  .about-section h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--c-accent);
+    font-weight: 600;
+  }
+  .about-section p {
+    margin: 0;
+  }
+  .about-section ul {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .about-section li {
+    margin: 4px 0;
+  }
+  .about-section a {
+    color: var(--c-accent);
+    text-decoration: none;
+  }
+  .about-section a:hover {
+    text-decoration: underline;
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
   @keyframes scale-in {
-    from { opacity: 0; transform: scale(0.95); }
-    to { opacity: 1; transform: scale(1); }
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 </style>
